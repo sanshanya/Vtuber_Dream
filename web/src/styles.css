@@ -1,0 +1,35 @@
+/* 视觉资产：整体移植自 Python 报告层（原 live-audience report.py CSS）；
+   M5-web 追加段集中在文件尾（run 通道 / 图谱画布 / 设置表单）。 */
+
+:root{color-scheme:light dark;--bg:#f4f6f8;--panel:#fff;--panel2:#f8fafc;--text:#17212b;--muted:#667085;--line:#d8dee8;--accent:#2563eb;--accent2:#7c3aed;--good:#15803d;--warn:#b45309;--danger:#b42318;--shadow:0 8px 28px rgba(15,23,42,.08)}
+@media(prefers-color-scheme:dark){:root{--bg:#0d1117;--panel:#161b22;--panel2:#0f141b;--text:#e6edf3;--muted:#8b949e;--line:#30363d;--accent:#58a6ff;--accent2:#a78bfa;--good:#3fb950;--warn:#d29922;--danger:#f85149;--shadow:none}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.65 Inter,"Segoe UI","Microsoft YaHei",sans-serif}.container{width:min(1440px,calc(100% - 36px));margin:auto}.hero{padding:34px 0 28px;background:linear-gradient(135deg,#111827,#1e3a8a 58%,#6d28d9);color:white}.hero h1{font-size:32px;margin:0 0 8px}.hero p{max-width:980px;margin:0;color:#dbeafe}.nav{display:flex;gap:16px;margin-top:10px}.nav a{color:#dbeafe;text-decoration:none}.nav a:hover{text-decoration:underline}.section{margin:24px auto}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:var(--shadow)}.grid{display:grid;gap:16px}.stats{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));margin-top:-22px;position:relative}.stat strong{display:block;font-size:27px;line-height:1.2}.stat span,.muted{color:var(--muted)}.two{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}.three{grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}.section-title{display:flex;justify-content:space-between;align-items:end;gap:16px;margin-bottom:12px}.section-title h2,.card h2{margin:0}.card h3{margin:4px 0 8px}.badges{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0}.badge{display:inline-flex;align-items:center;padding:3px 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);font-size:12px}.badge.fact{border-color:#60a5fa}.badge.ai{border-style:dashed;border-color:#a78bfa}.badge.state{border-color:#34d399}.badge.action{border-color:#f59e0b}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}th{position:sticky;top:0;background:var(--panel2);z-index:1}tr:last-child td{border-bottom:0}a{color:var(--accent)}.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.toolbar input,.toolbar select,.toolbar button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:8px 10px}.toolbar input{min-width:260px}.toolbar button{cursor:pointer}.viewer-head{display:flex;align-items:center;gap:14px;margin-bottom:18px}.avatar{width:58px;height:58px;border-radius:50%;object-fit:cover;background:var(--panel2);border:1px solid var(--line)}.small{font-size:12px}.protocol{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-all;white-space:pre-wrap}.evidence{border-left:3px solid var(--line);padding:10px 13px;margin:12px 0;background:var(--panel2);border-radius:0 10px 10px 0}.evidence h4{margin:0 0 5px}.field{margin:8px 0;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);white-space:pre-wrap;word-break:break-word}mark{background:#fde68a;color:#422006;border-radius:3px;padding:0 2px}.relation{display:grid;grid-template-columns:minmax(120px,1fr) auto minmax(120px,1fr);gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.relation:last-child{border-bottom:0}.arrow{color:var(--accent2);font-weight:700}.notice{border:1px solid #f59e0b;background:color-mix(in srgb,#f59e0b 10%,var(--panel));border-radius:12px;padding:14px}.legend{display:flex;flex-wrap:wrap;gap:12px}.legend span{display:inline-flex;align-items:center;gap:6px}.dot{width:10px;height:10px;border-radius:50%;display:inline-block}.dot.fact{background:#3b82f6}.dot.ai{background:#8b5cf6}.dot.state{background:#10b981}.dot.action{background:#f59e0b}.timeline{border-left:2px solid var(--line);margin-left:8px;padding-left:18px}.timeline-item{position:relative;margin:0 0 18px}.timeline-item:before{content:"";position:absolute;left:-24px;top:7px;width:10px;height:10px;border-radius:50%;background:var(--accent)}.empty{color:var(--muted);padding:18px;text-align:center}.graph-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}.canvas-wrap{height:720px;position:relative;overflow:hidden;padding:0}.graph-side{height:720px;overflow:auto}.kv{display:grid;grid-template-columns:110px 1fr;gap:6px 10px}.kv dt{color:var(--muted)}.kv dd{margin:0;word-break:break-word}.footer{color:var(--muted);padding:28px 0 50px}.tree details{margin:8px 0}.tree summary{cursor:pointer;font-weight:600}@media(max-width:900px){.graph-layout{grid-template-columns:1fr}.graph-side{height:auto}.canvas-wrap{height:560px}.hero h1{font-size:26px}.container{width:min(100% - 22px,1440px)}}
+.badge{white-space:nowrap}.runtime-status details,.card details{margin-top:12px}.runtime-status summary,.card summary{cursor:pointer;font-weight:600}
+
+/* ---- M5-web 追加段 ---- */
+
+/* run 触发链（页头 + 面板空态） */
+.run-trigger{display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap}
+.run-trigger .primary{background:var(--accent);border:0;color:#fff;border-radius:9px;padding:8px 14px;cursor:pointer}
+.run-trigger .primary:disabled{opacity:.6;cursor:wait}
+.badge.danger{border-color:var(--danger);color:var(--danger)}
+.badge.run-status-done{border-color:var(--good)}
+.badge.run-status-failed{border-color:var(--danger);color:var(--danger)}
+.badge.run-status-per_viewer_ai,.badge.run-status-audience{border-color:#a78bfa}
+.badge.run-status-collecting,.badge.run-status-episodes{border-color:#60a5fa}
+.run-events{position:absolute;z-index:3;background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:10px;max-width:520px;box-shadow:var(--shadow)}
+.run-events pre{max-height:300px;overflow:auto;font-size:12px;margin:8px 0 0}
+
+/* 图谱画布（cytoscape 容器须显式高度） */
+.graph-canvas{position:absolute;inset:0}
+.graph-canvas canvas{width:100%;height:100%}
+
+/* 设置表单 */
+.settings-form{display:grid;gap:10px}
+.settings-form label{display:grid;gap:4px;font-size:13px;color:var(--muted)}
+.settings-form input{background:var(--panel2);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+
+/* delta 明细清单 */
+.delta-list{list-style:none;margin:8px 0;padding:0;font-size:13px}
+.delta-list li{padding:4px 0;border-bottom:1px dashed var(--line)}
+.delta-list li:last-child{border-bottom:0}

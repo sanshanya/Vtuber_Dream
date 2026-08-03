@@ -1,0 +1,98 @@
+/**
+ * /api 客户端薄层（D3 端点表逐行兑现）。
+ * run 记录与 config 面按真实响应收窄成接口；viewer/tree/graph 体量大、
+ * 渲染面只「前进式取用」 → 保持 loose，转发即渲染。
+ */
+
+const API_BASE = "/api";
+
+export interface Room {
+  id: string;
+  project_name: string;
+  streamer_uid: string;
+  output_dir: string;
+}
+
+export interface RunRecordView {
+  run_id: string;
+  kind: string;
+  viewer_uid: string | null;
+  force: boolean;
+  /** queued | collecting | episodes | per_viewer_ai | audience | done | failed（design §10）。 */
+  status: string;
+  started_at: string;
+  finished_at: string | null;
+  /** 终态且有观众级失败（done 时 viewer_failures>0 或 failed 于 audience 段）。 */
+  partial: boolean;
+  outcome: unknown;
+  events: string[];
+}
+
+export interface ViewerRow {
+  uid: string;
+  name: string | null;
+  collected_at: string | null;
+  ai_status: string | null;
+  ai_completed: boolean;
+}
+
+export interface ConfigView {
+  project_name: string;
+  output_dir: string;
+  bilibili: {
+    room_id: string;
+    streamer_uid: string;
+    cookie_present: boolean;
+    additional_viewer_ids: string[];
+  };
+  ai: {
+    api: string;
+    base_url: string;
+    model: string;
+    api_key_present: boolean;
+    [key: string]: unknown;
+  };
+  writable_keys: string[];
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const response = await fetch(`${API_BASE}${path}`, {
+    method,
+    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await response.text();
+  const payload = text.length === 0 ? null : JSON.parse(text);
+  if (!response.ok) {
+    const detail =
+      payload && typeof payload === "object" && "error" in payload
+        ? String((payload as { error: unknown }).error)
+        : `HTTP ${response.status}`;
+    throw new Error(detail);
+  }
+  return payload as T;
+}
+
+export const api = {
+  rooms: () => request<Room[]>("GET", "/rooms"),
+  overview: (roomId: string) => request<any>("GET", `/rooms/${encodeURIComponent(roomId)}/overview`),
+  viewers: (roomId: string) =>
+    request<ViewerRow[]>("GET", `/rooms/${encodeURIComponent(roomId)}/viewers`),
+  viewerTree: (roomId: string, vid: string) =>
+    request<any>(
+      "GET",
+      `/rooms/${encodeURIComponent(roomId)}/viewers/${encodeURIComponent(vid)}/tree`,
+    ),
+  viewerGraph: (roomId: string, vid: string) =>
+    request<{ elements: unknown[] }>(
+      "GET",
+      `/rooms/${encodeURIComponent(roomId)}/viewers/${encodeURIComponent(vid)}/graph`,
+    ),
+  roomGraph: (roomId: string) =>
+    request<{ elements: unknown[] }>("GET", `/rooms/${encodeURIComponent(roomId)}/graph`),
+  config: () => request<ConfigView>("GET", "/config"),
+  putConfig: (body: unknown) => request<{ status: string; keys?: number }>("PUT", "/config", body),
+  run: (id: string) => request<RunRecordView>("GET", `/runs/${encodeURIComponent(id)}`),
+  startRun: (body: { kind: "full" | "viewer"; force?: boolean; viewer_uid?: string }) =>
+    request<{ run_id: string }>("POST", "/runs", body),
+};
