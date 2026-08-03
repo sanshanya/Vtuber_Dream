@@ -450,14 +450,17 @@ impl AgentRuntime {
                 Ok(response) => return Ok(response),
                 Err(err) => {
                     if !is_transient(&err) || attempt == HTTP_EXTRA_ATTEMPTS {
-                        return Err(AgentRuntimeError::Transport(err.to_string()));
+                        // 安全 M1：原文可能携带响应体/key 片段 → 脱敏后进错误面（红线 §11）。
+                        return Err(AgentRuntimeError::Transport(
+                            super::redact::redact_openai_error(&err),
+                        ));
                     }
                     last_error = Some(err);
                 }
             }
         }
         Err(AgentRuntimeError::Transport(
-            last_error.expect("loop 至少一次").to_string(),
+            super::redact::redact_openai_error(&last_error.expect("loop 至少一次")),
         ))
     }
 

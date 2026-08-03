@@ -470,3 +470,68 @@ fn draft_truncation_is_char_counted() {
         DRAFT_TRUNCATE_CHARS
     );
 }
+
+/// 安全 M1：LLM 传输错误落 trace/终态前脱敏——key 片段与响应体原文永不入档。
+#[tokio::test(flavor = "multi_thread")]
+async fn transport_errors_are_redacted_before_trace() {
+    // A) 401 回吐 key 片段 → 脱敏
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+            "error": {"message": "Incorrect API key provided: sk-abcd1234efgh5678",
+                      "type": "invalid_request_error", "code": "invalid_api_key"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let runtime = AgentRuntime::for_test(&server.uri(), "m", 131_072, true, true);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let trace_path = tempfile::tempdir().unwrap().path().join("trace.jsonl");
+    let mut trace = Trace::new(Some(trace_path.clone()));
+    let err = run_toolcall_agent::<ProbeContext, ProbeResult>(
+        &runtime,
+        &mut spec,
+        plan("开始", 4),
+        &mut ctx,
+        &mut trace,
+    )
+    .await
+    .expect_err("401 必须失败");
+    let err_text = err.to_string();
+    assert!(err_text.contains("sk-***"), "{err_text}");
+    assert!(!err_text.contains("abcd1234"), "{err_text}");
+    drop(trace);
+    let trace_text = std::fs::read_to_string(&trace_path).unwrap();
+    assert!(!trace_text.contains("abcd1234"), "{trace_text}");
+
+    // B) 200 坏形状（choices 非数组）→ body 脱敏，正文不进 trace
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-x", "object": "chat.completion", "created": 1,
+            "model": "m", "choices": 42,
+            "leaked_reasoning_content": "隐藏思考原文不得入档"
+        })))
+        .expect(1) // JSONDeserialize 属非瞬时类 → 单次即败
+        .mount(&server)
+        .await;
+    let runtime = AgentRuntime::for_test(&server.uri(), "m", 131_072, true, true);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let trace_path = tempfile::tempdir().unwrap().path().join("trace.jsonl");
+    let mut trace = Trace::new(Some(trace_path.clone()));
+    let err = run_toolcall_agent::<ProbeContext, ProbeResult>(
+        &runtime,
+        &mut spec,
+        plan("开始", 4),
+        &mut ctx,
+        &mut trace,
+    )
+    .await
+    .expect_err("坏形状必须失败");
+    assert!(err.to_string().contains("redacted"), "{err}");
+    drop(trace);
+    let trace_text = std::fs::read_to_string(&trace_path).unwrap();
+    assert!(!trace_text.contains("隐藏思考"), "{trace_text}");
+}

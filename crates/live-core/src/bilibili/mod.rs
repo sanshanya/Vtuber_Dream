@@ -28,6 +28,9 @@ pub const BANGUMI_PAGE_CAP: i64 = 30;
 pub const HOT_SEARCHES_LIMIT_CAP: i64 = 50;
 pub const REPLIES_PAGE_CAP: i64 = 20;
 pub const RECORD_LIST_PAGE_CAP: i64 = 20;
+/// 回放弹幕分片数硬尺：响应 dm_info.num 直接驱动逐片请求循环；
+/// 正常一场回放分片数十级，200 是防异常响应请求放大的防御上界（Rust 自定，Python 无对应端点）。
+pub const DANMAKU_SHARD_CAP: i64 = 200;
 /// 搜索接口单页条数（Python `min(limit, 20)`，search/type 单页上限）。
 pub const SEARCH_VIDEOS_PAGE_SIZE: i64 = 20;
 

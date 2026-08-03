@@ -147,6 +147,36 @@ async fn search_clamps_cache_hit_zero_request_and_snapshots() {
     );
 }
 
+/// 安全批 R1：篡改 cache 中的 result_id 不得进入注册表/快照（目录穿越与伪造 id 拦截）。
+#[test]
+fn tampered_cache_ids_neither_registered_nor_snapshotted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache_dir = tmp.path().join("ai");
+    std::fs::create_dir_all(&cache_dir).unwrap();
+    std::fs::write(
+        cache_dir.join("research_cache.json"),
+        json!({
+            "searches": {"q|totalrank|1": [
+                {"result_id": "../../evil", "title": "x"},
+                {"result_id": "", "title": "y"},
+                {"result_id": "0123456789abcdef", "title": "ok"}
+            ]},
+            "videos": {}
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let research = ResearchService::new(tmp.path(), mock_client_origin("http://127.0.0.1:1"), 20);
+    let ids: Vec<&str> = research.search_results.keys().map(String::as_str).collect();
+    assert_eq!(ids, ["0123456789abcdef"], "只有合法 hex16 id 进入注册表");
+    let searches_dir = tmp.path().join("ai").join("searches");
+    assert!(
+        !searches_dir.exists() || std::fs::read_dir(&searches_dir).unwrap().count() == 0,
+        "篡改 id 不产生快照文件"
+    );
+    assert!(!tmp.path().join("evil.json").exists(), "无目录穿越写入");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn search_tool_error_surface_returns_error_dict() {
     let server = MockServer::start().await;

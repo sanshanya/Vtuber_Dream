@@ -42,6 +42,9 @@ pub const SEARCH_ENTITY_LIMIT_CAP: i64 = 100;
 pub const SEARCH_LIMIT_HARD_CAP: i64 = 50;
 /// search_bilibili_videos 的默认 limit（Python 函数签名默认值）。
 pub const SEARCH_DEFAULT_LIMIT: i64 = 10;
+/// result_id 形态：程序生成的 sha1 hex 前 16 位（安全批 R1：注册表/快照只接受此形态，
+/// 防 cache 文件被篡改后注入目录穿越 id 或伪造可引用 id）。
+pub const SEARCH_RESULT_ID_CHARS: usize = 16;
 /// get_viewer_analysis 附带 episode 的条数钳制（Python `min(episode_limit, 10)`）。
 pub const VIEWER_EPISODE_LIMIT_CAP: i64 = 10;
 /// query_graph 默认 limit（Python 签名默认 500 = GRAPH_QUERY_LIMIT）。
@@ -129,6 +132,14 @@ pub fn normalize_search_result(query: &str, index: usize, item: &Value) -> Value
 /// AI 调查期的检索服务。注册表（`search_results`）为**按运行实例隔离**——
 /// 不随 ResearchService 克隆共享；但会从 research_cache.json 回填（Python 一致：
 /// 跨运行引用凭快照文件可回访——修复7 的语义补充）。
+/// result_id 形态闸：恰好 16 位小写 hex（hash_parts 产出形态）。
+fn is_search_result_id(id: &str) -> bool {
+    id.len() == SEARCH_RESULT_ID_CHARS
+        && id
+            .chars()
+            .all(|ch| ch.is_ascii_digit() || ('a'..='f').contains(&ch))
+}
+
 pub struct ResearchService {
     cache_path: PathBuf,
     searches_dir: PathBuf,
@@ -157,7 +168,9 @@ impl ResearchService {
             for rows in searches.values() {
                 if let Some(list) = rows.as_array() {
                     for item in list {
-                        if let Some(id) = item.get("result_id").and_then(Value::as_str) {
+                        if let Some(id) = item.get("result_id").and_then(Value::as_str)
+                            && is_search_result_id(id)
+                        {
                             search_results.insert(id.to_string(), item.clone());
                         }
                     }
@@ -180,7 +193,9 @@ impl ResearchService {
 
     /// 修复7：把可引用的搜索结果归档到 `searches/{result_id}.json`（幂等：已存在不重写）。
     fn snapshot(&self, row: &Value) {
-        if let Some(id) = row.get("result_id").and_then(Value::as_str) {
+        if let Some(id) = row.get("result_id").and_then(Value::as_str)
+            && is_search_result_id(id)
+        {
             let path = self.searches_dir.join(format!("{id}.json"));
             if !path.is_file() {
                 let _ = write_json(&path, row);

@@ -3,9 +3,9 @@
 use serde_json::Value;
 
 use super::{
-    BANGUMI_PAGE_CAP, BilibiliClient, BilibiliError, FAVORITE_ITEMS_PAGE_CAP, FOLLOWINGS_PAGE_CAP,
-    HOT_SEARCHES_LIMIT_CAP, RECORD_LIST_PAGE_CAP, REPLIES_PAGE_CAP, SEARCH_VIDEOS_PAGE_SIZE,
-    VIDEOS_PAGE_CAP, pick, py_int, py_truth, take_items,
+    BANGUMI_PAGE_CAP, BilibiliClient, BilibiliError, DANMAKU_SHARD_CAP, FAVORITE_ITEMS_PAGE_CAP,
+    FOLLOWINGS_PAGE_CAP, HOT_SEARCHES_LIMIT_CAP, RECORD_LIST_PAGE_CAP, REPLIES_PAGE_CAP,
+    SEARCH_VIDEOS_PAGE_SIZE, VIDEOS_PAGE_CAP, pick, py_int, py_truth, take_items,
 };
 
 impl BilibiliClient {
@@ -426,13 +426,15 @@ impl BilibiliClient {
             false,
             Some("https://live.bilibili.com/"),
         )?;
+        // DANMAKU_SHARD_CAP：无尺循环会放大异常 num 成请求风暴（安全批 R1）。
         let shards = info
             .get("dm_info")
             .and_then(|d| d.get("num"))
             .and_then(Value::as_i64)
-            .unwrap_or(0);
+            .unwrap_or(0)
+            .clamp(0, DANMAKU_SHARD_CAP);
         let mut messages: Vec<Value> = Vec::new();
-        for index in 0..shards.max(0) {
+        for index in 0..shards {
             let data = self.request(
                 &self.live_base.clone(),
                 "/xlive/web-room/v1/dM/getDMMsgByPlayBackID",

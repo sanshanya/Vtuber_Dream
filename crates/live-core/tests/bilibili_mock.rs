@@ -3,7 +3,7 @@
 //! followings/guard_members 多页拼接不截断 + 成员去重。
 //! 客户端延迟=0；根地址指向 MockServer（生产路径与真地址相同，仅根不同）。
 
-use live_core::bilibili::{BilibiliClient, BilibiliError};
+use live_core::bilibili::{BilibiliClient, BilibiliError, DANMAKU_SHARD_CAP};
 use serde_json::json;
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -251,6 +251,33 @@ async fn live_records_caps_at_two_pages() {
     let rows = result.expect("records");
     assert_eq!(rows.len(), 40, "MAX_PAGES=2 封顶");
     assert_eq!(pages.len(), 2, "恰好 2 次请求，不追第 3 页 pages={pages:?}");
+}
+
+/// DANMAKU_SHARD_CAP：异常 num=1_000_000_000 必须被钳到 200，切片请求数钉死（安全批 R1）。
+#[tokio::test(flavor = "multi_thread")]
+async fn live_record_danmaku_shard_cap_clamps_amplification() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/record/getInfoByLiveRecord"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"code": 0, "data": {"dm_info": {"num": 1_000_000_000, "total_num": 1}}}),
+        ))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/dM/getDMMsgByPlayBackID"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": {"dm": {"dm_info": [{"text": "x"}]}}})),
+        )
+        .expect(DANMAKU_SHARD_CAP as u64)
+        .mount(&server)
+        .await;
+    let messages = call(server, |client| client.live_record_danmaku("R1cap"))
+        .await
+        .expect("danmaku");
+    assert_eq!(messages.len(), DANMAKU_SHARD_CAP as usize);
 }
 
 #[tokio::test(flavor = "multi_thread")]

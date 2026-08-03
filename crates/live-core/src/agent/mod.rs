@@ -5,6 +5,7 @@
 
 pub mod probe;
 pub mod prompts;
+pub mod redact;
 pub mod runtime;
 pub mod tools;
 pub mod validators;
