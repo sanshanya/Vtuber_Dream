@@ -898,3 +898,102 @@ async fn store_open_failure_umbrella_writes_failed_state() {
     assert_eq!(state["viewer_input_hashes"].as_object().unwrap().len(), 2);
     assert!(state["error"].as_str().unwrap().contains("store"));
 }
+
+// ---------------------------------------------------------------------------
+// M5-B3：stage hook（per_viewer_ai → audience 顺序钉）+ D7 run_viewer_pipeline
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn stages_hook_reports_per_viewer_ai_then_audience() {
+    use std::sync::{Arc, Mutex};
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, _e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    // 只挂载 g1：g2 无 mock → 基于 wiremock 期望验证失败（404）→ viewer stages 完成
+    // 但剩余 g1 提交可走 audience。
+    mount_audience_ok(&server, &["g1"]).await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+    let stages: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+    let listener = {
+        let stages = stages.clone();
+        move |stage: &'static str| stages.lock().unwrap().push(stage.to_string())
+    };
+    let mut knobs = PipelineKnobs {
+        stage: Some(&listener),
+        ..PipelineKnobs::default()
+    };
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("单观众失败不破坏整体运行");
+    let captured = stages.lock().unwrap();
+    assert_eq!(
+        captured.as_slice(),
+        ["per_viewer_ai", "audience"],
+        "{captured:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn viewer_pipeline_filters_baseline_and_rejects_ghost() {
+    use std::sync::{Arc, Mutex};
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, _e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    mount_audience_ok(&server, &["g1"]).await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+    let stages: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+    let listener = {
+        let stages = stages.clone();
+        move |stage: &'static str| stages.lock().unwrap().push(stage.to_string())
+    };
+    let mut knobs = PipelineKnobs {
+        stage: Some(&listener),
+        ..PipelineKnobs::default()
+    };
+    let config = test_config(tmp.path(), &server.uri(), true);
+    let result =
+        live_core::agent::pipeline::run_viewer_pipeline(config, &analysis, "g1", false, &mut knobs)
+            .await
+            .expect("单观众运行成功");
+    assert_eq!(result["viewer_count"], 1, "{result}");
+    assert_eq!(result["viewer_failures"], 0, "{result}");
+    // 只有 g1 观众落实到缓存，g2 从不出现。
+    assert!(tmp.path().join("ai/perception/viewers/g1.json").exists());
+    assert!(!tmp.path().join("ai/perception/viewers/g2.json").exists());
+
+    // 不存在的 uid → 明确错误（编排不去默认观众）
+    let error = live_core::agent::pipeline::run_viewer_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        "ghost",
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect_err("ghost 必须报错");
+    assert!(
+        error.to_string().contains("baseline 无 viewer ghost"),
+        "{error}"
+    );
+}

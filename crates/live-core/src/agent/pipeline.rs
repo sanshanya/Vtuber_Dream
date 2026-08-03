@@ -406,6 +406,10 @@ pub struct PipelineKnobs<'a> {
     pub apply_viewer: Option<&'a mut ApplyViewerFn<'a>>,
     /// 测试接缝：Bilibili 回放根地址（默认官方端点；调查工具发起网络时才消费）。
     pub bilibili_origin: Option<(String, String)>,
+    /// M5-B3/D3：run 状态机 stage hook。已公布的字面名只来自本文件两个常量；
+    /// queued/collecting/episodes/done/failed 由调用方（live-server registry）控制——
+    /// 显式 seam 使 progress 文案与状态机解耦（不改既有测试签名：Option<'_'> 字段）。
+    pub stage: Option<&'a dyn Fn(&'static str)>,
 }
 
 fn progress_say(knobs: &PipelineKnobs<'_>, message: &str) {
@@ -413,6 +417,17 @@ fn progress_say(knobs: &PipelineKnobs<'_>, message: &str) {
         progress(message);
     }
 }
+
+fn stage_say(knobs: &PipelineKnobs<'_>, stage: &'static str) {
+    if let Some(hook) = knobs.stage {
+        hook(stage);
+    }
+}
+
+/// M5-B3 状态机字面名（design §10 枚举——只有 hook 内产物 + live-server registry 设出的
+/// 名字声称这一组；listener 消费方对照匹配）。
+pub const STAGE_PER_VIEWER_AI: &str = "per_viewer_ai";
+pub const STAGE_AUDIENCE: &str = "audience";
 
 /// r3-F3：analysis 落盘剥「空 leads」——Python 模型 extra=forbid：键存在即拒；
 /// 空期双通（Rust serde 有 default 补齐、Python 无解码阻力）；非空 leads 是 M4.x
@@ -982,6 +997,36 @@ pub async fn run_pipeline(
     }
 }
 
+/// D7（M5-B3）：单观众薄封装——analysis 的 viewer_profiles 过滤后走同一 run_pipeline
+/// 主体；viewer 未落入 baseline → 明确错误，不新写编排（kickoff G1/D7 裁决）。
+///
+/// 注：run_pipeline 的 force 语义为**全局**清理（重算所有篮内观众），viewer 面 force 的
+/// 拒绝职责归调用方（live-server POST /api/runs 的 422）。
+pub async fn run_viewer_pipeline(
+    config: Config,
+    analysis: &Value,
+    viewer_uid: &str,
+    force: bool,
+    knobs: &mut PipelineKnobs<'_>,
+) -> Result<Value, PipelineError> {
+    let mut filtered = analysis.clone();
+    if let Some(profiles) = filtered
+        .get_mut("viewer_profiles")
+        .and_then(Value::as_array_mut)
+    {
+        profiles.retain(|profile| profile["viewer"]["id"].as_str() == Some(viewer_uid));
+    }
+    match filtered["viewer_profiles"].as_array() {
+        Some(list) if !list.is_empty() => {}
+        _ => {
+            return Err(PipelineError::Message(format!(
+                "baseline 无 viewer {viewer_uid}"
+            )));
+        }
+    }
+    run_pipeline(config, &filtered, force, knobs).await
+}
+
 async fn run_pipeline_inner(
     config: &Config,
     analysis: &Value,
@@ -1104,7 +1149,9 @@ async fn run_pipeline_inner(
         Err(err) => bail!(err),
     }
     // master 由 run_pipeline 传入（Python 次序：research 先于 begin_graph_run）。
-    // 并发扇出 + 有序应用栅栏
+    // 并发扇出 + 有序应用栅栏（M5-B3：状态机 hook——queued/collecting/episodes 由
+    // registry 自己直接进入 per_viewer_ai）。
+    stage_say(knobs, STAGE_PER_VIEWER_AI);
     let semaphore = Arc::new(Semaphore::new(INVESTIGATE_CONCURRENCY));
     let mut set: tokio::task::JoinSet<(String, ViewerStage)> = tokio::task::JoinSet::new();
     for uid in &viewer_ids {
@@ -1255,6 +1302,7 @@ async fn run_pipeline_inner(
             "all viewer Perception or graph applies failed".to_string(),
         ));
     }
+    stage_say(knobs, STAGE_AUDIENCE);
     let graph_context = match project(
         &store,
         &ProjectOptions {
