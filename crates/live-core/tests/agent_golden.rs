@@ -558,11 +558,9 @@ fn terminal_fatal_channel_on_store_failure() {
         episodes: Default::default(),
         research: ResearchService::new(tmp.path(), mock_client(DEAD_ORIGIN), 20),
         store,
-        slot: {
-            let mut slot = live_core::agent::runtime::SubmissionSlot::default();
-            slot.value = Some(json!({"legacy": "kept"}));
-            slot.validation_errors = vec!["kept".to_string()];
-            slot
+        slot: live_core::agent::runtime::SubmissionSlot {
+            value: Some(json!({"legacy": "kept"})),
+            validation_errors: vec!["kept".to_string()],
         },
     };
     let mut tool = live_core::agent::tools::viewer_terminal_tool();
