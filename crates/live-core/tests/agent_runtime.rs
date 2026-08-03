@@ -593,3 +593,28 @@ async fn invalid_tool_arguments_json_gets_feedback_without_handler() {
     assert_eq!(outcome.submission.total, 21);
     // handler 若被执行，工具结果会是 {"seed":7}，turn1 谓词不匹配 → 404 → 上面 expect 即失败（路由即钉）。
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn transport_5xx_requests_exactly_inner_retry_budget() {
+    // 回归钉（async-openai 0.41.3 隐藏 OpenAIRetryLayer 事故）：
+    // transport 瞬时错的唯一重试所有者是 chat() 内层（HTTP_EXTRA_ATTEMPTS=2）；
+    // 客户端 executor 必须零重试 → retries=0 的 agent floatErr 后总请求数恒为 3。
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "boom"}})),
+        )
+        .expect(3)
+        .mount(&server)
+        .await;
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: Result<live_core::agent::runtime::RunOutcome<ProbeResult>, _> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace).await;
+    let err = outcome.expect_err("恒 500 必须失败").to_string();
+    assert!(err.contains("failed after 1 attempts"), "err={err}");
+    assert_eq!(trace.stats.llm_calls, 1, "transport 错不烧 turn");
+}

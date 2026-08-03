@@ -1,0 +1,678 @@
+//! M4-C pipeline 集成钉：阶段状态机、缓存恢复、并发扇出+有序栅栏、失败分支、state.json。
+//! 剧本基座 = tests-fixtures/m4a/viewer_root（两观众）；LLM 面由 wiremock 逐回合钉。
+mod common;
+
+use std::path::Path;
+
+use serde_json::{Value, json};
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
+
+use common::{BodyPred, assistant_tool_call, messages_len, mount_turn};
+use live_core::agent::pipeline::{PipelineKnobs, run_pipeline, viewer_input_bundle};
+use live_core::config::{
+    AgentRuntimeConfig, AiConfig, BilibiliConfig, CollectionConfig, Config, PeerDiscoveryConfig,
+    PerceptionConfig, ReasoningConfig,
+};
+use live_core::episodes::baseline::build_factual_baseline;
+use live_core::graph::store::{Store, StoreError, mention_id_of};
+use live_core::models::MentionSpan;
+
+const SEED_ENTITY: &str = "ent-demo";
+/// fixtures 标题内实测 span（字符偏移；g1=《异环》…角色演出，g2=…与《明日方舟》世界观讨论）。
+const G1_MENTION: (i64, i64, &str) = (1, 3, "异环");
+const G2_MENTION: (i64, i64, &str) = (12, 16, "明日方舟");
+
+fn m4a_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests-fixtures/m4a/viewer_root")
+}
+
+fn copy_tree(src: &Path, dst: &Path) {
+    std::fs::create_dir_all(dst).unwrap();
+    for entry in std::fs::read_dir(src).unwrap() {
+        let entry = entry.unwrap();
+        let target = dst.join(entry.file_name());
+        if entry.file_type().unwrap().is_dir() {
+            copy_tree(&entry.path(), &target);
+        } else {
+            std::fs::copy(entry.path(), target).unwrap();
+        }
+    }
+}
+
+fn test_config(root: &Path, uri: &str, resume: bool) -> Config {
+    Config {
+        source: root.join("config.yaml"),
+        project_name: "m4c".into(),
+        output_dir: root.to_path_buf(),
+        bilibili: BilibiliConfig {
+            room_id: "1".into(),
+            streamer_uid: "0".into(),
+            cookie: "SESSDATA=test".into(),
+            additional_viewer_ids: vec![],
+        },
+        collection: CollectionConfig {
+            max_guards: 1,
+            per_viewer_request_budget: 1,
+            followings_limit: 1,
+            recent_videos: 1,
+            recent_dynamics: 1,
+            favorite_folders: 1,
+            favorite_items_per_folder: 1,
+            bangumi_limit: 1,
+            games_limit: 1,
+            max_video_metadata_items: 1,
+            request_delay_seconds: 0.0,
+            timeout_seconds: 5.0,
+            room_comment_request_budget: 0,
+            live_replay_danmaku_limit: 1,
+        },
+        perception: PerceptionConfig {
+            max_evidence_per_viewer: 1000,
+            preserve_raw_snapshots: false,
+            platform_hot_search_limit: 1,
+            minimum_community_size: 1,
+            peer: PeerDiscoveryConfig {
+                candidate_limit: 1,
+                recent_videos: 1,
+                recent_dynamics: 1,
+                max_formal_peers: 1,
+            },
+        },
+        ai: AiConfig {
+            api: "chat_completions".into(),
+            base_url: uri.to_string(),
+            api_key: "test".into(),
+            model: "m4c-model".into(),
+            timeout_seconds: 5.0,
+            max_output_tokens: 4096,
+            reasoning: ReasoningConfig {
+                enabled: false,
+                effort: "high".into(),
+                replay_content: true,
+            },
+            agent: AgentRuntimeConfig {
+                max_turns: 4,
+                resume,
+                local_trace: false,
+                run_retries: 0,
+                retry_backoff_seconds: 0.0,
+            },
+            search_results_per_query: 20,
+            rules: vec!["取向优先新内容与互动攻略".into()],
+        },
+        report_title: "t".into(),
+    }
+}
+
+/// 实测两观众的 favorite episode id（bundle episodes[0] = 收藏条目；排序钉在 M4-A bundle 对账）。
+fn episode_ids(root: &Path) -> (String, String) {
+    let analysis = build_factual_baseline(root, 1000).unwrap();
+    let reasoning = json!({"enabled": false, "effort": "high", "replay_content": true});
+    let id_of = |uid: &str| {
+        let raw = read(&root.join(format!("viewers/{uid}.json")));
+        let profile = analysis["viewer_profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["viewer"]["id"] == uid)
+            .unwrap()
+            .clone();
+        viewer_input_bundle(
+            &raw,
+            &profile,
+            "m4c-model",
+            "chat_completions",
+            &reasoning,
+            &["取向优先新内容与互动攻略".to_string()],
+            1000,
+        )
+        .episodes[0]
+            .episode_id
+            .clone()
+    };
+    (id_of("g1"), id_of("g2"))
+}
+
+fn viewer_submission(
+    uid: &str,
+    episode_id: &str,
+    mention: (i64, i64, &str),
+    entity_name: &str,
+) -> Value {
+    json!({
+        "viewer_id": uid,
+        "profile_summary": "该观众近期集中关注演示作品与开放世界玩法，优先新内容和互动攻略。",
+        "mentions": [{
+            "mention_id": "m1", "episode_id": episode_id, "field_path": "title",
+            "text": mention.2, "start": mention.0, "end": mention.1,
+            "mention_type": "作品名", "origin": "explicit",
+            "proposed_entity_name": entity_name, "proposed_entity_type": "游戏",
+            "entity_ref": "entity:e1", "confidence": 0.9
+        }],
+        "entities": [{
+            "local_id": "e1", "canonical_name": entity_name, "entity_type": "游戏",
+            "aliases": [], "description": "", "existing_entity_id": null,
+            "resolution": "NEW_ENTITY", "evidence_mention_ids": ["m1"],
+            "parent_entity_refs": [], "confidence": 0.8
+        }],
+        "relations": [],
+        "interest_states": [{
+            "entity_ref": "entity:e1", "status": "近期上升", "preference": "关注具体内容",
+            "aspects": [], "rationale": "公开收藏出现该实体，形成可追溯证据链。",
+            "evidence_mention_ids": ["m1"], "confidence": 0.5
+        }],
+        "content_preferences": [], "recent_changes": [], "hypotheses": [],
+        "conversation_openers": [], "content_ideas": [], "enrichment_targets": [],
+        "cautions": [], "leads": []
+    })
+}
+
+fn span_of(episode_id: &str, mention: (i64, i64, &str)) -> MentionSpan {
+    MentionSpan {
+        mention_id: "m1".to_string(),
+        episode_id: episode_id.to_string(),
+        field_path: "title".to_string(),
+        text: mention.2.to_string(),
+        start: mention.0,
+        end: mention.1,
+        mention_type: "作品名".to_string(),
+        origin: "explicit".to_string(),
+        proposed_entity_name: String::new(),
+        proposed_entity_type: String::new(),
+        entity_ref: "entity:e1".to_string(),
+        confidence: 0.9,
+    }
+}
+
+fn mention_ids() -> (String, String) {
+    let (e1, e2) = episode_ids(&m4a_root());
+    (
+        mention_id_of("g1", &span_of(&e1, G1_MENTION)),
+        mention_id_of("g2", &span_of(&e2, G2_MENTION)),
+    )
+}
+
+/// audience 提交：cite 播种实体 + 实际入库 mention（M4-A 实测 id）。
+fn audience_submission(viewers: &[&str]) -> Value {
+    let (m1, m2) = mention_ids();
+    let evidence: Vec<Value> = viewers
+        .iter()
+        .map(|v| {
+            if *v == "g1" {
+                json!(m1.clone())
+            } else {
+                json!(m2.clone())
+            }
+        })
+        .collect();
+    json!({
+        "executive_summary": "观众分别围绕演示作品形成独立兴趣焦点，结构简单清晰可追溯。",
+        "audience_structure": [],
+        "interest_graph": [{
+            "entity_id": SEED_ENTITY, "entity": "演示聚合实体", "entity_type": "游戏",
+            "parent_entities": [], "angles": [], "viewer_ids": viewers,
+            "status": "无法判断", "confidence": 0.6, "evidence_summary": "",
+            "evidence_mention_ids": evidence
+        }],
+        "communities": [], "situations": [], "content_opportunities": [],
+        "individual_highlights": [], "content_calendar": [],
+        "data_gaps": [], "safety_notes": [], "leads": []
+    })
+}
+
+fn seed_entity(store: &Store) {
+    store.conn.execute(
+        "INSERT INTO entities(entity_id,canonical_name,normalized_name,entity_type,description,source_kind,properties_json,first_seen_at,last_seen_at) \
+         VALUES('ent-demo','演示聚合实体','演示聚合实体','游戏','','ai_semantic','{}','t0','t1')",
+        [],
+    ).unwrap();
+    store
+        .upsert_node(
+            SEED_ENTITY,
+            "Entity",
+            "演示聚合实体",
+            &json!({}),
+            "ai_semantic",
+            None,
+        )
+        .unwrap();
+}
+
+fn name_gate(name: &'static str) -> impl Fn(&Value) -> bool + Send + Sync + 'static {
+    move |body: &Value| {
+        messages_len(2)(body)
+            && body["messages"][1]["content"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("对下面完整Episode") && s.contains(name))
+    }
+}
+
+fn audience_gate() -> impl Fn(&Value) -> bool + Send + Sync + 'static {
+    move |body: &Value| {
+        messages_len(2)(body)
+            && body["messages"][1]["content"]
+                .as_str()
+                .is_some_and(|s| s.starts_with("基于下面的全员索引"))
+    }
+}
+
+async fn mount_viewer_ok(server: &MockServer, name: &'static str, submission: Value) {
+    mount_turn(
+        server,
+        name_gate(name),
+        assistant_tool_call(
+            "call-v1",
+            "submit_viewer_perception",
+            json!({"submission": submission}),
+            None,
+        ),
+    )
+    .await;
+}
+
+async fn mount_audience_ok(server: &MockServer, viewers: &[&str]) {
+    mount_turn(
+        server,
+        audience_gate(),
+        assistant_tool_call(
+            "call-a1",
+            "submit_audience_situation",
+            json!({"submission": audience_submission(viewers)}),
+            None,
+        ),
+    )
+    .await;
+}
+
+async fn setup_root() -> (tempfile::TempDir, Value) {
+    let tmp = tempfile::tempdir().unwrap();
+    copy_tree(&m4a_root(), tmp.path());
+    let analysis = build_factual_baseline(tmp.path(), 1000).unwrap();
+    (tmp, analysis)
+}
+
+fn read(path: &Path) -> Value {
+    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
+}
+
+fn open_store(root: &Path) -> Store {
+    Store::open(&root.join("graph/perception.sqlite3")).unwrap()
+}
+
+// ---------------------------------------------------------------------------
+// 1. 绿路全景 + 栅栏序 + 终态 parity
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_green_path_and_fence_order() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, e2) = episode_ids(tmp.path());
+    // g1 慢响应（乱完成序），g2 快速——栅栏仍按 viewer_ids 序应用。
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(BodyPred(name_gate("黄金观众甲")))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(assistant_tool_call(
+                    "call-v1",
+                    "submit_viewer_perception",
+                    json!({"submission": viewer_submission("g1", &e1, G1_MENTION, "异环")}),
+                    None,
+                ))
+                .set_delay(std::time::Duration::from_millis(200)),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    mount_audience_ok(&server, &["g1", "g2"]).await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+
+    let mut knobs = PipelineKnobs::default();
+    let result = run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("green run");
+
+    // final dict parity（D-4 runtime 五键 + D-1 usage 入 state）
+    assert_eq!(result["status"], "complete");
+    assert_eq!(result["runtime"], "openai-agents");
+    assert_eq!(result["viewer_count"], 2);
+    assert_eq!(result["viewer_failures"], 0);
+    assert_eq!(result["usage"]["llm_requests"], 3);
+    assert_eq!(result["usage"]["input_tokens"], 30);
+    let state = read(&tmp.path().join("ai/state.json"));
+    assert_eq!(state["status"], "complete");
+    assert!(
+        state["situation_input_hash"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty()),
+        "situation hash 回读落 state"
+    );
+    assert!(
+        state["usage"]["total_tokens"].as_i64().is_some(),
+        "D-1 usage 入 state"
+    );
+    assert!(state["viewer_input_hashes"]["g1"].as_str().is_some());
+    let cache = read(&tmp.path().join("ai/perception/viewers/g1.json"));
+    assert_eq!(cache["status"], "complete");
+    let runtime = cache["runtime"].as_object().unwrap();
+    assert_eq!(runtime.len(), 5, "D-4 五键 parity，实际：{runtime:?}");
+    assert!(runtime.get("tool_names").is_none());
+    // 栅栏：mentions rowid 序 = viewer_ids 序（g1 慢后完成仍先应用）
+    let store = open_store(tmp.path());
+    let mut stmt = store
+        .conn
+        .prepare("SELECT mention_id FROM mentions ORDER BY rowid")
+        .unwrap();
+    let order: Vec<String> = stmt
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .map(|r| r.unwrap())
+        .collect();
+    let (m1, m2) = mention_ids();
+    assert_eq!(order, vec![m1, m2]);
+    let completed_at: Option<String> = store
+        .conn
+        .query_row("SELECT completed_at FROM graph_runs", [], |row| row.get(0))
+        .unwrap();
+    assert!(completed_at.is_some(), "run 行 completed_at 落盘");
+}
+
+// ---------------------------------------------------------------------------
+// 2. 全量缓存恢复：同根重跑 → 零 LLM 调用（server 无 mock，任何请求即失败）
+//    + D-10 幂等在 pipeline 层的投影（活跃边零膨胀）
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_full_resume_no_llm_calls() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    mount_audience_ok(&server, &["g1", "g2"]).await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+    let mut knobs = PipelineKnobs::default();
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("run1");
+    // run2：无任何 mock——成功 ⟺ 缓存全命中（重校验同样过：图已含 run1 数据）
+    let mut knobs2 = PipelineKnobs::default();
+    let result = run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs2,
+    )
+    .await
+    .expect("run2 must be fully cache-resumed");
+    assert_eq!(result["viewer_count"], 2);
+    let store = open_store(tmp.path());
+    let active: i64 = store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM edges WHERE predicate='INTERESTED_IN' AND valid_to IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 2);
+}
+
+// ---------------------------------------------------------------------------
+// 3. 单观众失败继续（500 瞬时族耗尽 → 该观众 failed 缓存，另一人照常）
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_single_viewer_failure_continues() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (_e1, e2) = episode_ids(tmp.path());
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(BodyPred(name_gate("黄金观众甲")))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "server boom"}})),
+        )
+        .expect(3) // chat 内层瞬时重试共 3 次
+        .mount(&server)
+        .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+    mount_audience_ok(&server, &["g2"]).await;
+    let mut knobs = PipelineKnobs::default();
+    let result = run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("partial run");
+    assert_eq!(result["viewer_count"], 1);
+    assert_eq!(result["viewer_failures"], 1);
+    let cache = read(&tmp.path().join("ai/perception/viewers/g1.json"));
+    assert_eq!(cache["status"], "failed");
+}
+
+// ---------------------------------------------------------------------------
+// 4. 全灭 → AgentRuntimeError parity 文案 + failed state + run 行 failed
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_all_viewers_fail_aborts() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "server boom"}})),
+        )
+        .expect(6) // 2 viewers × 3 内层尝试
+        .mount(&server)
+        .await;
+    let mut knobs = PipelineKnobs::default();
+    let err = run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect_err("must abort");
+    assert_eq!(
+        err.to_string(),
+        "all viewer Perception or graph applies failed"
+    );
+    let state = read(&tmp.path().join("ai/state.json"));
+    assert_eq!(state["status"], "failed");
+    assert_eq!(state["viewer_stage_status"], "incomplete");
+    let failed_at: Option<String> = open_store(tmp.path())
+        .conn
+        .query_row("SELECT failed_at FROM graph_runs", [], |row| row.get(0))
+        .unwrap();
+    assert!(failed_at.is_some(), "run 行 failed_at 落盘");
+}
+
+// ---------------------------------------------------------------------------
+// 5. graph_failed 分支（hook 复现）+ viewer_failures 明细落 state
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_graph_failure_marks_graph_failed() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    // g2 应用失败 → audience 只见 g1 的证据
+    mount_audience_ok(&server, &["g1"]).await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+    let mut hook = |store: &Store,
+                    run_id: &str,
+                    name: &str,
+                    episodes: &[live_core::episodes::Episode],
+                    output: &live_core::models::ViewerPerceptionSubmission| {
+        if name == "黄金观众乙" {
+            Err(StoreError::Repo("injected apply failure".to_string()))
+        } else {
+            live_core::graph::build::apply_viewer_submission(store, run_id, name, episodes, output)
+        }
+    };
+    let mut knobs = PipelineKnobs {
+        apply_viewer: Some(&mut hook),
+        ..PipelineKnobs::default()
+    };
+    let result = run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("run with injected graph failure");
+    assert_eq!(result["viewer_count"], 1);
+    assert_eq!(result["viewer_failures"], 1);
+    let cache = read(&tmp.path().join("ai/perception/viewers/g2.json"));
+    assert_eq!(cache["status"], "graph_failed");
+    assert!(
+        cache["error"]
+            .as_str()
+            .is_some_and(|s| s.contains("injected"))
+    );
+    // Python parity：viewer_failures 明细只写在 viewer_complete 瞬态，被后续 complete 覆盖，
+    // 不落终态——明细的持久面 = 每观众缓存的 graph_failed + final 计数（已钉）。
+    let state = read(&tmp.path().join("ai/state.json"));
+    assert_eq!(state["status"], "complete");
+}
+
+// ---------------------------------------------------------------------------
+// 6. audience 失败 → 整 run 失败（state failed + viewer_stage complete + run 行 failed）
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_audience_failure_fails_run() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(BodyPred(audience_gate()))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "server boom"}})),
+        )
+        .expect(3)
+        .mount(&server)
+        .await;
+    let mut knobs = PipelineKnobs::default();
+    let err = run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect_err("audience failure must fail the run");
+    assert!(
+        err.to_string().contains("500") || err.to_string().to_lowercase().contains("http"),
+        "err={err}"
+    );
+    let state = read(&tmp.path().join("ai/state.json"));
+    assert_eq!(state["status"], "failed");
+    assert_eq!(state["viewer_stage_status"], "complete");
+    let failed_at: Option<String> = open_store(tmp.path())
+        .conn
+        .query_row("SELECT failed_at FROM graph_runs", [], |row| row.get(0))
+        .unwrap();
+    assert!(failed_at.is_some(), "run 行 failed_at 落盘");
+}
+
+// ---------------------------------------------------------------------------
+// 7. D-10：audience apply 幂等（同提交两次应用 → 图面零膨胀）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn audience_apply_idempotent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(&tmp.path().join("g.sqlite3")).unwrap();
+    store.begin_run_fixed("run-1", "t0", "m").unwrap();
+    seed_entity(&store);
+    let submission = serde_json::from_value::<live_core::models::AudienceSituationSubmission>(
+        audience_submission(&["g1"]),
+    )
+    .unwrap();
+    live_core::graph::build::apply_audience_submission(&store, "run-1", &submission).unwrap();
+    let count = |sql: &str| -> i64 { store.conn.query_row(sql, [], |row| row.get(0)).unwrap() };
+    let (n1, e1) = (
+        count("SELECT COUNT(*) FROM nodes"),
+        count("SELECT COUNT(*) FROM edges"),
+    );
+    live_core::graph::build::apply_audience_submission(&store, "run-1", &submission).unwrap();
+    let (n2, e2) = (
+        count("SELECT COUNT(*) FROM nodes"),
+        count("SELECT COUNT(*) FROM edges"),
+    );
+    assert_eq!((n1, e1), (n2, e2));
+}

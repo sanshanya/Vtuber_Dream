@@ -19,8 +19,8 @@ chrono = "0.4"
 regex = "1"
 thiserror = "2"
 uuid = { version = "1", features = ["v4"] }
-async-openai = { version = "0.41.3", features = ["byot", "chat-completion"] }
-tokio = { version = "1", features = ["macros", "rt-multi-thread", "time"] }
+async-openai = { version = "0.41.3", features = ["byot", "chat-completion", "middleware"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "sync"] }
 reqwest13 = { version = "0.13", package = "reqwest" }
 
 [dev-dependencies]

@@ -398,8 +398,12 @@ impl AgentRuntime {
         let config = async_openai::config::OpenAIConfig::new()
             .with_api_base(&ai.base_url)
             .with_api_key(&ai.api_key);
+        // parity 红线：重试主权唯一属于 chat() 内层（HTTP_EXTRA_ATTEMPTS）。
+        // 0.41.3 默认 ReqwestExecutor 内嵌 OpenAIRetryLayer(max_retries=3)——
+        // 必须显式换成纯传输 ReqwestService，否则瞬时错请求数 ×4（M4-C 实测 12/agent）。
         Ok(Self::build(
-            async_openai::Client::with_config(config).with_http_client(http),
+            async_openai::Client::with_config(config)
+                .with_http_service(async_openai::middleware::ReqwestService::new(http)),
             &ai.model,
             ai.max_output_tokens,
             ai.reasoning.enabled,
@@ -419,8 +423,11 @@ impl AgentRuntime {
         let config = async_openai::config::OpenAIConfig::new()
             .with_api_base(base_url)
             .with_api_key("test");
+        // 同 from_ai_config：禁默认 executor 隐藏重试层（见该处注释）。
         Self::build(
-            async_openai::Client::with_config(config),
+            async_openai::Client::with_config(config).with_http_service(
+                async_openai::middleware::ReqwestService::new(reqwest13::Client::new()),
+            ),
             model,
             max_tokens,
             reasoning_enabled,
