@@ -12,6 +12,7 @@ pub mod config;
 pub mod episodes;
 pub mod graph;
 pub mod models;
+pub mod storage;
 
 #[cfg(test)]
 mod tests {

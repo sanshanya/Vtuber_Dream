@@ -1,7 +1,7 @@
 //! Collector 编排基底（移植 Python `collector.py` 的 normalize 集）。
 //!
 //! 移植策略（design M2）：normalize 集直连 Python 锚 fixture（tests-fixtures/m2/normalize.json）。
-//! 的 collect() / collect_viewer(source_status 记账) / enrich 一次写盘 在 B2 下一段；
+//! 编排层（collect_viewer 预算循环 / enrich 一次写盘 / collect() 主入口）拆到 `run.rs`。
 //! 本节只到：**normalize 集 + _status/_content_id/_brief/collect_text**（负扫描：`profile` 误差完全不加掩盖上限，
 //! `games` 无 id 规律化，Python 索引函数 `if_empty(index)` 保留英文化英文）。
 //!
@@ -17,9 +17,10 @@ use sha1::{Digest, Sha1};
 
 /// Python `_brief`：超限截断，附加 "…"。
 pub fn brief(error: &dyn std::fmt::Display, limit: usize) -> String {
-    let text = error.to_string().replace('\n', " ");
+    // Python `_brief`：先 replace+strip，再按字符数截断加 "…"。
+    let text = error.to_string().replace('\n', " ").trim().to_string();
     if text.chars().count() <= limit {
-        text.trim().to_string()
+        text
     } else {
         let clipped: String = text.chars().take(limit - 1).collect();
         format!("{clipped}…")
@@ -56,7 +57,7 @@ pub fn source_error_status(error: &crate::bilibili::BilibiliError) -> Value {
     serde_json::json!({
         "status": status,
         "count": 0,
-        "detail": brief(error, 100),
+        "detail": error.to_string(),
         "items": [],
     })
 }
@@ -86,21 +87,23 @@ fn first_str(item: &Value, keys: &[&str]) -> String {
     String::new()
 }
 
-/// `str(item.get(k1) or item.get(k2) or "")`：数值也转字符串。
-/// 因为 Python 的 `str()` 放行 int；目前表现为数字 to_string()。
+/// `str(item.get(k1) or item.get(k2) or "")`：Python `or` truthy——
+/// `0`（未发布动态的 pub_ts=0！）、`None`、`False`、空串都必须落到下一个槽位。
 fn first_number_str(item: &Value, keys: &[&str]) -> String {
     for key in keys {
-        if let Some(value) = item.get(*key) {
-            match value {
-                Value::Number(n) => return n.to_string(),
-                Value::String(s) => {
-                    let t = s.trim();
-                    if !t.is_empty() {
-                        return t.to_string();
-                    }
+        match item.get(*key) {
+            Some(Value::Number(n)) => {
+                if n.as_f64() != Some(0.0) {
+                    return n.to_string();
                 }
-                _ => {}
             }
+            Some(Value::String(s)) => {
+                let t = s.trim();
+                if !t.is_empty() {
+                    return t.to_string();
+                }
+            }
+            _ => {}
         }
     }
     String::new()
@@ -434,9 +437,19 @@ pub fn source_status_parts(source_status: &Map<String, Value>) -> Vec<String> {
         let count = row.get("count").and_then(Value::as_i64).unwrap_or(0);
         out.push(format!("{name}={status}/{count}"));
     }
-    out.sort();
     out
 }
+
+// ---------------------------------------------------------------------------
+// 编排层（run.rs：预算循环 / enrich / 主入口）
+// ---------------------------------------------------------------------------
+
+pub mod run;
+
+pub use run::{
+    CollectError, all_content_items, collect, collect_streamer, collect_viewer,
+    collect_with_client, enrich_video_metadata, write_platform_snapshot,
+};
 
 // ---------------------------------------------------------------------------
 // 仅两个测试钉钉：normalize parity fixture + 帮助测试
