@@ -219,7 +219,29 @@ pub fn episodes(store: &Store, viewer_id: &str, limit: Option<i64>) -> Result<Ve
 }
 
 // ---------------------------------------------------------------------------
-// query（移植 repo.query——M1 删除时注明"M3 报告层/工具真实调用时复出"，
+// mentions_of_viewer（M5 B2：/api/rooms/{uid}/viewers/{vid}/tree 的 mention 面）
+// ---------------------------------------------------------------------------
+
+/// 观众 mention 明细分组 + REFERS_TO 归属（左外联；排序与 project() 的 mention 面同齿）。
+pub fn mentions_of_viewer(
+    store: &Store,
+    viewer_id: &str,
+    limit: Option<i64>,
+) -> Result<Vec<Value>> {
+    let rows = fetch_all(
+        store,
+        "SELECT m.*,r.target_id AS entity_id, e.canonical_name,e.entity_type \
+         FROM mentions m \
+         LEFT JOIN edges r ON r.source_id=m.mention_id \
+           AND r.predicate='REFERS_TO' AND r.source_kind='grounded_ai' AND r.valid_to IS NULL \
+         LEFT JOIN entities e ON e.entity_id=r.target_id \
+         WHERE m.viewer_id=? ORDER BY m.created_at DESC",
+        vec![viewer_id.to_string().into()],
+        limit.map(|v| v.clamp(1, GRAPH_QUERY_LIMIT)),
+    )?;
+    Ok(rows.into_iter().map(Value::Object).collect())
+}
+
 // M3-B query_graph 工具出生，聚合视图随之复出；逐行对齐 Python graph.py:689）
 // ---------------------------------------------------------------------------
 

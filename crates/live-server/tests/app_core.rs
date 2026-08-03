@@ -82,6 +82,7 @@ fn fixture(web_root: Option<&str>) -> Fixture {
         web_root,
         registry,
         demo: false,
+        data_root: None,
     });
     Fixture {
         _tmp: tmp,
@@ -240,6 +241,7 @@ async fn existing_dist_serves_index() {
         web_root: dist,
         registry: live_server::registry::Registry::new(),
         demo: false,
+        data_root: None,
     });
     let request = Request::builder()
         .uri("/")
@@ -271,10 +273,11 @@ async fn unknown_run_id_is_404() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn endpoints_marked_for_b2_b3_respond_not_implemented_yet() {
+async fn overview_without_collection_is_404_and_post_runs_is_501_pending_b3() {
     let fx = fixture(None);
+    // B2 实装后：未运行 → 404（空态明确），不再占位 501。
     let (status, _) = oneshot(&fx.app, "GET", "/api/rooms/983/overview", None).await;
-    assert_eq!(status, 501);
+    assert_eq!(status, 404);
     let (status, _) = oneshot(&fx.app, "POST", "/api/runs", Some(json!({"kind": "full"}))).await;
-    assert_eq!(status, 501);
+    assert_eq!(status, 501, "B3 占位端点保持显式报错态");
 }

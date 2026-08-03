@@ -4,4 +4,5 @@
 //! 处理器只读/受控写 live-core 公开 API，不经手 figment。
 
 pub mod app;
+pub mod cytoscape;
 pub mod registry;

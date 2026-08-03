@@ -38,6 +38,8 @@ pub struct AppState {
     pub registry: Registry,
     /// D5/G3：demo（run --demo）模式——run 通道返回静态快照，不触发真实运行。
     pub demo: bool,
+    /// D5：数据呈现根覆盖 —— run --demo 让它指向 _demo，serve 常态 = None → 从 config 每请求读取。
+    pub data_root: Option<PathBuf>,
 }
 
 /// 统一错误包装记类型：状态码 + {"error": 文案}（D3 形态）。
@@ -71,6 +73,14 @@ fn load_config(state: &AppState) -> AppResult<live_core::config::Config> {
         .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))
 }
 
+/// 数据根统一落点：demo 覆盖 → config.output_dir。
+fn data_root(state: &AppState) -> AppResult<PathBuf> {
+    match &state.data_root {
+        Some(root) => Ok(root.clone()),
+        None => Ok(load_config(state)?.output_dir),
+    }
+}
+
 fn fail_box(status: StatusCode, message: &str) -> AppFail {
     AppFail::new(status, message)
 }
@@ -79,6 +89,10 @@ pub fn build_app(state: AppState) -> Router {
     let api = Router::new()
         .route("/rooms", get(rooms_list))
         .route("/rooms/:uid/overview", get(room_overview))
+        .route("/rooms/:uid/viewers", get(room_viewers))
+        .route("/rooms/:uid/viewers/:vid/tree", get(viewer_tree))
+        .route("/rooms/:uid/viewers/:vid/graph", get(viewer_graph))
+        .route("/rooms/:uid/graph", get(room_graph))
         .route("/config", get(config_get).put(config_put))
         .route("/runs", axum::routing::post(runs_post))
         .route("/runs/:id", get(run_get))
@@ -300,18 +314,217 @@ async fn run_get(State(state): State<AppState>, Path(id): Path<String>) -> AppRe
 }
 
 // ---------------------------------------------------------------------------
-// overview（B2 补；B1 打点位）
+// 房间数据面（B2）：overview / viewers / tree / graph
 // ---------------------------------------------------------------------------
+
+/// uid 守卫：D3 路径形承诺——现布局单房间，uid 暂恒等于 config 房号，其他值一律 404。
+fn room_guard(config: &live_core::config::Config, uid: &str) -> AppResult<()> {
+    if config.bilibili.room_id != uid {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            &format!("room {uid} 不存在（单房间布局）"),
+        ));
+    }
+    Ok(())
+}
+
+fn read_json(path: &std::path::Path) -> Option<Value> {
+    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+}
+
+/// graph 文件存在才开库（Store::open 会建文件，纯读路径禁止写入副作用）。
+fn open_graph(root: &std::path::Path) -> Option<live_core::graph::store::Store> {
+    let path = root.join("graph").join("perception.sqlite3");
+    path.exists()
+        .then(|| live_core::graph::store::Store::open(&path).ok())
+        .flatten()
+}
+
+/// 无图态的 delta 形状（与 live_core::graph::query::run_pair_delta 的 baseline 臂同形）。
+const BASELINE_DELTA: &str = r#"{"baseline_only":true,"from_run_id":null,"to_run_id":null,"interest":{"opened":[],"closed":[],"changed":[]},"guards":{"added":[],"removed":[]}}"#;
 
 async fn room_overview(
     State(state): State<AppState>,
-    Path(_uid): Path<String>,
+    Path(uid): Path<String>,
 ) -> AppResult<Json<Value>> {
-    load_config(&state)?;
-    Err(fail_box(
-        StatusCode::NOT_IMPLEMENTED,
-        "overview 在 M5-B2 接线",
-    ))
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    let root = data_root(&state)?;
+    let Some(mut collection) = read_json(&root.join("collection.json")) else {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            "collection.json 尚未存在——请先触发一次运行",
+        ));
+    };
+    // M4.x-T1 schema 冻结的读取侧：显式 i64，缺省 0。
+    if collection.get("leads_consumed").is_none() {
+        collection["leads_consumed"] = json!(0);
+    }
+    let rows = live_core::leads::read_ledger(&live_core::leads::ledger_path(&root));
+    let count =
+        |status: live_core::leads::LeadStatus| rows.iter().filter(|r| r.status == status).count();
+    let delta = match open_graph(&root) {
+        Some(store) => live_core::graph::query::run_pair_delta(&store)
+            .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
+        None => serde_json::from_str(BASELINE_DELTA).expect("literal parses"),
+    };
+    Ok(Json(json!({
+        "room_id": config.bilibili.room_id,
+        "streamer_uid": config.bilibili.streamer_uid,
+        "project_name": config.project_name,
+        "collection": collection,
+        "ai": read_json(&root.join("ai").join("state.json")),
+        "situation": read_json(&root.join("ai").join("situation.json")),
+        "leads": {
+            "summary": live_core::leads::summary_line(&rows, None),
+            "totals": {
+                "pending_approval": count(live_core::leads::LeadStatus::PendingApproval),
+                "approved": count(live_core::leads::LeadStatus::Approved),
+                "consumed": count(live_core::leads::LeadStatus::Consumed),
+                "rejected": count(live_core::leads::LeadStatus::Rejected),
+                "deferred": count(live_core::leads::LeadStatus::Deferred),
+            },
+            // 人工审批面：pending 明细直出（前端列表渲染；响度按 viewer 分组）
+            "pending": rows.iter()
+                .filter(|r| r.status == live_core::leads::LeadStatus::PendingApproval)
+                .collect::<Vec<_>>(),
+        },
+        "delta": delta,
+    })))
+}
+
+async fn room_viewers(
+    State(state): State<AppState>,
+    Path(uid): Path<String>,
+) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    let root = data_root(&state)?;
+    let viewers_dir = root.join("viewers");
+    let mut viewers: Vec<Value> = Vec::new();
+    let mut entries: Vec<PathBuf> = std::fs::read_dir(&viewers_dir)
+        .into_iter()
+        .flat_map(|dirs| dirs.flatten())
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect();
+    entries.sort();
+    for path in entries {
+        let Some(viewer) = read_json(&path) else {
+            continue;
+        };
+        let uid = path
+            .file_stem()
+            .and_then(|stem| stem.to_str())
+            .unwrap_or("")
+            .to_string();
+        let cached = read_json(
+            &root
+                .join("ai")
+                .join("perception")
+                .join("viewers")
+                .join(format!("{uid}.json")),
+        );
+        viewers.push(json!({
+            "uid": uid,
+            "name": viewer["viewer"]["name"].as_str()
+                .or_else(|| viewer["profile"]["name"].as_str()),
+            "collected_at": viewer["collected_at"],
+            "ai_status": cached.as_ref().map(|c| c["status"].clone()),
+            // 空池引导位约定：front-end 按 completed=false + viewer 数=0 渲染引导。
+            "ai_completed": cached.as_ref().is_some_and(|c| c["status"] == "complete"),
+        }));
+    }
+    Ok(Json(json!(viewers)))
+}
+
+/// project 用于一切图端点：interest_states 是面板信息主源。
+fn project_for_viewer(
+    root: &std::path::Path,
+) -> AppResult<(live_core::graph::store::Store, Value)> {
+    let store = open_graph(root).ok_or_else(|| {
+        fail(
+            StatusCode::NOT_FOUND,
+            "图尚未落盘——先跑过 Audience 阶段再取",
+        )
+    })?;
+    let value = live_core::graph::project::project(
+        &store,
+        &live_core::graph::project::ProjectOptions {
+            include_episodes: false,
+            include_interest_states: true,
+            include_situation_actions: false,
+            // 面板展示取全史：闸门左半（FIND-5）恒真。
+            current_run_id: None,
+            ..live_core::graph::project::ProjectOptions::default()
+        },
+    )
+    .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
+    Ok((store, value))
+}
+
+async fn viewer_graph(
+    State(state): State<AppState>,
+    Path((uid, vid)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    let root = data_root(&state)?;
+    let (_store, value) = project_for_viewer(&root)?;
+    Ok(Json(crate::cytoscape::scoped(
+        &value,
+        &format!("viewer:{vid}"),
+    )))
+}
+
+async fn room_graph(
+    State(state): State<AppState>,
+    Path(uid): Path<String>,
+) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    let root = data_root(&state)?;
+    let (_store, value) = project_for_viewer(&root)?;
+    Ok(Json(crate::cytoscape::elements(&value)))
+}
+
+async fn viewer_tree(
+    State(state): State<AppState>,
+    Path((uid, vid)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    let root = data_root(&state)?;
+    let viewer_path = root.join("viewers").join(format!("{vid}.json"));
+    let Some(viewer) = read_json(&viewer_path) else {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            &format!("观众 {vid} 没有采集资料于观众面（或尚未采集）"),
+        ));
+    };
+    let (episodes, mentions) = match open_graph(&root) {
+        Some(store) => (
+            live_core::graph::query::episodes(&store, &vid, None)
+                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
+            live_core::graph::query::mentions_of_viewer(&store, &vid, None)
+                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
+        ),
+        // 图尚未落盘 → 信息空面（viewer 原料 + ai 缓存仍可读，写盘前态）。
+        None => (Vec::new(), Vec::new()),
+    };
+    Ok(Json(json!({
+        "uid": vid,
+        "viewer": viewer,
+        "ai": read_json(
+            &root
+                .join("ai")
+                .join("perception")
+                .join("viewers")
+                .join(format!("{vid}.json"))
+        ),
+        "episodes": episodes,
+        "mentions": mentions,
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -323,6 +536,8 @@ pub struct StartOptions {
     pub port: u16,
     pub web_root: PathBuf,
     pub demo: bool,
+    /// demo（_demo 根）态数据呈现覆盖（D5）。
+    pub data_root: Option<PathBuf>,
 }
 
 /// 服务位于 127.0.0.1（M5 范围：不做鉴权/多用户——绑定地址即条款）。
@@ -337,6 +552,7 @@ pub fn serve(options: StartOptions) -> Result<(), String> {
             web_root: options.web_root,
             registry: Registry::new(),
             demo: options.demo,
+            data_root: options.data_root,
         };
         let addr = SocketAddr::from(([127, 0, 0, 1], options.port));
         let listener = tokio::net::TcpListener::bind(addr)

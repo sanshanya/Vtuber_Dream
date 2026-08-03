@@ -173,7 +173,7 @@ fn main() -> ExitCode {
                     })
             })
         }
-        Parse::Serve { config, port } => serve_command(config, port, false),
+        Parse::Serve { config, port } => serve_command(config, port, false, None),
         Parse::RunDemo { config, port } => {
             // D5 run --demo：构建合成 Demo → 起服（demo 模式 = run 通道返回静态快照，G3）。
             let built = live_core::config::load_config(&config)
@@ -187,7 +187,8 @@ fn main() -> ExitCode {
                         "合成 Demo 已就绪：{}",
                         result["output_dir"].as_str().unwrap_or("<路径丢失>")
                     );
-                    serve_command(config, port, true)
+                    let demo_root = result["output_dir"].as_str().map(PathBuf::from);
+                    serve_command(config, port, true, demo_root)
                 }
                 Err(error) => {
                     eprintln!("error: {error}");
@@ -198,13 +199,14 @@ fn main() -> ExitCode {
     }
 }
 
-/// serve/run 共用启动面（B1）：端口与 demo 模式标识。
-fn serve_command(config: PathBuf, port: u16, demo: bool) -> ExitCode {
+/// serve/run 共用启动面（B1+D5）：端口 + demo 模式 + 数据根覆盖。
+fn serve_command(config: PathBuf, port: u16, demo: bool, demo_root: Option<PathBuf>) -> ExitCode {
     match live_server::app::serve(live_server::app::StartOptions {
         config_path: config,
         port,
         web_root: PathBuf::from("web/dist"),
         demo,
+        data_root: demo_root,
     }) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
