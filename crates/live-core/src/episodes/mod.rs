@@ -44,6 +44,9 @@ pub fn now_iso() -> String {
 }
 
 /// Python `str(value or "")`：Null/空/0/False/空数组 → ""；其余 → 文本。
+/// 注意：本函数是纯 `str(x)` 语义——数字 0 仍得 "0"（Python `str(0)`）。
+/// 需要 `or` truthiness（0/0.0 落槽）的调用点请走 collector 的 `or_chain`/层本身，
+/// 不要在本函数里改语义（hash_parts 的 `str(p or "")` 依赖此层的空串兜底）。
 pub fn py_str(value: &Value) -> String {
     match value {
         Value::Null => String::new(),

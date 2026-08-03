@@ -8,7 +8,7 @@
 //!    负例见同目录测试。
 //!
 //! 哲学红线：模块只返回**平台原始事实**（serde_json::Value 原样透传），不做任何过滤
-//! 之外的语义加工（归一化在 collector.rs，校验在 agent/validators.rs，M3）。
+//! 之外的语义加工（归一化在 collector/mod.rs，校验在 agent/validators.rs，M3）。
 
 use std::time::{Duration, Instant};
 
@@ -20,6 +20,15 @@ const MIXIN_KEY_ENC_TAB: [usize; 64] = [
     28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25,
     54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
 ];
+
+/// 分页硬尺子（design 文档"任何阈值必须有命名"；clamp 意图写进各自的调用处注释）。
+pub const FOLLOWINGS_PAGE_CAP: i64 = 50;
+pub const FAVORITE_ITEMS_PAGE_CAP: i64 = 20;
+pub const VIDEOS_PAGE_CAP: i64 = 30;
+pub const BANGUMI_PAGE_CAP: i64 = 30;
+pub const HOT_SEARCHES_LIMIT_CAP: i64 = 50;
+pub const REPLIES_PAGE_CAP: i64 = 20;
+pub const RECORD_LIST_PAGE_CAP: i64 = 20;
 
 /// Python HIDDEN_CODES：触发隐藏风控的 code 集合（collector 据此记 status="hidden"）。
 pub const HIDDEN_CODES: [i64; 4] = [22115, 53013, -403, 10005];
@@ -580,27 +589,6 @@ impl BilibiliClient {
         )
     }
 
-    pub fn live_room_by_uid(&mut self, uid: &str) -> Result<Value, BilibiliError> {
-        self.request(
-            &self.live_base.clone(),
-            "/room/v1/Room/getRoomInfoOld",
-            &[("mid".to_string(), Some(uid.to_string()))],
-            false,
-            Some(&format!("https://space.bilibili.com/{uid}")),
-        )
-    }
-
-    pub fn live_room_info(&mut self, room_id: &str) -> Result<Value, BilibiliError> {
-        self.request(
-            &self.live_base.clone(),
-            "/xlive/web-room/v1/index/getInfoByRoom",
-            &[("room_id".to_string(), Some(room_id.to_string()))],
-            false,
-            Some(&format!("https://live.bilibili.com/{room_id}")),
-        )
-    }
-
-    /// 关注列表：50/页；页不满即停（Python followings 逐行语义）。
     pub fn followings(&mut self, uid: &str, limit: i64) -> Result<Vec<Value>, BilibiliError> {
         if limit <= 0 {
             return Ok(Vec::new());
@@ -608,7 +596,7 @@ impl BilibiliClient {
         let mut rows: Vec<Value> = Vec::new();
         let mut page = 1;
         while (rows.len() as i64) < limit {
-            let page_size = (limit - rows.len() as i64).min(50);
+            let page_size = (limit - rows.len() as i64).min(FOLLOWINGS_PAGE_CAP);
             let data = self.request(
                 &self.api_base.clone(),
                 "/x/relation/followings",
@@ -656,27 +644,44 @@ impl BilibiliClient {
         if limit <= 0 {
             return Ok(Vec::new());
         }
-        let data = self.request(
-            &self.api_base.clone(),
-            "/x/space/wbi/arc/search",
-            &[
-                ("mid".to_string(), Some(uid.to_string())),
-                ("pn".to_string(), Some("1".to_string())),
-                ("ps".to_string(), Some(limit.min(30).to_string())),
-                ("order".to_string(), Some("pubdate".to_string())),
-            ],
-            true,
-            Some(&format!("https://space.bilibili.com/{uid}/video")),
-        )?;
-        let list = data
-            .get("list")
-            .and_then(|list| list.get("vlist"))
-            .cloned()
-            .unwrap_or(Value::Null);
-        Ok(list
-            .as_array()
-            .map(|rows| rows.iter().take(limit.max(0) as usize).cloned().collect())
-            .unwrap_or_default())
+        // design 修复项："视频列表分页不再静默截断"——循环翻页直到 limit 或页不满。
+        let mut rows: Vec<Value> = Vec::new();
+        let mut page = 1;
+        while (rows.len() as i64) < limit {
+            let rows_before = rows.len() as i64;
+            let page_size = (limit - rows.len() as i64).min(VIDEOS_PAGE_CAP);
+            let data = self.request(
+                &self.api_base.clone(),
+                "/x/space/wbi/arc/search",
+                &[
+                    ("mid".to_string(), Some(uid.to_string())),
+                    ("pn".to_string(), Some(page.to_string())),
+                    ("ps".to_string(), Some(page_size.to_string())),
+                    ("order".to_string(), Some("pubdate".to_string())),
+                ],
+                true,
+                Some(&format!("https://space.bilibili.com/{uid}/video")),
+            )?;
+            let list = data
+                .get("list")
+                .and_then(|inner| inner.get("vlist"))
+                .cloned()
+                .unwrap_or(Value::Null);
+            let items: Vec<Value> = list
+                .as_array()
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .filter(Value::is_object)
+                .collect();
+            rows.extend(items);
+            if rows.len() as i64 - rows_before < page_size {
+                break;
+            }
+            page += 1;
+        }
+        rows.truncate(limit.max(0) as usize);
+        Ok(rows)
     }
 
     pub fn dynamics(&mut self, uid: &str, limit: i64) -> Result<Vec<Value>, BilibiliError> {
@@ -739,7 +744,7 @@ impl BilibiliClient {
         let mut rows: Vec<Value> = Vec::new();
         let mut page = 1;
         while (rows.len() as i64) < limit {
-            let page_size = (limit - rows.len() as i64).min(20);
+            let page_size = (limit - rows.len() as i64).min(FAVORITE_ITEMS_PAGE_CAP);
             let data = self.request(
                 &self.api_base.clone(),
                 "/x/v3/fav/resource/list",
@@ -789,7 +794,10 @@ impl BilibiliClient {
                 ("vmid".to_string(), Some(uid.to_string())),
                 ("type".to_string(), Some("1".to_string())),
                 ("pn".to_string(), Some("1".to_string())),
-                ("ps".to_string(), Some(limit.min(30).to_string())),
+                (
+                    "ps".to_string(),
+                    Some(limit.min(VIDEOS_PAGE_CAP).to_string()),
+                ),
             ],
             false,
             Some(&format!("https://space.bilibili.com/{uid}/bangumi")),
@@ -811,33 +819,6 @@ impl BilibiliClient {
         Ok(take_items(data.get("list"), limit))
     }
 
-    pub fn search_videos(
-        &mut self,
-        keyword: &str,
-        limit: i64,
-    ) -> Result<Vec<Value>, BilibiliError> {
-        let keyword = keyword.trim();
-        if keyword.is_empty() || limit <= 0 {
-            return Ok(Vec::new());
-        }
-        let data = self.request(
-            &self.api_base.clone(),
-            "/x/web-interface/wbi/search/type",
-            &[
-                ("search_type".to_string(), Some("video".to_string())),
-                ("keyword".to_string(), Some(keyword.to_string())),
-                ("order".to_string(), Some("totalrank".to_string())),
-                ("page".to_string(), Some("1".to_string())),
-                ("page_size".to_string(), Some(limit.min(20).to_string())),
-            ],
-            true,
-            Some(&format!(
-                "https://search.bilibili.com/all?keyword={keyword}"
-            )),
-        )?;
-        Ok(take_items(data.get("result"), limit))
-    }
-
     pub fn hot_searches(&mut self, limit: i64) -> Result<Vec<Value>, BilibiliError> {
         if limit <= 0 {
             return Ok(Vec::new());
@@ -845,7 +826,10 @@ impl BilibiliClient {
         let data = self.request(
             &self.api_base.clone(),
             "/x/web-interface/wbi/search/square",
-            &[("limit".to_string(), Some(limit.min(50).to_string()))],
+            &[(
+                "limit".to_string(),
+                Some(limit.min(HOT_SEARCHES_LIMIT_CAP).to_string()),
+            )],
             true,
             Some("https://www.bilibili.com/"),
         )?;
@@ -880,7 +864,10 @@ impl BilibiliClient {
         let mut seen: Vec<String> = Vec::new();
         if let Value::Array(items) = data {
             for item in items {
-                let name = pick(&item, "tag_name").or_fallback(pick(&item, "name"));
+                let name = {
+                    let t = pick(&item, "tag_name");
+                    if t.is_empty() { pick(&item, "name") } else { t }
+                };
                 if !name.is_empty() && !seen.contains(&name) {
                     seen.push(name);
                 }
@@ -909,7 +896,10 @@ impl BilibiliClient {
                 ("oid".to_string(), Some(oid.to_string())),
                 ("sort".to_string(), Some("2".to_string())),
                 ("pn".to_string(), Some("1".to_string())),
-                ("ps".to_string(), Some(page_size.clamp(1, 20).to_string())),
+                (
+                    "ps".to_string(),
+                    Some(page_size.clamp(1, REPLIES_PAGE_CAP).to_string()),
+                ),
             ],
             false,
             Some("https://www.bilibili.com/"),
@@ -930,7 +920,7 @@ impl BilibiliClient {
         page_size: i64,
     ) -> Result<Vec<Value>, BilibiliError> {
         const MAX_PAGES: i64 = 2;
-        let page_size = page_size.clamp(1, 20);
+        let page_size = page_size.clamp(1, RECORD_LIST_PAGE_CAP);
         let mut rows: Vec<Value> = Vec::new();
         for page in 1..=MAX_PAGES {
             let data = self.request(
@@ -996,23 +986,9 @@ impl BilibiliClient {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            for message in chunk {
-                if let Value::Object(mut row) = message {
-                    row.insert("shard_index".to_string(), Value::from(index));
-                    messages.push(Value::Object(row));
-                }
-            }
+            messages.extend(chunk);
         }
         Ok(messages)
-    }
-}
-
-trait OrFallback {
-    fn or_fallback(self, fallback: String) -> String;
-}
-impl OrFallback for String {
-    fn or_fallback(self, fallback: String) -> String {
-        if self.is_empty() { fallback } else { self }
     }
 }
 

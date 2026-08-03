@@ -201,12 +201,14 @@ async fn live_records_two_pages_then_cap() {
         .and(path("/xlive/web-room/v1/record/getList"))
         .and(query_param("page", "1"))
         .respond_with(page(20))
+        .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
         .and(path("/xlive/web-room/v1/record/getList"))
         .and(query_param("page", "2"))
         .respond_with(page(5))
+        .expect(1)
         .mount(&server)
         .await;
     let rows = call(server, |client| client.live_records("983", 20))
@@ -253,7 +255,7 @@ async fn live_records_caps_at_two_pages() {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn live_record_danmaku_shards_with_index_and_202_error() {
-    // 正常路径：num=2 → 两片，逐片带 index 参数，行内回写 shard_index
+    // 正常路径：num=2 → 两片按 index 拉取并按序拼接
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/xlive/web-room/v1/record/getInfoByLiveRecord"))
@@ -287,9 +289,7 @@ async fn live_record_danmaku_shards_with_index_and_202_error() {
         .iter()
         .map(|m| m["text"].as_str().unwrap())
         .collect();
-    assert_eq!(texts, ["一", "二", "三"]);
-    assert_eq!(messages[0]["shard_index"], 0);
-    assert_eq!(messages[2]["shard_index"], 1);
+    assert_eq!(texts, ["一", "二", "三"], "两片弹幕按分片顺序拼接");
 
     // 定形负例：旧 rid 已清理 → code=202 需上抛为非 hidden Api 错误（updated 行为）
     let server = MockServer::start().await;
@@ -444,4 +444,50 @@ async fn video_tags_name_chain_keeps_fallback() {
         .expect("tags");
     // Python：[dict.fromkeys(tags)]——tag_name "" 不入列表
     assert_eq!(tags, vec!["n2".to_string(), "t1".to_string()]);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn videos_paginates_until_limit_or_short_page() {
+    // design 修复项"视频列表分页不再截断"：30 + 10 → 40 条不截断
+    let server = MockServer::start().await;
+    let page = |n: i64, offset: i64| {
+        let vlist: Vec<serde_json::Value> = (0..n)
+            .map(|i| json!({"bvid": format!("BV{}", offset + i), "title": "t"}))
+            .collect();
+        ResponseTemplate::new(200)
+            .set_body_json(json!({"code": 0, "data": {"list": {"vlist": vlist}}}))
+    };
+    Mock::given(method("GET"))
+        .and(path("/x/space/wbi/arc/search"))
+        .and(query_param("pn", "1"))
+        .respond_with(page(30, 0))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/x/space/wbi/arc/search"))
+        .and(query_param("pn", "2"))
+        .respond_with(page(10, 30))
+        .expect(1)
+        .mount(&server)
+        .await;
+    // nav（wbi 签名需要 mixin）
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/nav"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"
+                }
+            }
+        })))
+        .mount(&server)
+        .await;
+    let rows = call(server, |client| client.videos("128", 40))
+        .await
+        .expect("videos");
+    assert_eq!(rows.len(), 40, "videos 翻页到 limit 不截断");
+    assert_eq!(rows[39]["bvid"], "BV39");
 }

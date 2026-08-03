@@ -8,7 +8,7 @@
 //! 哲学红线（AGENTS.md §2.1）：AI 毒探搜索委托给 `bilibili.rs`/`runtime.rs`，本模块只做**原样重组**
 //! 公开字段，不进行任何语义推断。
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use sha1::{Digest, Sha1};
 
 // ---------------------------------------------------------------------------
@@ -114,8 +114,6 @@ fn pystr(value: &Value) -> String {
     crate::episodes::py_str(value)
 }
 
-// content_id 上方已保留 `pub fn content_id`，本来 thinks 里再 fact 一次
-
 // ---------------------------------------------------------------------------
 // normalize 集（与 Python collector.py:94-268 配对 fixture 钉）
 // ---------------------------------------------------------------------------
@@ -140,7 +138,6 @@ pub fn normalize_profile(uid: &str, profile: &Value, stats: &Value) -> Value {
     })
 }
 
-/// 上方已是 profile 一层；`_collect_viewer`里 profile 是 config 拼接结构（根 uid + 收不进去的归一字段）。
 pub fn normalize_followings(uid: &str, items: &[Value]) -> Vec<Value> {
     let mut out = Vec::new();
     for item in items {
@@ -360,10 +357,8 @@ pub fn normalize_games(uid: &str, items: &[Value]) -> Vec<Value> {
 // 文本核心扫掠（与 `collector.py`：_collect_text）
 // ---------------------------------------------------------------------------
 
-/// `_collect_text`：在 Object 里找到 指定键的 str/数字 值（及其部件值 项 que son dict/list）。
-/// 唯一差异（vs Python）： dedupe 部分 Python 走 `dict.fromkeys(result)`（保序）；
-/// 我们保序去重一致（BTreeMap for uniq 不保留原始序——但 spans 驱动有序，然后重合拍 python 也要
-/// 在这个整理里拍；受 pytest/json fixture 拍死）。
+/// Python `_collect_text`：深度扫掠 Object/Array 中指定键的 str/数字值，保序去重。
+/// （依赖 serde_json `preserve_order` 模拟 Python dict 插入序——fixture 钉的遍历序即是该语义）。
 pub fn collect_text(value: &Value) -> Vec<String> {
     let allowed = ["text", "title", "desc", "description", "summary", "name"];
     let mut out: Vec<String> = Vec::new();
@@ -424,20 +419,6 @@ fn find_values_inner(value: &Value, wanted_key: &str, out: &mut Vec<String>) {
         }
         _ => {}
     }
-}
-
-/// 统一提出的信息「source part」：`{status}/{count}`
-pub fn source_status_parts(source_status: &Map<String, Value>) -> Vec<String> {
-    let mut out = Vec::new();
-    for (name, row) in source_status {
-        if name == "coins" || name == "likes" || name == "relation_stat" {
-            continue;
-        }
-        let status = row.get("status").and_then(Value::as_str).unwrap_or("");
-        let count = row.get("count").and_then(Value::as_i64).unwrap_or(0);
-        out.push(format!("{name}={status}/{count}"));
-    }
-    out
 }
 
 // ---------------------------------------------------------------------------

@@ -527,3 +527,91 @@ async fn replay_danmaku_limit_caps_records() {
     assert_eq!(danmaku["records"][0]["rid"], "R1Ex");
     assert_eq!(danmaku["line_count"], 2);
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn single_viewer_mode_collects_one_manual_viewer() {
+    let server = MockServer::start().await;
+    mount_baseline(&server).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let summary = run_collect(server, root, 12, CollectMode::SingleViewer("1003".into()))
+        .await
+        .expect("collect ok");
+    let files: Vec<_> = std::fs::read_dir(root.join("viewers"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(files, ["1003.json"], "单查只产单独观众的深采文件");
+    let viewer = read(&root.join("viewers").join("1003.json"));
+    assert_eq!(viewer["viewer"]["seed_source"], "manual");
+    assert_eq!(summary["viewer_count"], 1);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn single_viewer_empty_uid_is_rejected_after_login() {
+    let server = MockServer::start().await;
+    mount(
+        &server,
+        "/x/web-interface/nav",
+        json_ok(json!({"isLogin": true, "mid": 42, "uname": "me"})),
+    )
+    .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let base = server.uri();
+    let config = test_config(root, 12);
+    let err = tokio::task::spawn_blocking(move || {
+        let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
+        collect_with_client(
+            client,
+            &config,
+            CollectMode::SingleViewer("  ".into()),
+            &mut |_msg: &str| (),
+        )
+    })
+    .await
+    .expect("task join")
+    .expect_err("empty uid must be rejected");
+    assert!(matches!(err, CollectError::Message(_)), "{err:?}");
+    let requests = server.received_requests().await.unwrap();
+    let only_nav = requests
+        .iter()
+        .all(|r| r.url.path() == "/x/web-interface/nav");
+    assert!(
+        only_nav,
+        "空 uid 必须在 guard 抽取前失败，requests={requests:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn room_comment_budget_zero_disables_points_without_requests() {
+    let server = MockServer::start().await;
+    mount_baseline(&server).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let base = server.uri();
+    let mut config = test_config(root, 12);
+    config.collection.room_comment_request_budget = 0;
+    let summary = tokio::task::spawn_blocking(move || {
+        let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
+        collect_with_client(
+            client,
+            &config,
+            CollectMode::StreamerOnly,
+            &mut |_msg: &str| (),
+        )
+    })
+    .await
+    .expect("task join")
+    .expect("collect ok");
+    assert_eq!(
+        summary["coverage"]["video_comment_requests"], 0,
+        "budget=0 不得发任何评论请求"
+    );
+    let comments = read(&root.join("shared").join("room_comments.json"));
+    assert_eq!(comments["status"], "disabled");
+    assert_eq!(comments["targets"], serde_json::json!([]));
+    // 回放/弹幕不受影响（对称独立开关）
+    assert!(summary["coverage"]["live_records"].as_i64().unwrap() >= 0);
+}

@@ -237,8 +237,8 @@ pub fn collect_viewer(client: &mut BilibiliClient, base: &Value, config: &Config
                     "empty"
                 };
                 let detail: String = folder_errors.join("; ").chars().take(500).collect();
-                let mut row = status_row(status, favorites_rows.clone(), &detail);
-                row["folders"] = Value::Array(favorite_folders.clone());
+                let mut row = status_row(status, favorites_rows, &detail);
+                row["folders"] = Value::Array(favorite_folders);
                 favorites_row = row;
             }
             Err(err) => {
@@ -353,6 +353,8 @@ pub fn all_content_items(viewer: &Value) -> Vec<Value> {
 }
 
 const ENRICH_SOURCE_PRIORITY: [(&str, i64); 3] = [("favorite", 0), ("dynamic", 1), ("video", 2)];
+/// Python priority.get(source, 9) 的默认哨兵（未知来源永远排最后）。
+const ENRICH_PRIORITY_FALLBACK: i64 = 9;
 
 pub fn enrich_video_metadata(
     client: &mut BilibiliClient,
@@ -374,7 +376,7 @@ pub fn enrich_video_metadata(
                     .iter()
                     .find(|(name, _)| *name == source)
                     .map(|(_, p)| *p)
-                    .unwrap_or(9);
+                    .unwrap_or(ENRICH_PRIORITY_FALLBACK);
                 candidates.push((priority, bvid));
             }
         }
@@ -667,7 +669,7 @@ pub fn collect_with_client(
             Ok(summary)
         }
         Err(err) => {
-            let _ = storage::write_json(
+            if storage::write_json(
                 &root.join("collection.json"),
                 &json!({
                     "status": "failed",
@@ -675,7 +677,11 @@ pub fn collect_with_client(
                     "updated_at": now_iso(),
                     "detail": err.to_string(),
                 }),
-            );
+            )
+            .is_err()
+            {
+                emit("警告：collection.json 失败状态写盘失败");
+            }
             Err(err)
         }
     }
@@ -695,9 +701,30 @@ fn collect_room_comments(
     client: &mut BilibiliClient,
     config: &Config,
 ) -> Result<(Value, i64, i64), CollectError> {
-    let uid = &config.bilibili.streamer_uid;
     let budget = config.collection.room_comment_request_budget;
     let started_requests = client.request_count() as i64;
+    // budget<=0 = 真关闭（与 live_replay_danmaku_limit=0 对称）：零请求、零文件内容。
+    if budget <= 0 {
+        let payload = json!({
+            "platform": "bilibili",
+            "captured_at": now_iso(),
+            "streamer_uid": config.bilibili.streamer_uid,
+            "status": "disabled",
+            "budget": budget,
+            "targets": [],
+            "request_count": 0,
+            "count": 0,
+            "errors": [],
+            "rows": [],
+        });
+        storage::write_json(
+            &config.output_dir.join("shared").join("room_comments.json"),
+            &payload,
+        )
+        .map_err(CollectError::Storage)?;
+        return Ok((payload, 0, 0));
+    }
+    let uid = &config.bilibili.streamer_uid;
     let mut targets: Vec<(i64, String)> = Vec::new();
     let mut errors: Vec<String> = Vec::new();
     // 目标发现：主播近期视频 aid + 动态 id（各取 DISCOVERY_LIMIT 条）
@@ -753,6 +780,7 @@ fn collect_room_comments(
     } else {
         "empty"
     };
+    let request_delta = client.request_count() as i64 - started_requests;
     let payload = json!({
         "platform": "bilibili",
         "captured_at": now_iso(),
@@ -764,7 +792,7 @@ fn collect_room_comments(
             .take(budget.max(0) as usize)
             .map(|(type_id, oid)| json!({"type": type_id, "oid": oid}))
             .collect::<Vec<_>>(),
-        "request_count": client.request_count() as i64 - started_requests,
+        "request_count": request_delta,
         "count": rows.len() as i64,
         "errors": errors,
         "rows": rows,
@@ -774,9 +802,8 @@ fn collect_room_comments(
         &payload,
     )
     .map_err(CollectError::Storage)?;
-    let used = payload["request_count"].as_i64().unwrap_or(0);
     let count = payload["count"].as_i64().unwrap_or(0);
-    Ok((payload, used, count))
+    Ok((payload, request_delta, count))
 }
 
 fn normalize_comment(room_id: &str, type_id: i64, oid: &str, item: &Value) -> Value {
@@ -797,8 +824,6 @@ fn normalize_comment(room_id: &str, type_id: i64, oid: &str, item: &Value) -> Va
         "mid": pystr(member.get("mid")),
         "uname": pystr(member.get("uname")),
         "message": message,
-        "like": py_int(item.get("like")),
-        "rcount": py_int(item.get("rcount")),
         "ctime": pystr(item.get("ctime")),
     })
 }
@@ -818,12 +843,13 @@ fn collect_live_records(
             }
             Err(err) => (Vec::new(), "error", vec![brief(&err, 100)]),
         };
+    let request_delta = client.request_count() as i64 - started_requests;
     let payload = json!({
         "platform": "bilibili",
         "captured_at": now_iso(),
         "room_id": config.bilibili.room_id,
         "status": status,
-        "request_count": client.request_count() as i64 - started_requests,
+        "request_count": request_delta,
         "count": records.len() as i64,
         "errors": errors,
         "records": records,
@@ -833,9 +859,8 @@ fn collect_live_records(
         &payload,
     )
     .map_err(CollectError::Storage)?;
-    let used = payload["request_count"].as_i64().unwrap_or(0);
     let rows = payload["records"].as_array().cloned().unwrap_or_default();
-    Ok((payload, rows, used))
+    Ok((payload, rows, request_delta))
 }
 
 /// 回放弹幕（rid 全分片；按场隔离错误；limit=live_replay_danmaku_limit 场数上限）。
@@ -871,22 +896,29 @@ fn collect_replay_danmaku(
             Err(err) => errors.push(format!("{rid}: {}", brief(&err, 100))),
         }
     }
-    let status = if !bundles.is_empty() && errors.is_empty() {
+    // status 与其他采集点对称：有行才 ok、有行带错记 partial、全空记 empty、全无记 error。
+    let status = if line_total > 0 && errors.is_empty() {
         "ok"
-    } else if !bundles.is_empty() {
+    } else if line_total > 0 {
         "partial"
+    } else if bundles.is_empty() && !errors.is_empty() {
+        "error"
+    } else if !bundles.is_empty() {
+        // 有回放记录但 0 行弹幕（例如小房间旧回放）——"空内容"可观测
+        "empty"
     } else if !errors.is_empty() {
         "error"
     } else {
         "empty"
     };
+    let request_delta = client.request_count() as i64 - started_requests;
     let payload = json!({
         "platform": "bilibili",
         "captured_at": now_iso(),
         "room_id": config.bilibili.room_id,
         "status": status,
         "limit": limit,
-        "request_count": client.request_count() as i64 - started_requests,
+        "request_count": request_delta,
         "record_count": bundles.len() as i64,
         "line_count": line_total,
         "errors": errors,
@@ -897,12 +929,7 @@ fn collect_replay_danmaku(
         &payload,
     )
     .map_err(CollectError::Storage)?;
-    let used = payload["request_count"].as_i64().unwrap_or(0);
-    Ok((payload, used, line_total))
-}
-
-fn bump_counter(counter: &mut BTreeMap<String, i64>, key: String) {
-    *counter.entry(key).or_insert(0) += 1;
+    Ok((payload, request_delta, line_total))
 }
 
 fn collect_inner(
@@ -937,6 +964,12 @@ fn collect_inner(
     };
     let mut seeds: Vec<(String, Value)> = Vec::new();
     if let CollectMode::SingleViewer(uid) = mode {
+        let uid = uid.trim().to_string();
+        if uid.is_empty() {
+            return Err(CollectError::Message(
+                "single-viewer mode requires a non-empty uid".into(),
+            ));
+        }
         emit(&format!("[2/5] 单查观众：{uid}"));
         seeds.push((
             uid.clone(),
@@ -1015,7 +1048,7 @@ fn collect_inner(
                 if !source_counter.contains_key(&key) {
                     counter_order.push(key.clone());
                 }
-                bump_counter(&mut source_counter, key);
+                *source_counter.entry(key).or_insert(0) += 1;
                 let count = source.get("count").and_then(Value::as_i64).unwrap_or(0);
                 evidence_counter += count;
                 if name != "coins" && name != "likes" && name != "relation_stat" {
@@ -1053,13 +1086,12 @@ fn collect_inner(
     };
     write_platform_snapshot(&config.output_dir, &metadata_cache, hot_searches)?;
 
-    emit("[5/5] 采集主播近期内容");
+    emit("[5/5] 采集主播近期内容 + 房间级语料");
     let streamer = collect_streamer(client, config, &metadata_cache);
     storage::write_json(&config.output_dir.join("streamer.json"), &streamer)
         .map_err(CollectError::Storage)?;
 
     // 房间级语料（M2-B2c：评论区浅存在 + 回放列表/弹幕，独立记账，不进深采池）
-    emit("[5/5] 房间级语料：评论区浅存在 + 回放列表/弹幕");
     let cit = collect_room_comments(client, config)?;
     let records = collect_live_records(client, config)?;
     let danmaku = collect_replay_danmaku(client, config, &records.1)?;
