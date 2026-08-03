@@ -43,6 +43,9 @@ pub struct CollectionConfig {
     pub room_comment_request_budget: i64,
     /// 回放弹幕拉取的场数上限（design M2：默认 20 场）。
     pub live_replay_danmaku_limit: i64,
+    /// M4.x：单轮 collect 的 leads 消费尝试预算（attempt 计次；0=休眠=默认人工
+    /// 审批文化，薄切条款；Rust-only 能力，无 Python 对照键）。
+    pub lead_fetch_budget_per_run: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -354,6 +357,12 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 "live_replay_danmaku_limit",
                 0,
                 Some(20),
+            )?,
+            lead_fetch_budget_per_run: integer(
+                collection,
+                "lead_fetch_budget_per_run",
+                0,
+                Some(0),
             )?,
         },
         perception: PerceptionConfig {

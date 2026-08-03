@@ -20,8 +20,11 @@ use crate::episodes::now_iso;
 use crate::storage;
 
 pub(crate) mod enrich;
+pub mod leads;
 pub(crate) mod room;
 pub(crate) mod viewer;
+
+pub use leads::{consume_approved_leads, fetch_lead_yield};
 
 pub(crate) use enrich::*;
 pub(crate) use room::*;
@@ -117,7 +120,18 @@ pub fn collect_with_client(
     .map_err(CollectError::Storage)?;
 
     match collect_inner(&mut client, config, &mode, emit, &started_at, started) {
-        Ok(summary) => {
+        Ok(mut summary) => {
+            // M4.x kickoff D5/D6：尾段消费账本（预算 0 秒返=默认休眠；消费失败
+            // 不杀 collection（薄切 fail-open 亲属的对应面）。
+            let consumed = consume_approved_leads(
+                &root,
+                config.collection.lead_fetch_budget_per_run,
+                &mut |row| fetch_lead_yield(&mut client, row),
+            );
+            if consumed > 0 {
+                emit(&format!("[LEADS] 本轮消费 {consumed} 条已批准线索"));
+                summary["leads_consumed"] = json!(consumed);
+            }
             storage::write_json(&root.join("collection.json"), &summary)
                 .map_err(CollectError::Storage)?;
             emit(&format!(
