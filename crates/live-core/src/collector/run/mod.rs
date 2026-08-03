@@ -132,6 +132,8 @@ pub fn collect_with_client(
             );
             if consumed > 0 {
                 emit(&format!("[LEADS] 本轮消费 {consumed} 条已批准线索"));
+                // M4.x-T1 冻结：三态 schema = {缺席, 正整数}；零消费不面世，
+                // 面板/报告消费者按「显式 i64、缺省 0」解读。
                 summary["leads_consumed"] = json!(consumed);
             }
             // MXA-2（r3-F1）：request_count 在 collect_inner 内冻结——消费请求真实

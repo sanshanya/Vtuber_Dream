@@ -13,6 +13,7 @@ pub mod collector;
 pub mod config;
 pub mod demo;
 pub mod episodes;
+pub mod events;
 pub mod graph;
 pub mod leads;
 pub mod models;

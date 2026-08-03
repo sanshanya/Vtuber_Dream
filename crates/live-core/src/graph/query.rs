@@ -401,3 +401,172 @@ pub fn query(
         "mentions": mentions,
     }))
 }
+
+// ---------------------------------------------------------------------------
+// run_pair_delta（M5 G4：/api/rooms/{uid}/overview「vs 上轮」delta 区块的取数源）
+// ---------------------------------------------------------------------------
+
+use serde_json::json;
+
+/// 相邻两次 complete 运行的对照窗口取数（kickoff D3/D4）：
+/// - 双运行定位 = graph_runs 中 completed_at 最近的两行；不足两行 → 基线态。
+/// - interest 口径 = ai_state INTERESTED_IN 边在两端点时刻的 as-of 集合差分
+///   （valid_from <= t AND (valid_to IS NULL OR valid_to > t)）；
+/// - guards 口径 = GUARD_OF 边在 (from.completed_at, to.completed_at] 窗口内的开/闭。
+///
+/// 键形（冻结给面板 DTO）——见模块测试：
+/// `{ baseline_only, from_run_id, to_run_id,
+///    interest: { opened, closed, changed }, guards: { added, removed } }`。
+pub fn run_pair_delta(store: &Store) -> Result<Value> {
+    let runs = select_all(
+        store,
+        "SELECT run_id, completed_at FROM graph_runs WHERE completed_at IS NOT NULL \
+         ORDER BY completed_at DESC, run_id DESC LIMIT 2",
+        Vec::new(),
+    )?;
+    if runs.len() < 2 {
+        return Ok(json!({
+            "baseline_only": true,  // 面板显示「基线已建」
+            "from_run_id": Value::Null,
+            "to_run_id": Value::Null,
+            "interest": {"opened": [], "closed": [], "changed": []},
+            "guards": {"added": [], "removed": []},
+        }));
+    }
+    let text = |row: &Map<String, Value>, key: &str| -> String {
+        row.get(key)
+            .and_then(Value::as_str)
+            .expect("graph_runs 行完整")
+            .to_string()
+    };
+    let (to_run_id, to_at) = (text(&runs[0], "run_id"), text(&runs[0], "completed_at"));
+    let (from_run_id, from_at) = (text(&runs[1], "run_id"), text(&runs[1], "completed_at"));
+
+    let interest_at = |at: &str| -> Result<Vec<Map<String, Value>>> {
+        select_all(
+            store,
+            "SELECT e.source_id AS viewer_node, e.target_id, e.properties_json, \
+               COALESCE(t.canonical_name, e.target_id) AS canonical_name \
+             FROM edges e \
+             LEFT JOIN entities t ON t.entity_id = e.target_id \
+             WHERE e.predicate='INTERESTED_IN' AND e.source_kind='ai_state' \
+               AND e.valid_from <= ? AND (e.valid_to IS NULL OR e.valid_to > ?) \
+             ORDER BY e.source_id, e.target_id",
+            vec![at.to_string().into(), at.to_string().into()],
+        )
+    };
+    let from_rows = interest_at(&from_at)?;
+    let to_rows = interest_at(&to_at)?;
+
+    let props_value = |row: &Map<String, Value>| -> Value {
+        row.get("properties_json")
+            .and_then(Value::as_str)
+            .and_then(|text| serde_json::from_str(text).ok())
+            .unwrap_or(Value::Null)
+    };
+    let row_item = |row: &Map<String, Value>| -> Value {
+        let props = props_value(row);
+        json!({
+            "viewer_id": strip_viewer(row.get("viewer_node").and_then(Value::as_str).unwrap_or("")),
+            "entity_id": row.get("target_id").cloned().unwrap_or(Value::Null),
+            "canonical_name": row.get("canonical_name").cloned().unwrap_or(Value::Null),
+            "status": props.get("status").cloned().unwrap_or(Value::Null),
+            "preference": props.get("preference").cloned().unwrap_or(Value::Null),
+        })
+    };
+    let mut from_map: std::collections::BTreeMap<String, &Map<String, Value>> =
+        std::collections::BTreeMap::new();
+    for row in &from_rows {
+        from_map.insert(pair_key(row), row);
+    }
+    let mut to_map: std::collections::BTreeMap<String, &Map<String, Value>> =
+        std::collections::BTreeMap::new();
+    for row in &to_rows {
+        to_map.insert(pair_key(row), row);
+    }
+    let mut opened = Vec::new();
+    let mut closed = Vec::new();
+    let mut changed = Vec::new();
+    for (pair, row) in &to_map {
+        match from_map.get(pair) {
+            None => opened.push(row_item(row)),
+            Some(old) if props_value(old) != props_value(row) => changed.push(json!({
+                "viewer_id": strip_viewer(row.get("viewer_node").and_then(Value::as_str).unwrap_or("")),
+                "entity_id": row.get("target_id").cloned().unwrap_or(Value::Null),
+                "canonical_name": row.get("canonical_name").cloned().unwrap_or(Value::Null),
+                "from": {
+                    "status": props_value(old).get("status").cloned().unwrap_or(Value::Null),
+                    "preference": props_value(old).get("preference").cloned().unwrap_or(Value::Null),
+                },
+                "to": {
+                    "status": props_value(row).get("status").cloned().unwrap_or(Value::Null),
+                    "preference": props_value(row).get("preference").cloned().unwrap_or(Value::Null),
+                },
+            })),
+            Some(_) => {}
+        }
+    }
+    for (pair, row) in &from_map {
+        if !to_map.contains_key(pair) {
+            closed.push(row_item(row));
+        }
+    }
+
+    let guards = |window: &str, from: &str, to: &str| -> Result<Vec<Value>> {
+        let rows = select_all(
+            store,
+            window,
+            vec![from.to_string().into(), to.to_string().into()],
+        )?;
+        Ok(rows
+            .iter()
+            .map(|row| {
+                Value::String(
+                    strip_viewer(row.get("source_id").and_then(Value::as_str).unwrap_or(""))
+                        .to_string(),
+                )
+            })
+            .collect())
+    };
+    let added = guards(
+        "SELECT source_id FROM edges \
+         WHERE predicate='GUARD_OF' AND valid_to IS NULL \
+           AND valid_from > ? AND valid_from <= ? ORDER BY source_id",
+        &from_at,
+        &to_at,
+    )?;
+    let removed = guards(
+        "SELECT source_id FROM edges \
+         WHERE predicate='GUARD_OF' AND valid_to IS NOT NULL \
+           AND valid_to > ? AND valid_to <= ? ORDER BY source_id",
+        &from_at,
+        &to_at,
+    )?;
+
+    Ok(json!({
+        "baseline_only": false,
+        "from_run_id": from_run_id,
+        "to_run_id": to_run_id,
+        "interest": {
+            "opened": opened,
+            "closed": closed,
+            "changed": changed,
+        },
+        "guards": {
+            "added": added,
+            "removed": removed,
+        },
+    }))
+}
+
+fn strip_viewer(node: &str) -> &str {
+    node.strip_prefix("viewer:").unwrap_or(node)
+}
+
+fn pair_key(row: &Map<String, Value>) -> String {
+    format!(
+        "{}|{}",
+        row.get("viewer_node").and_then(Value::as_str).unwrap_or(""),
+        row.get("target_id").and_then(Value::as_str).unwrap_or("")
+    )
+}

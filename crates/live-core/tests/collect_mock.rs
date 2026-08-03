@@ -291,6 +291,12 @@ async fn collect_full_run_happy_path() {
     // collection.json 完成态
     let collection = read(&root.join("collection.json"));
     assert_eq!(collection["status"], "complete");
+    // M4.x-T1 冻结：零消费（budget=0 + 空账本）→ leads_consumed 键缺席
+    // （schema = {缺席, 正整数 i64}，消费者按显式 i64、缺省 0 解读）。
+    assert!(
+        collection.get("leads_consumed").is_none(),
+        "零消费不得面世 leads_consumed 键：{collection}"
+    );
     assert_eq!(
         summary["authenticated_uid"], "42",
         "数字 mid 必须转字符串（批次D 修 S1）"
