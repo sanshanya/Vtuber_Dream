@@ -5,9 +5,8 @@ use std::path::Path;
 
 use live_core::agent::prompts::{self, trace_run_start};
 use live_core::agent::runtime::{AgentRuntime, AttemptPlan, Trace, run_toolcall_agent};
-use live_core::agent::tools::{
-    AudienceAgentCtx, ResearchService, ViewerAgentCtx, audience_agent_spec, viewer_agent_spec,
-};
+use live_core::agent::specs::{audience_agent_spec, viewer_agent_spec};
+use live_core::agent::tools::{AudienceAgentCtx, ResearchService, ViewerAgentCtx};
 use live_core::bilibili::BilibiliClient;
 use live_core::episodes::{Episode, EpisodeField};
 use live_core::graph::store::Store;
@@ -563,7 +562,7 @@ fn terminal_fatal_channel_on_store_failure() {
             validation_errors: vec!["kept".to_string()],
         },
     };
-    let mut tool = live_core::agent::tools::viewer_terminal_tool();
+    let mut tool = live_core::agent::specs::viewer_terminal_tool();
     let out = (tool.handler)(&mut ctx, &json!({"submission": viewer_submission(true)}));
     assert!(
         out.get("accepted").is_none(),
