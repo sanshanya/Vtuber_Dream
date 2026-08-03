@@ -12,3 +12,7 @@ path = "src/main.rs"
 [dependencies]
 live-core = { path = "../live-core" }
 serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+wiremock = "0.6"

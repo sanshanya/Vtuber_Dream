@@ -8,8 +8,10 @@ use std::collections::BTreeMap;
 use serde_json::{Value, json};
 
 use super::runtime::{
-    AgentSpec, AgentTool, RunCtx, SubmissionSlot, TerminalOutcome, make_terminal_tool,
+    AgentRuntime, AgentRuntimeError, AgentSpec, AgentTool, AttemptPlan, RunCtx, SubmissionSlot,
+    TerminalOutcome, Trace, make_terminal_tool, run_toolcall_agent,
 };
+use crate::config::Config;
 use crate::models::ProbeResult;
 
 /// 探针校验错误语（Python 逐字）。
@@ -103,4 +105,74 @@ pub fn probe_spec() -> AgentSpec<ProbeContext> {
             .to_string(),
         tools: probe_tools(),
     }
+}
+
+/// 探针必须走通的工具调用顺序（Python runtime.py:311 expected 序列）。
+const EXPECTED_TOOL_SEQUENCE: [&str; 3] = [
+    "get_probe_seed",
+    "multiply_probe_seed",
+    "submit_probe_result",
+];
+
+/// Python `run_agent_check_async`（runtime.py:276）逐键 parity：真实端点验收——
+/// 探针定向工具序列 + 终局 Tool Call 值校验（a=7/b=14/total=21）+ 结果摘要。
+/// 调用面只许 env-gated 入口（live-audience agent-check 需 VTD_AGENT_CHECK=1，
+/// AGENTS.md §8 真实端点 opt-in）。
+pub async fn run_agent_check_async(config: &Config) -> Result<Value, AgentRuntimeError> {
+    let runtime = AgentRuntime::from_ai_config(&config.ai)?;
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let trace_path = config
+        .ai
+        .agent
+        .local_trace
+        .then(|| config.output_dir.join("ai/traces/agent-check.jsonl"));
+    let mut trace = Trace::new(trace_path);
+    let outcome = run_toolcall_agent::<ProbeContext, ProbeResult>(
+        &runtime,
+        &mut spec,
+        AttemptPlan {
+            label: "agent-check",
+            prompt: "开始思考模式多轮Tool Call与终局Tool Call验收。",
+            max_turns: 8.max(config.ai.agent.max_turns) as usize,
+            retries: config.ai.agent.run_retries.max(0) as usize,
+            backoff_seconds: config.ai.agent.retry_backoff_seconds,
+        },
+        &mut ctx,
+        &mut trace,
+    )
+    .await?;
+    let stats = &trace.stats;
+    if stats.tool_names.len() < EXPECTED_TOOL_SEQUENCE.len()
+        || stats.tool_names[..EXPECTED_TOOL_SEQUENCE.len()] != EXPECTED_TOOL_SEQUENCE
+    {
+        return Err(AgentRuntimeError::Protocol(format!(
+            "unexpected tool sequence: {:?}",
+            stats.tool_names
+        )));
+    }
+    Ok(serde_json::json!({
+        "status": "PASS",
+        "api": config.ai.api,
+        "model": config.ai.model,
+        "reasoning_enabled": config.ai.reasoning.enabled,
+        "reasoning_replay": config.ai.reasoning.replay_content,
+        "output_protocol": "tool_call_only",
+        "terminal_tool": "submit_probe_result",
+        "ordinary_text_final": false,
+        "llm_calls": stats.llm_calls,
+        "tool_calls": stats.tool_calls,
+        "tool_sequence": stats.tool_names,
+        "output": outcome.submission,
+    }))
+}
+
+/// Python `run_agent_check`（runtime.py:332）的同步壳 = `asyncio.run(...)` parity。
+/// CLI（同步 main）只调本函数；tokio runtime 是内部细节，不外泄。
+pub fn run_agent_check(config: &Config) -> Result<Value, AgentRuntimeError> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|err| AgentRuntimeError::Config(format!("tokio runtime: {err}")))?;
+    runtime.block_on(run_agent_check_async(config))
 }
