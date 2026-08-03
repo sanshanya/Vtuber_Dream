@@ -59,6 +59,16 @@ fn demo_write(path: &Path, value: &Value) -> Result<(), DemoError> {
 fn python_order<T: serde::Serialize>(submission: &T, order: &[&str]) -> Value {
     let value = serde_json::to_value(submission).expect("submission 可序列化");
     let map = value.as_object().expect("顶层是对象");
+    // r4：表外键静默丢弃必须有声——白名单外仅允许已登记的 leads（M4.x 模型面后加，
+    // Python 字面不含、有意剥落）；其余任意新键 = 投影表需要同步的证据。
+    debug_assert!(
+        map.keys()
+            .all(|key| key == "leads" || order.contains(&key.as_str())),
+        "python_order 表外键(除 leads): {:?}",
+        map.keys()
+            .filter(|key| key.as_str() != "leads" && !order.contains(&key.as_str()))
+            .collect::<Vec<_>>()
+    );
     let mut out = serde_json::Map::new();
     for key in order {
         if let Some(entry) = map.get(*key) {
@@ -66,6 +76,16 @@ fn python_order<T: serde::Serialize>(submission: &T, order: &[&str]) -> Value {
         }
     }
     Value::Object(out)
+}
+
+/// viewer 分析体的 Python 字面键序投影（ai/perception/viewers/*.json；可被外部钉）。
+pub fn python_order_viewer(submission: &ViewerPerceptionSubmission) -> Value {
+    python_order(submission, VIEWER_KEYS)
+}
+
+/// audience 分析体的 Python 字面键序投影（ai/situation.json；可被外部钉）。
+pub fn python_order_audience(submission: &AudienceSituationSubmission) -> Value {
+    python_order(submission, AUDIENCE_KEYS)
 }
 
 /// Python demo.py `_viewer_output` 返回 dict 的键序（leads 不在字面中）。
@@ -476,11 +496,13 @@ pub fn build_demo(config: &Config, output_dir: Option<&Path>) -> Result<Value, D
             let viewer_name = profile["viewer"]["name"].as_str().unwrap_or_default();
             apply_viewer_submission(&store, &run_id, viewer_name, episodes, output)?;
             if uid == "demo-1" {
-                shared_entity_id = search_entities(&store, "异环", "game", 100)?
+                // Python：repo.search_entities(...) 默认 limit=20；空结果 IndexError 响铃 →
+                // Rust 等价物 = DemoError（合成通道必须响亮，不许静默空 id 续走）。
+                shared_entity_id = search_entities(&store, "异环", "game", 20)?
                     .first()
                     .and_then(|row| row["entity_id"].as_str())
-                    .unwrap_or_default()
-                    .to_string();
+                    .map(str::to_string)
+                    .ok_or_else(|| DemoError::Message("demo 共享实体未找到: 异环 (game)".into()))?;
             }
         }
 
@@ -624,7 +646,7 @@ pub fn build_demo(config: &Config, output_dir: Option<&Path>) -> Result<Value, D
                 "model": SYNTHETIC_MODEL,
                 "protocol": "terminal_tool_call",
                 "terminal_tool": "submit_viewer_perception",
-                "analysis": python_order(output, VIEWER_KEYS),
+                "analysis": python_order_viewer(output),
             }),
         )?;
     }
@@ -636,7 +658,7 @@ pub fn build_demo(config: &Config, output_dir: Option<&Path>) -> Result<Value, D
             "model": SYNTHETIC_MODEL,
             "protocol": "terminal_tool_call",
             "terminal_tool": "submit_audience_situation",
-            "analysis": python_order(&overall, AUDIENCE_KEYS),
+            "analysis": python_order_audience(&overall),
         }),
     )?;
     demo_write(

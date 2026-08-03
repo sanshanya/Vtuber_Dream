@@ -618,3 +618,47 @@ async fn transport_5xx_requests_exactly_inner_retry_budget() {
     assert!(err.contains("failed after 1 attempts"), "err={err}");
     assert_eq!(trace.stats.llm_calls, 1, "transport 错不烧 turn");
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
+    // 评审 C-4：transport_5xx 钉经 for_test；本钉锁定 from_ai_config 同约束——
+    // 防止未来的单侧改回 with_http_client 而测试仍绿。
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "boom"}})),
+        )
+        .expect(3)
+        .mount(&server)
+        .await;
+    let config = live_core::config::AiConfig {
+        api: "chat_completions".to_string(),
+        base_url: server.uri(),
+        api_key: "test".to_string(),
+        model: "m".to_string(),
+        timeout_seconds: 5.0,
+        max_output_tokens: 1024,
+        reasoning: live_core::config::ReasoningConfig {
+            enabled: false,
+            effort: "high".to_string(),
+            replay_content: true,
+        },
+        agent: live_core::config::AgentRuntimeConfig {
+            max_turns: 4,
+            resume: false,
+            local_trace: false,
+            run_retries: 0,
+            retry_backoff_seconds: 0.0,
+        },
+        search_results_per_query: 5,
+        rules: vec![],
+    };
+    let runtime = AgentRuntime::from_ai_config(&config).expect("config ok");
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: Result<live_core::agent::runtime::RunOutcome<ProbeResult>, _> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace).await;
+    assert!(outcome.is_err());
+    assert_eq!(trace.stats.llm_calls, 1, "transport 错不烧 turn");
+}
