@@ -1,12 +1,12 @@
-//! live-audience CLI（D-6：M4 单入口 `demo`；serve/run 挂 M5）。
+//! live-audience CLI（M5-B：serve + run --demo 双模式）。
 //!
-//! 参数解析与命令分发 only（AGENTS.md §5 cli.py 边界）；手写最小解析：
-//! 三个参数形态（demo / -c|--config / --output），不值得引入 clap。
+//! 参数解析与命令分发 only（AGENTS.md §5 cli.py 边界）；手写最小解析——
+//! 四个子命令（demo/agent-check/serve/run），选项集不同，不值得引入 clap。
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "用法: live-audience <命令> [-c|--config <config.yaml>]\n  demo        合成 Demo（另加 --output <目录>）\n  agent-check 真实端点探针验收（opt-in：需环境变量 VTD_AGENT_CHECK=1）";
+const USAGE: &str = "用法: live-audience <命令>\n  demo [-c|--config <config.yaml>] [--output <目录>]  合成数据 Demo\n  agent-check [-c|--config <config.yaml>]              真实端点探针验收（opt-in：需环境变量 VTD_AGENT_CHECK=1）\n  serve [-c|--config <config.yaml>] [--port <n>]         本地服务（默认 3781）\n  run --demo [-c|--config <config.yaml>] [--port <n>]    先构建合成 Demo，再以其结果起服";
 
 /// 真实端点验收的显式开关值（AGENTS.md §8：真实端点必须 opt-in）。只认 "1"。
 pub const AGENT_CHECK_ENV: &str = "VTD_AGENT_CHECK";
@@ -19,6 +19,14 @@ enum Parse {
     AgentCheck {
         config: PathBuf,
     },
+    Serve {
+        config: PathBuf,
+        port: u16,
+    },
+    RunDemo {
+        config: PathBuf,
+        port: u16,
+    },
     Help,
     Usage(String),
 }
@@ -30,32 +38,71 @@ fn looks_like_option(value: &str) -> bool {
     value.starts_with('-')
 }
 
+/// `[-c|--config <path>]` 消费函数（四种臂共用）。
+fn take_config(
+    arg: &str,
+    rest: &mut std::slice::Iter<String>,
+    config: &mut PathBuf,
+) -> Result<bool, String> {
+    match arg {
+        "-c" | "--config" => match rest.next() {
+            Some(value) if looks_like_option(value) => {
+                Err(format!("{arg} 缺路径（{value} 是选项）"))
+            }
+            Some(value) => {
+                *config = PathBuf::from(value);
+                Ok(true)
+            }
+            None => Err(format!("{arg} 缺路径")),
+        },
+        _ => Ok(false),
+    }
+}
+
+fn parse_port(rest: &mut std::slice::Iter<String>, arg: &str) -> Result<u16, String> {
+    match rest.next() {
+        Some(value) if looks_like_option(value) => Err(format!("{arg} 缺端口（{value} 是选项）")),
+        Some(value) => value
+            .parse::<u16>()
+            .map_err(|_| format!("{arg} 端口必须是 0-65535 的整数（收到 {value}）")),
+        None => Err(format!("{arg} 缺端口")),
+    }
+}
+
 fn parse(args: &[String]) -> Parse {
     let mut rest = args.iter();
     // r6 F-1：Python argparse `subparsers required=True` → 裸调用 usage + exit 2。
-    let demo = match rest.next().map(String::as_str) {
-        None => return Parse::Usage("缺命令".to_string()),
-        Some("-h") | Some("--help") => return Parse::Help,
-        Some("demo") => true,
-        Some("agent-check") => false,
-        Some(other) => return Parse::Usage(format!("未知命令 {other}")),
+    let Some(command) = rest.next().map(String::as_str) else {
+        return Parse::Usage("缺命令".to_string());
     };
+    if command == "-h" || command == "--help" {
+        return Parse::Help;
+    }
+    // run 的合法形态只有 `run --demo`（D5）。
+    if command == "run" && rest.next().map(String::as_str) != Some("--demo") {
+        return Parse::Usage("run 仅支持 --demo（合成演示通道）".to_string());
+    }
+    if command != "demo" && command != "agent-check" && command != "serve" && command != "run" {
+        return Parse::Usage(format!("未知命令 {command}"));
+    }
     let mut config = PathBuf::from("config.yaml");
     let mut output = None;
+    let mut port = live_server::app::DEFAULT_PORT;
     while let Some(arg) = rest.next() {
-        // r6 F-2：argparse 子命令帮助是 exit 0，不是用法错误。
         match arg.as_str() {
             "-h" | "--help" => return Parse::Help,
-            "-c" | "--config" => match rest.next() {
-                Some(value) if looks_like_option(value) => {
-                    return Parse::Usage(format!("{arg} 缺路径（{value} 是选项）"));
+            "-c" | "--config" => {
+                if let Err(reason) = take_config(arg.as_str(), &mut rest, &mut config) {
+                    return Parse::Usage(reason);
                 }
-                Some(value) => config = PathBuf::from(value),
-                None => return Parse::Usage(format!("{arg} 缺路径")),
+            }
+            "--port" => match parse_port(&mut rest, "--port") {
+                Ok(value) => port = value,
+                Err(reason) => return Parse::Usage(reason),
             },
-            "--output" if demo => match rest.next() {
+            "--output" if command == "demo" => match rest.next() {
                 Some(value) if looks_like_option(value) => {
-                    return Parse::Usage(format!("{arg} 缺目录（{value} 是选项）"));
+                    return Parse::Usage(format!("--output 缺目录（{value} 是选项）"));
                 }
                 Some(value) => output = Some(PathBuf::from(value)),
                 None => return Parse::Usage("--output 缺目录".to_string()),
@@ -63,10 +110,29 @@ fn parse(args: &[String]) -> Parse {
             other => return Parse::Usage(format!("未知参数 {other}")),
         }
     }
-    if demo {
-        Parse::Demo { config, output }
-    } else {
-        Parse::AgentCheck { config }
+    match command {
+        "demo" => Parse::Demo { config, output },
+        "agent-check" => Parse::AgentCheck { config },
+        "serve" => Parse::Serve { config, port },
+        _ => Parse::RunDemo { config, port },
+    }
+}
+
+/// demo/agent-check 共用车道：Ok → pretty JSON stdout；Err → `error: {e}` + exit 2
+/// （r6 F-3：Python cli.py 广谱 except 形态）。
+fn run_json_task(task: impl FnOnce() -> Result<serde_json::Value, String>) -> ExitCode {
+    match task() {
+        Ok(result) => {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&result).expect("任务返回可序列化")
+            );
+            ExitCode::SUCCESS
+        }
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::from(2)
+        }
     }
 }
 
@@ -81,29 +147,14 @@ fn main() -> ExitCode {
             eprintln!("{reason}\n{USAGE}");
             ExitCode::from(2)
         }
-        Parse::Demo { config, output } => {
-            let run = live_core::config::load_config(&config)
+        Parse::Demo { config, output } => run_json_task(|| {
+            live_core::config::load_config(&config)
                 .map_err(|error| error.to_string())
                 .and_then(|cfg| {
                     live_core::demo::build_demo(&cfg, output.as_deref())
                         .map_err(|error| error.to_string())
-                });
-            match run {
-                // Python cli.py demo：json.dumps(..., indent=2, ensure_ascii=False)。
-                Ok(result) => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&result).expect("demo 返回可序列化")
-                    );
-                    ExitCode::SUCCESS
-                }
-                // r6 F-3：Python cli.py 广谱 except → stderr `error: {exc}` + return 2。
-                Err(error) => {
-                    eprintln!("error: {error}");
-                    ExitCode::from(2)
-                }
-            }
-        }
+                })
+        }),
         Parse::AgentCheck { config } => {
             // env 门先行：未 opt-in 时连 config 都不读（AGENTS.md §8 真实端点条款；
             // 钉：agent_check_cli.rs 拒门用例给了不存在的配置路径仍报门）。
@@ -113,26 +164,52 @@ fn main() -> ExitCode {
                 );
                 return ExitCode::from(2);
             }
-            let run = live_core::config::load_config(&config)
+            run_json_task(|| {
+                live_core::config::load_config(&config)
+                    .map_err(|error| error.to_string())
+                    .and_then(|cfg| {
+                        live_core::agent::probe::run_agent_check(&cfg)
+                            .map_err(|error| error.to_string())
+                    })
+            })
+        }
+        Parse::Serve { config, port } => serve_command(config, port, false),
+        Parse::RunDemo { config, port } => {
+            // D5 run --demo：构建合成 Demo → 起服（demo 模式 = run 通道返回静态快照，G3）。
+            let built = live_core::config::load_config(&config)
                 .map_err(|error| error.to_string())
                 .and_then(|cfg| {
-                    live_core::agent::probe::run_agent_check(&cfg)
-                        .map_err(|error| error.to_string())
+                    live_core::demo::build_demo(&cfg, None).map_err(|error| error.to_string())
                 });
-            match run {
+            match built {
                 Ok(result) => {
-                    println!(
-                        "{}",
-                        serde_json::to_string_pretty(&result).expect("agent-check 返回可序列化")
+                    eprintln!(
+                        "合成 Demo 已就绪：{}",
+                        result["output_dir"].as_str().unwrap_or("<路径丢失>")
                     );
-                    ExitCode::SUCCESS
+                    serve_command(config, port, true)
                 }
-                // 同 demo 错误臂 parity（r6 F-3）。
                 Err(error) => {
                     eprintln!("error: {error}");
                     ExitCode::from(2)
                 }
             }
+        }
+    }
+}
+
+/// serve/run 共用启动面（B1）：端口与 demo 模式标识。
+fn serve_command(config: PathBuf, port: u16, demo: bool) -> ExitCode {
+    match live_server::app::serve(live_server::app::StartOptions {
+        config_path: config,
+        port,
+        web_root: PathBuf::from("web/dist"),
+        demo,
+    }) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            ExitCode::from(2)
         }
     }
 }
