@@ -447,7 +447,7 @@ pub fn source_status_parts(source_status: &Map<String, Value>) -> Vec<String> {
 pub mod run;
 
 pub use run::{
-    CollectError, all_content_items, collect, collect_streamer, collect_viewer,
+    CollectError, CollectMode, all_content_items, collect, collect_streamer, collect_viewer,
     collect_with_client, enrich_video_metadata, write_platform_snapshot,
 };
 

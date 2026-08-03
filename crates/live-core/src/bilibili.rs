@@ -827,6 +827,123 @@ impl BilibiliClient {
         }
         Ok(seen)
     }
+
+    /// 评论区浅存在（design §M2-B2c 定形 2026-08-03 实测）：
+    /// `/x/v2/reply` 旧式翻页无需 wbi 签名；type=1（视频，oid=avid）、type=17（动态，oid=动态数字id）。
+    /// 只取第一页（目标的次数 = 请求次数，预算在 collector 侧记账）。
+    pub fn replies(
+        &mut self,
+        oid: &str,
+        type_id: i64,
+        page_size: i64,
+    ) -> Result<Vec<Value>, BilibiliError> {
+        if oid.is_empty() || page_size <= 0 {
+            return Ok(Vec::new());
+        }
+        let data = self.request(
+            &self.api_base.clone(),
+            "/x/v2/reply",
+            &[
+                ("type".to_string(), Some(type_id.to_string())),
+                ("oid".to_string(), Some(oid.to_string())),
+                ("sort".to_string(), Some("2".to_string())),
+                ("pn".to_string(), Some("1".to_string())),
+                ("ps".to_string(), Some(page_size.clamp(1, 20).to_string())),
+            ],
+            false,
+            Some("https://www.bilibili.com/"),
+        )?;
+        Ok(data
+            .get("replies")
+            .and_then(Value::as_array)
+            .cloned()
+            .unwrap_or_default())
+    }
+
+    /// 直播回放列表（定形：`xlive/web-room/v1/record/getList`，旧 `web-space/space/getLiveRecordList`
+    /// 已 404 死亡——S0 晚间探针结论 2026-08-03 复核）。最多翻 MAX_PAGES 页（design 口径 1~2 请求）。
+    /// 注意：公开回放浏览 2023 年后全面收紧，多数房间 `count=0` 是**平台现状**，不是参数错误。
+    pub fn live_records(
+        &mut self,
+        room_id: &str,
+        page_size: i64,
+    ) -> Result<Vec<Value>, BilibiliError> {
+        const MAX_PAGES: i64 = 2;
+        let page_size = page_size.clamp(1, 20);
+        let mut rows: Vec<Value> = Vec::new();
+        for page in 1..=MAX_PAGES {
+            let data = self.request(
+                &self.live_base.clone(),
+                "/xlive/web-room/v1/record/getList",
+                &[
+                    ("room_id".to_string(), Some(room_id.to_string())),
+                    ("page".to_string(), Some(page.to_string())),
+                    ("page_size".to_string(), Some(page_size.to_string())),
+                ],
+                false,
+                Some(&format!("https://live.bilibili.com/{room_id}")),
+            )?;
+            let items = data
+                .get("list")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let got = items.len();
+            rows.extend(items);
+            if (got as i64) < page_size {
+                break;
+            }
+        }
+        Ok(rows)
+    }
+
+    /// 回放弹幕：rid 通道（定形——**不是**稿件 seg.so；seg.so 的 oid 数字会撞旧稿件 cid 产生假阳性）。
+    /// 流程：`record/getInfoByLiveRecord?rid` → `data.dm_info.num` 分片数 →
+    /// 逐片 `dM/getDMMsgByPlayBackID?rid&index` 收 `data.dm.dm_info[]`（{text, uid, medal...}）。
+    /// 每片错误单独记进 elements 的 errors 行？——保持原子：任一片失败整体 Err（上游调用方可按 rid 隔离）。
+    pub fn live_record_danmaku(&mut self, rid: &str) -> Result<Vec<Value>, BilibiliError> {
+        if rid.is_empty() {
+            return Ok(Vec::new());
+        }
+        let info = self.request(
+            &self.live_base.clone(),
+            "/xlive/web-room/v1/record/getInfoByLiveRecord",
+            &[("rid".to_string(), Some(rid.to_string()))],
+            false,
+            Some("https://live.bilibili.com/"),
+        )?;
+        let shards = info
+            .get("dm_info")
+            .and_then(|d| d.get("num"))
+            .and_then(Value::as_i64)
+            .unwrap_or(0);
+        let mut messages: Vec<Value> = Vec::new();
+        for index in 0..shards.max(0) {
+            let data = self.request(
+                &self.live_base.clone(),
+                "/xlive/web-room/v1/dM/getDMMsgByPlayBackID",
+                &[
+                    ("rid".to_string(), Some(rid.to_string())),
+                    ("index".to_string(), Some(index.to_string())),
+                ],
+                false,
+                Some("https://live.bilibili.com/"),
+            )?;
+            let chunk = data
+                .get("dm")
+                .and_then(|d| d.get("dm_info"))
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            for message in chunk {
+                if let Value::Object(mut row) = message {
+                    row.insert("shard_index".to_string(), Value::from(index));
+                    messages.push(Value::Object(row));
+                }
+            }
+        }
+        Ok(messages)
+    }
 }
 
 trait OrFallback {

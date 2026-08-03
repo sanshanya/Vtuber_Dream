@@ -8,7 +8,7 @@
 use std::path::Path;
 
 use live_core::bilibili::BilibiliClient;
-use live_core::collector::{CollectError, collect_with_client};
+use live_core::collector::{CollectError, CollectMode, collect_with_client};
 use live_core::config::{
     AgentRuntimeConfig, AiConfig, BilibiliConfig, CollectionConfig, Config, PeerDiscoveryConfig,
     PerceptionConfig, ReasoningConfig,
@@ -77,7 +77,7 @@ async fn mount_baseline(server: &MockServer) {
         server,
         "/x/space/wbi/arc/search",
         json_ok(json!({"list": {"vlist": [
-            {"bvid": "BV1xx", "title": "投稿1", "description": "d", "created": 1700000000}
+            {"aid": 80433022, "bvid": "BV1xx", "title": "投稿1", "description": "d", "created": 1700000000}
         ]}})),
     )
     .await;
@@ -145,6 +145,46 @@ async fn mount_baseline(server: &MockServer) {
         json_ok(json!({"trending": {"list": [{"keyword": "热词1"}]}})),
     )
     .await;
+    // M2-B2c 房间级采集点
+    mount(
+        server,
+        "/x/v2/reply",
+        json_ok(json!({"replies": [{
+            "rpid_str": "77",
+            "member": {"mid": "8877", "uname": "路人甲"},
+            "content": {"message": "前排"},
+            "like": 5, "ctime": 1700003000, "rcount": 1
+        }]})),
+    )
+    .await;
+    mount(
+        server,
+        "/xlive/web-room/v1/record/getList",
+        json_ok(json!({"count": 2, "list": [
+            {"rid": "R1Ex", "title": "回放A", "area_name": "虚拟主播", "parent_area_name": "娱乐",
+             "start_timestamp": 1700000000, "end_timestamp": 1700000200, "danmu_num": 2, "length": 120},
+            {"rid": "R2Ex", "title": "回放B", "area_name": "虚拟主播", "parent_area_name": "娱乐",
+             "start_timestamp": 1700000400, "end_timestamp": 1700000600, "danmu_num": 1, "length": 60}
+        ]})),
+    )
+    .await;
+    mount(
+        server,
+        "/xlive/web-room/v1/record/getInfoByLiveRecord",
+        json_ok(
+            json!({"live_record_info": {"rid": "R1Ex"}, "dm_info": {"num": 1, "total_num": 2}}),
+        ),
+    )
+    .await;
+    mount(
+        server,
+        "/xlive/web-room/v1/dM/getDMMsgByPlayBackID",
+        json_ok(json!({"dm": {"dm_info": [
+            {"text": "弹幕一", "uid": 998877, "medal": {"medal_name": "牌子", "medal_level": 7}},
+            {"text": "弹幕二", "uid": 998878, "medal": null}
+        ]}})),
+    )
+    .await;
 }
 
 fn test_config(root: &Path, budget: i64) -> Config {
@@ -171,6 +211,8 @@ fn test_config(root: &Path, budget: i64) -> Config {
             max_video_metadata_items: 5,
             request_delay_seconds: 0.0,
             timeout_seconds: 5.0,
+            room_comment_request_budget: 3,
+            live_replay_danmaku_limit: 2,
         },
         perception: PerceptionConfig {
             max_evidence_per_viewer: 1000,
@@ -214,12 +256,16 @@ async fn run_collect(
     server: MockServer,
     root: &Path,
     budget: i64,
+    mode: CollectMode,
 ) -> Result<serde_json::Value, CollectError> {
     let base = server.uri();
-    let config = test_config(root, budget);
+    let mut config = test_config(root, budget);
+    if let CollectMode::SingleViewer(uid) = &mode {
+        config.bilibili.additional_viewer_ids = vec![uid.clone()];
+    }
     tokio::task::spawn_blocking(move || {
         let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
-        collect_with_client(client, &config, &mut |_msg: &str| {})
+        collect_with_client(client, &config, mode, &mut |_msg: &str| {})
     })
     .await
     .expect("task join")
@@ -237,7 +283,9 @@ async fn collect_full_run_happy_path() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
 
-    let summary = run_collect(server, root, 12).await.expect("collect ok");
+    let summary = run_collect(server, root, 12, CollectMode::Guards)
+        .await
+        .expect("collect ok");
 
     // collection.json 完成态
     let collection = read(&root.join("collection.json"));
@@ -298,6 +346,50 @@ async fn collect_full_run_happy_path() {
     // 手工观众 seed_source
     let manual = read(&root.join("viewers").join("1003.json"));
     assert_eq!(manual["viewer"]["seed_source"], "manual");
+
+    // 房间级浅存在：评论区
+    let comments = read(&root.join("shared").join("room_comments.json"));
+    assert_eq!(comments["status"], "ok");
+    assert_eq!(comments["count"], 2, "视频+动态各 1 目标 × 1 行");
+    assert_eq!(
+        summary["coverage"]["video_comment_requests"], 4,
+        "发现2+回复2"
+    );
+
+    // 回放列表 + 回放弹幕
+    let records = read(&root.join("shared").join("live_records.json"));
+    assert_eq!(records["status"], "ok");
+    assert_eq!(records["records"][0]["rid"], "R1Ex");
+    assert_eq!(summary["coverage"]["live_records"], 2);
+    let danmaku = read(&root.join("shared").join("replay_danmaku.json"));
+    assert_eq!(danmaku["status"], "ok");
+    assert_eq!(danmaku["record_count"], 2);
+    assert_eq!(danmaku["line_count"], 4);
+    assert_eq!(
+        summary["coverage"]["replay_danmaku_requests"], 4,
+        "每场 info1+分片1"
+    );
+    let bundle = &danmaku["records"][0];
+    assert_eq!(bundle["messages"][0]["text"], "弹幕一");
+    assert_eq!(bundle["messages"][0]["uid"], 998877);
+
+    // 浅存在 uid 边界：评论 8877 / 弹幕 998877 不得进入深采池
+    let viewer_files: Vec<_> = std::fs::read_dir(root.join("viewers"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert_eq!(
+        viewer_files.len(),
+        3,
+        "viewers/ 只能有种子三人，实际 {viewer_files:?}"
+    );
+    for file in &viewer_files {
+        let body = std::fs::read_to_string(root.join("viewers").join(file)).unwrap();
+        assert!(
+            !body.contains("998877") && !body.contains("8877"),
+            "{file} 泄漏浅存在 uid"
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -308,7 +400,9 @@ async fn budget_exhausted_marks_all_later_sources_skipped() {
     let root = tmp.path();
 
     // budget=3：profile + relation_stat + followings 之后全部 budget_skipped
-    let summary = run_collect(server, root, 3).await.expect("collect ok");
+    let summary = run_collect(server, root, 3, CollectMode::Guards)
+        .await
+        .expect("collect ok");
     let viewer = read(&root.join("viewers").join("1001.json"));
     assert_eq!(viewer["sources"]["profile"]["status"], "ok");
     assert_eq!(viewer["sources"]["relation_stat"]["status"], "ok");
@@ -326,8 +420,8 @@ async fn budget_exhausted_marks_all_later_sources_skipped() {
     assert_eq!(summary["source_status_counts"]["videos:budget_skipped"], 3);
     // 没有 content bvid → enrich 不发请求、缓存为空
     assert_eq!(summary["video_metadata_items"], 0);
-    // nav1 + guards1 + 3观众×3 + enrich0 + 热搜1 + 主播4 = 16（预算截断后零额外调用）
-    assert_eq!(summary["request_count"], 16);
+    // nav1 + guards1 + 3观众×3 + enrich0 + 热搜1 + 主播4 + 房间级9(评论发现2+回复2+回放列表1+弹幕4) = 25（预算截断后零额外调用）
+    assert_eq!(summary["request_count"], 25);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -345,7 +439,7 @@ async fn no_login_writes_failed_status() {
     let config = test_config(root, 12);
     let err = tokio::task::spawn_blocking(move || {
         let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
-        collect_with_client(client, &config, &mut |_msg: &str| {})
+        collect_with_client(client, &config, CollectMode::Guards, &mut |_msg: &str| {})
     })
     .await
     .expect("task join")
@@ -359,4 +453,54 @@ async fn no_login_writes_failed_status() {
             .unwrap()
             .contains("not logged in")
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn streamer_only_mode_skips_viewer_pool() {
+    let server = MockServer::start().await;
+    mount_baseline(&server).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    let summary = run_collect(server, root, 12, CollectMode::StreamerOnly)
+        .await
+        .expect("collect ok");
+    assert!(
+        !root.join("viewers").exists(),
+        "streamer-only 不得产出深采池文件"
+    );
+    assert_eq!(summary["viewer_count"], 0);
+    assert_eq!(summary["guard_count"], 0);
+    // 房间级语料照跑（冷启动 T0 供能：主播采集 + 回放弹幕 + 评论区浅存在）
+    let streamer = read(&root.join("streamer.json"));
+    assert_eq!(streamer["statuses"]["videos"], "ok");
+    let danmaku = read(&root.join("shared").join("replay_danmaku.json"));
+    assert_eq!(danmaku["line_count"], 4);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replay_danmaku_limit_caps_records() {
+    let server = MockServer::start().await;
+    mount_baseline(&server).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let base = server.uri();
+    let mut config = test_config(root, 12);
+    config.collection.live_replay_danmaku_limit = 1;
+    tokio::task::spawn_blocking(move || {
+        let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
+        collect_with_client(
+            client,
+            &config,
+            CollectMode::StreamerOnly,
+            &mut |_msg: &str| {},
+        )
+    })
+    .await
+    .expect("task join")
+    .expect("collect ok");
+    let danmaku = read(&root.join("shared").join("replay_danmaku.json"));
+    assert_eq!(danmaku["record_count"], 1, "limit=1 只拉第一场");
+    assert_eq!(danmaku["records"][0]["rid"], "R1Ex");
+    assert_eq!(danmaku["line_count"], 2);
 }

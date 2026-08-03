@@ -21,8 +21,9 @@ use crate::episodes::now_iso;
 use crate::storage;
 
 use super::{
-    brief, normalize_bangumi, normalize_dynamics, normalize_favorites, normalize_followings,
-    normalize_games, normalize_profile, normalize_videos, source_error_status, status_row,
+    brief, content_id, normalize_bangumi, normalize_dynamics, normalize_favorites,
+    normalize_followings, normalize_games, normalize_profile, normalize_videos,
+    source_error_status, status_row,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -603,8 +604,19 @@ pub fn collect_streamer(
 }
 
 // ---------------------------------------------------------------------------
-// collect() 主入口（Python `collect`）
+// collect() 主入口（Python `collect` + design M2 模式化入口）
 // ---------------------------------------------------------------------------
+
+/// 采集模式（design M2：streamer-only 是 kind=collect 的默认；深采池扩张只走显式入口）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CollectMode {
+    /// 只深采主播一人 + 房间级语料（评论区浅存在 / 回放弹幕）——冷启动默认。
+    StreamerOnly,
+    /// 大航海名单 + 手工观众全量（一键分析全部大航海入口；当前 Python 行为）。
+    Guards,
+    /// 单查按钮：只深采指定 uid（seed_source=manual）。
+    SingleViewer(String),
+}
 
 pub fn collect(config: &Config, emit: &mut dyn FnMut(&str)) -> Result<Value, CollectError> {
     let client = BilibiliClient::new(
@@ -612,12 +624,13 @@ pub fn collect(config: &Config, emit: &mut dyn FnMut(&str)) -> Result<Value, Col
         config.collection.request_delay_seconds,
         config.collection.timeout_seconds,
     )?;
-    collect_with_client(client, config, emit)
+    collect_with_client(client, config, CollectMode::StreamerOnly, emit)
 }
 
 pub fn collect_with_client(
     mut client: BilibiliClient,
     config: &Config,
+    mode: CollectMode,
     emit: &mut dyn FnMut(&str),
 ) -> Result<Value, CollectError> {
     let root = config.output_dir.clone();
@@ -636,7 +649,7 @@ pub fn collect_with_client(
     )
     .map_err(CollectError::Storage)?;
 
-    match collect_inner(&mut client, config, emit, &started_at, started) {
+    match collect_inner(&mut client, config, &mode, emit, &started_at, started) {
         Ok(summary) => {
             storage::write_json(&root.join("collection.json"), &summary)
                 .map_err(CollectError::Storage)?;
@@ -664,6 +677,226 @@ pub fn collect_with_client(
     }
 }
 
+// ---------------------------------------------------------------------------
+// 房间级浅存在采集点（design M2-B2c；每个点独立记账，失败隔离，不进深采池）
+// ---------------------------------------------------------------------------
+
+const DISCOVERY_LIMIT: i64 = 3;
+const ROOM_COMMENT_PAGE_SIZE: i64 = 20;
+const RECORD_LIST_PAGE_SIZE: i64 = 20;
+
+/// 评论区浅存在（type=1 视频 oid=avid、type=17 动态 oid=动态数字 id；第一页，无 wbi）。
+/// 返回 (payload_value, 请求数, 评论行数)。
+fn collect_room_comments(
+    client: &mut BilibiliClient,
+    config: &Config,
+) -> Result<(Value, i64, i64), CollectError> {
+    let uid = &config.bilibili.streamer_uid;
+    let budget = config.collection.room_comment_request_budget;
+    let started_requests = client.request_count() as i64;
+    let mut targets: Vec<(i64, String)> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    // 目标发现：主播近期视频 aid + 动态 id（各取 DISCOVERY_LIMIT 条）
+    match client.videos(uid, DISCOVERY_LIMIT) {
+        Ok(items) => {
+            for item in &items {
+                let aid = pystr(item.get("aid"));
+                if !aid.is_empty() {
+                    targets.push((1, aid));
+                }
+            }
+        }
+        Err(err) => errors.push(brief(&err, 100)),
+    }
+    match client.dynamics(uid, DISCOVERY_LIMIT) {
+        Ok(items) => {
+            for item in &items {
+                let mut id = pystr(item.get("id_str"));
+                if id.is_empty() {
+                    id = pystr(item.get("id"));
+                }
+                if !id.is_empty() {
+                    targets.push((17, id));
+                }
+            }
+        }
+        Err(err) => errors.push(brief(&err, 100)),
+    }
+    let mut rows: Vec<Value> = Vec::new();
+    let mut fetched = 0;
+    for (type_id, oid) in targets.iter().take(budget.max(0) as usize) {
+        match client.replies(oid, *type_id, ROOM_COMMENT_PAGE_SIZE) {
+            Ok(items) => {
+                fetched += 1;
+                for item in &items {
+                    rows.push(normalize_comment(
+                        &config.bilibili.room_id,
+                        *type_id,
+                        oid,
+                        item,
+                    ));
+                }
+            }
+            Err(err) => errors.push(brief(&err, 100)),
+        }
+    }
+    let status = if fetched > 0 && errors.is_empty() {
+        if rows.is_empty() { "empty" } else { "ok" }
+    } else if fetched > 0 {
+        "partial"
+    } else if !errors.is_empty() {
+        "error"
+    } else {
+        "empty"
+    };
+    let payload = json!({
+        "platform": "bilibili",
+        "captured_at": now_iso(),
+        "streamer_uid": uid,
+        "status": status,
+        "budget": budget,
+        "targets": targets
+            .iter()
+            .take(budget.max(0) as usize)
+            .map(|(type_id, oid)| json!({"type": type_id, "oid": oid}))
+            .collect::<Vec<_>>(),
+        "request_count": client.request_count() as i64 - started_requests,
+        "count": rows.len() as i64,
+        "errors": errors,
+        "rows": rows,
+    });
+    storage::write_json(
+        &config.output_dir.join("shared").join("room_comments.json"),
+        &payload,
+    )
+    .map_err(CollectError::Storage)?;
+    let used = payload["request_count"].as_i64().unwrap_or(0);
+    let count = payload["count"].as_i64().unwrap_or(0);
+    Ok((payload, used, count))
+}
+
+fn normalize_comment(room_id: &str, type_id: i64, oid: &str, item: &Value) -> Value {
+    let kind = if type_id == 1 { "video" } else { "dynamic" };
+    let owner = format!("room:{room_id}");
+    let mut rpid = pystr(item.get("rpid_str"));
+    if rpid.is_empty() {
+        rpid = pystr(item.get("rpid"));
+    }
+    let member = item.get("member").cloned().unwrap_or(Value::Null);
+    let message = pystr(item.pointer("/content/message"));
+    json!({
+        "id": content_id("comment", &owner, &rpid, &message),
+        "source": "comment",
+        "target_kind": kind,
+        "target_oid": oid,
+        "rpid": rpid,
+        "mid": pystr(member.get("mid")),
+        "uname": pystr(member.get("uname")),
+        "message": message,
+        "like": py_int(item.get("like")),
+        "rcount": py_int(item.get("rcount")),
+        "ctime": pystr(item.get("ctime")),
+    })
+}
+
+/// 直播回放列表（1~2 请求；空列表是 2023 年后的平台常态，记 empty 不报错）。
+/// 返回 (payload_value, 回放条目, 请求数)。
+fn collect_live_records(
+    client: &mut BilibiliClient,
+    config: &Config,
+) -> Result<(Value, Vec<Value>, i64), CollectError> {
+    let started_requests = client.request_count() as i64;
+    let (records, status, errors) =
+        match client.live_records(&config.bilibili.room_id, RECORD_LIST_PAGE_SIZE) {
+            Ok(items) => {
+                let status = if items.is_empty() { "empty" } else { "ok" };
+                (items, status, Vec::<String>::new())
+            }
+            Err(err) => (Vec::new(), "error", vec![brief(&err, 100)]),
+        };
+    let payload = json!({
+        "platform": "bilibili",
+        "captured_at": now_iso(),
+        "room_id": config.bilibili.room_id,
+        "status": status,
+        "request_count": client.request_count() as i64 - started_requests,
+        "count": records.len() as i64,
+        "errors": errors,
+        "records": records,
+    });
+    storage::write_json(
+        &config.output_dir.join("shared").join("live_records.json"),
+        &payload,
+    )
+    .map_err(CollectError::Storage)?;
+    let used = payload["request_count"].as_i64().unwrap_or(0);
+    let rows = payload["records"].as_array().cloned().unwrap_or_default();
+    Ok((payload, rows, used))
+}
+
+/// 回放弹幕（rid 全分片；按场隔离错误；limit=live_replay_danmaku_limit 场数上限）。
+/// 返回 (payload_value, 请求数, 弹幕行数)。
+fn collect_replay_danmaku(
+    client: &mut BilibiliClient,
+    config: &Config,
+    records: &[Value],
+) -> Result<(Value, i64, i64), CollectError> {
+    let limit = config.collection.live_replay_danmaku_limit;
+    let started_requests = client.request_count() as i64;
+    let mut bundles: Vec<Value> = Vec::new();
+    let mut errors: Vec<String> = Vec::new();
+    let mut line_total = 0;
+    for record in records.iter().take(limit.max(0) as usize) {
+        let rid = pystr(record.get("rid"));
+        if rid.is_empty() {
+            continue;
+        }
+        match client.live_record_danmaku(&rid) {
+            Ok(messages) => {
+                line_total += messages.len() as i64;
+                bundles.push(json!({
+                    "rid": rid,
+                    "title": pystr(record.get("title")),
+                    "area_name": pystr(record.get("area_name")),
+                    "start_timestamp": record.get("start_timestamp").cloned().unwrap_or(Value::Null),
+                    "end_timestamp": record.get("end_timestamp").cloned().unwrap_or(Value::Null),
+                    "message_count": messages.len() as i64,
+                    "messages": messages,
+                }));
+            }
+            Err(err) => errors.push(format!("{rid}: {}", brief(&err, 100))),
+        }
+    }
+    let status = if !bundles.is_empty() && errors.is_empty() {
+        "ok"
+    } else if !bundles.is_empty() {
+        "partial"
+    } else if !errors.is_empty() {
+        "error"
+    } else {
+        "empty"
+    };
+    let payload = json!({
+        "platform": "bilibili",
+        "captured_at": now_iso(),
+        "room_id": config.bilibili.room_id,
+        "status": status,
+        "limit": limit,
+        "request_count": client.request_count() as i64 - started_requests,
+        "record_count": bundles.len() as i64,
+        "line_count": line_total,
+        "errors": errors,
+        "records": bundles,
+    });
+    storage::write_json(
+        &config.output_dir.join("shared").join("replay_danmaku.json"),
+        &payload,
+    )
+    .map_err(CollectError::Storage)?;
+    let used = payload["request_count"].as_i64().unwrap_or(0);
+    Ok((payload, used, line_total))
+}
+
 fn bump_counter(counter: &mut BTreeMap<String, i64>, key: String) {
     *counter.entry(key).or_insert(0) += 1;
 }
@@ -671,6 +904,7 @@ fn bump_counter(counter: &mut BTreeMap<String, i64>, key: String) {
 fn collect_inner(
     client: &mut BilibiliClient,
     config: &Config,
+    mode: &CollectMode,
     emit: &mut dyn FnMut(&str),
     started_at: &str,
     started: Instant,
@@ -685,13 +919,33 @@ fn collect_inner(
         return Err(CollectError::Message("Cookie is not logged in".into()));
     }
 
-    emit("[2/5] 获取大航海与手工指定观众");
-    let guards = client.guard_members(
-        &config.bilibili.room_id,
-        &config.bilibili.streamer_uid,
-        config.collection.max_guards,
-    )?;
+    // 模式化种子名单：streamer-only 空（冷启动）、guards 名单、单查一人
+    let guards: Vec<Value> = match mode {
+        CollectMode::Guards => {
+            emit("[2/5] 获取大航海与手工指定观众");
+            client.guard_members(
+                &config.bilibili.room_id,
+                &config.bilibili.streamer_uid,
+                config.collection.max_guards,
+            )?
+        }
+        _ => Vec::new(),
+    };
     let mut seeds: Vec<(String, Value)> = Vec::new();
+    if let CollectMode::SingleViewer(uid) = mode {
+        emit(&format!("[2/5] 单查观众：{uid}"));
+        seeds.push((
+            uid.clone(),
+            json!({
+                "id": uid,
+                "name": "",
+                "face": "",
+                "guard_level": 0,
+                "medal_level": 0,
+                "seed_source": "manual",
+            }),
+        ));
+    }
     for item in &guards {
         let uid = pystr(item.get("uid"));
         if uid.is_empty() {
@@ -709,7 +963,10 @@ fn collect_inner(
             }),
         ));
     }
-    for uid in &config.bilibili.additional_viewer_ids {
+    for uid in match mode {
+        CollectMode::Guards => &config.bilibili.additional_viewer_ids[..],
+        _ => &[][..],
+    } {
         if !seeds.iter().any(|(id, _)| id == uid) {
             seeds.push((
                 uid.clone(),
@@ -724,10 +981,12 @@ fn collect_inner(
             ));
         }
     }
-    if seeds.is_empty() {
+    if seeds.is_empty() && matches!(mode, CollectMode::Guards | CollectMode::SingleViewer(_)) {
         return Err(CollectError::Message("no usable viewers were found".into()));
     }
-    emit(&format!("[2/5] 观众种子：{} 人", seeds.len()));
+    if !matches!(mode, CollectMode::StreamerOnly) {
+        emit(&format!("[2/5] 观众种子：{} 人", seeds.len()));
+    }
 
     let mut source_counter: BTreeMap<String, i64> = BTreeMap::new();
     let mut counter_order: Vec<String> = Vec::new();
@@ -795,6 +1054,28 @@ fn collect_inner(
     storage::write_json(&config.output_dir.join("streamer.json"), &streamer)
         .map_err(CollectError::Storage)?;
 
+    // 房间级语料（M2-B2c：评论区浅存在 + 回放列表/弹幕，独立记账，不进深采池）
+    emit("[5/5] 房间级语料：评论区浅存在 + 回放列表/弹幕");
+    let cit = collect_room_comments(client, config)?;
+    let records = collect_live_records(client, config)?;
+    let danmaku = collect_replay_danmaku(client, config, &records.1)?;
+    let coverage = json!({
+        "video_comment_requests": cit.1,
+        "video_comment_items": cit.2,
+        "live_record_requests": records.2,
+        "live_records": records.1.len() as i64,
+        "replay_danmaku_requests": danmaku.1,
+        "replay_danmaku_lines": danmaku.2,
+    });
+    emit(&format!(
+        "覆盖：评论 {} 条/{} 请求，回放 {} 场，弹幕 {} 行/{} 请求",
+        cit.2,
+        cit.1,
+        records.1.len(),
+        danmaku.2,
+        danmaku.1,
+    ));
+
     let elapsed = ((started.elapsed().as_secs_f64()) * 100.0).round() / 100.0;
     let guard_uid_set: BTreeSet<String> = guards.iter().map(|g| pystr(g.get("uid"))).collect();
     let mut status_counts = Map::new();
@@ -814,6 +1095,7 @@ fn collect_inner(
         "request_count": client.request_count() as i64,
         "elapsed_seconds": elapsed,
         "source_status_counts": Value::Object(status_counts),
+        "coverage": coverage,
         "started_at": started_at,
         "finished_at": now_iso(),
     }))

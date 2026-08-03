@@ -39,6 +39,10 @@ pub struct CollectionConfig {
     pub max_video_metadata_items: i64,
     pub request_delay_seconds: f64,
     pub timeout_seconds: f64,
+    /// 评论区浅存在请求预算（design M2-B2c：3~8 请求独立记账；0 关闭该采集点）。
+    pub room_comment_request_budget: i64,
+    /// 回放弹幕拉取的场数上限（design M2：默认 20 场）。
+    pub live_replay_danmaku_limit: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -339,6 +343,18 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
             max_video_metadata_items: integer(collection, "max_video_metadata_items", 0, Some(80))?,
             request_delay_seconds: number(collection, "request_delay_seconds", 0.0, None)?,
             timeout_seconds: number(collection, "timeout_seconds", 1.0, None)?,
+            room_comment_request_budget: integer(
+                collection,
+                "room_comment_request_budget",
+                0,
+                Some(3),
+            )?,
+            live_replay_danmaku_limit: integer(
+                collection,
+                "live_replay_danmaku_limit",
+                0,
+                Some(20),
+            )?,
         },
         perception: PerceptionConfig {
             max_evidence_per_viewer: integer(perception, "max_evidence_per_viewer", 0, Some(1000))?,

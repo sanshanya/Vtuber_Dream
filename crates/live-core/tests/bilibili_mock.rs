@@ -186,3 +186,124 @@ async fn http_404_is_http_error() {
         "{result:?}"
     );
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn live_records_two_pages_then_cap() {
+    let server = MockServer::start().await;
+    // 页 1 满 20 → 翻页；页 2 不满即停（共 25 条，2 请求 —— 上限 MAX_PAGES=2）
+    let page = |n: i64| {
+        let items: Vec<serde_json::Value> =
+            (0..n).map(|i| json!({"rid": format!("R{i}")})).collect();
+        ResponseTemplate::new(200)
+            .set_body_json(json!({"code": 0, "data": {"count": 99, "list": items}}))
+    };
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/record/getList"))
+        .and(query_param("page", "1"))
+        .respond_with(page(20))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/record/getList"))
+        .and(query_param("page", "2"))
+        .respond_with(page(5))
+        .mount(&server)
+        .await;
+    let rows = call(server, |client| client.live_records("983", 20))
+        .await
+        .expect("records");
+    assert_eq!(rows.len(), 25);
+    assert_eq!(rows[24]["rid"], "R4");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn live_records_caps_at_two_pages() {
+    let server = MockServer::start().await;
+    let page = |n: i64| {
+        let items: Vec<serde_json::Value> =
+            (0..n).map(|i| json!({"rid": format!("R{i}")})).collect();
+        ResponseTemplate::new(200)
+            .set_body_json(json!({"code": 0, "data": {"count": 999, "list": items}}))
+    };
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/record/getList"))
+        .and(query_param("page", "1"))
+        .respond_with(page(20))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/record/getList"))
+        .and(query_param("page", "2"))
+        .respond_with(page(20))
+        .mount(&server)
+        .await;
+    let uri = server.uri();
+    let result = tokio::task::spawn_blocking(move || client(&uri).unwrap().live_records("983", 20))
+        .await
+        .expect("task join");
+    let requests = server.received_requests().await.unwrap();
+    let pages: Vec<String> = requests
+        .iter()
+        .map(|r| r.url.query().unwrap_or("<none>").to_string())
+        .collect();
+    let rows = result.expect("records");
+    assert_eq!(rows.len(), 40, "MAX_PAGES=2 封顶");
+    assert_eq!(pages.len(), 2, "恰好 2 次请求，不追第 3 页 pages={pages:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn live_record_danmaku_shards_with_index_and_202_error() {
+    // 正常路径：num=2 → 两片，逐片带 index 参数，行内回写 shard_index
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/record/getInfoByLiveRecord"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": {"dm_info": {"num": 2, "total_num": 3}}})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/dM/getDMMsgByPlayBackID"))
+        .and(query_param("index", "0"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"code": 0, "data": {"dm": {"dm_info": [{"text": "一"}, {"text": "二"}]}}}),
+        ))
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/dM/getDMMsgByPlayBackID"))
+        .and(query_param("index", "1"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": {"dm": {"dm_info": [{"text": "三"}]}}})),
+        )
+        .mount(&server)
+        .await;
+    let messages = call(server, |client| client.live_record_danmaku("R1Ex"))
+        .await
+        .expect("danmaku");
+    let texts: Vec<&str> = messages
+        .iter()
+        .map(|m| m["text"].as_str().unwrap())
+        .collect();
+    assert_eq!(texts, ["一", "二", "三"]);
+    assert_eq!(messages[0]["shard_index"], 0);
+    assert_eq!(messages[2]["shard_index"], 1);
+
+    // 定形负例：旧 rid 已清理 → code=202 需上抛为非 hidden Api 错误（updated 行为）
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/record/getInfoByLiveRecord"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(
+                json!({"code": 202, "message": "no such live record", "data": null}),
+            ),
+        )
+        .mount(&server)
+        .await;
+    let err = call(server, |client| client.live_record_danmaku("OLD_RID"))
+        .await
+        .expect_err("202 must surface");
+    assert!(matches!(err, BilibiliError::Api { code: 202, .. }) && !err.hidden());
+}
