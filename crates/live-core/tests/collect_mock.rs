@@ -616,3 +616,112 @@ async fn room_comment_budget_zero_disables_points_without_requests() {
     // 回放/弹幕不受影响（对称独立开关）
     assert!(summary["coverage"]["live_records"].as_i64().unwrap() >= 0);
 }
+
+// ---------------------------------------------------------------------------
+// MXA-10（r3-F3 / r5-F2 / r7-环-1）：M4.x 消费环集成钉——approved 账本 +
+// budget=1 + wiremock 假搜索面 → 尾段消费写回 + leads_consumed 键 +
+// request_count 不漏报。
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn collect_tail_consumes_approved_leads_and_recounts_requests() {
+    let server = MockServer::start().await;
+    mount_baseline(&server).await;
+    // 消费端点：search 型 lead → 3 条结果；只准被请求恰好 1 次
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/wbi/search/type"))
+        .respond_with(json_ok(json!({"result": [
+            {"bvid": "BV1s1", "title": "实机1"},
+            {"bvid": "BV1s2", "title": "实机2"},
+            {"bvid": "BV1s3", "title": "实机3"}
+        ]})))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    // 预置账本：1 条 approved（本轮应被消费）+ 1 条 pending（审批闸不得越权）
+    let mk_row = |lead_type: &str, locator: &str, status: live_core::leads::LeadStatus| {
+        live_core::leads::LedgerRow {
+            dedupe_key: format!("key-{locator}"),
+            lead_type: lead_type.into(),
+            locator: locator.into(),
+            motivation: "m".into(),
+            expected_signal: "s".into(),
+            priority: "high".into(),
+            evidence_ids: vec![],
+            viewer_id: "u".into(),
+            first_seen_run_id: "run:a".into(),
+            created_at: "t".into(),
+            status,
+            yield_count: 0,
+            resolution_note: String::new(),
+        }
+    };
+    let ledger_text = format!(
+        "{}\n{}\n",
+        serde_json::to_string(&mk_row(
+            "search",
+            "异环 实机",
+            live_core::leads::LeadStatus::Approved
+        ))
+        .unwrap(),
+        serde_json::to_string(&mk_row(
+            "video",
+            "BVpending",
+            live_core::leads::LeadStatus::PendingApproval
+        ))
+        .unwrap()
+    );
+    std::fs::write(root.join("leads.jsonl"), ledger_text).unwrap();
+
+    let base = server.uri();
+    let mut config = test_config(root, 12);
+    config.collection.lead_fetch_budget_per_run = 1;
+    let summary = tokio::task::spawn_blocking(move || {
+        let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
+        collect_with_client(client, &config, CollectMode::Guards, &mut |_msg: &str| {})
+    })
+    .await
+    .expect("task join")
+    .expect("collect ok");
+
+    // 消费键：预算 1 → 恰消费 1 条
+    assert_eq!(summary["leads_consumed"], 1);
+    // MXA-2：request_count = 本进程向 mock 服务器发出的全部请求（含消费那一次）
+    let total_requests = server.received_requests().await.expect("requests").len() as i64;
+    assert_eq!(
+        summary["request_count"].as_i64().unwrap(),
+        total_requests,
+        "消费请求必须计入 request_count"
+    );
+
+    // 账本写回：approved → consumed（yield=3）；pending 行原样不动
+    let rows = live_core::leads::read_ledger(&root.join("leads.jsonl"));
+    assert_eq!(rows.len(), 2, "账本行数不变");
+    let consumed_row = rows
+        .iter()
+        .find(|r| r.locator == "异环 实机")
+        .expect("approved 行仍在");
+    assert_eq!(consumed_row.status, live_core::leads::LeadStatus::Consumed);
+    assert_eq!(consumed_row.yield_count, 3, "yield = 搜索结果条数");
+    assert!(consumed_row.resolution_note.is_empty());
+    let pending_row = rows
+        .iter()
+        .find(|r| r.locator == "BVpending")
+        .expect("pending 行仍在");
+    assert_eq!(
+        pending_row.status,
+        live_core::leads::LeadStatus::PendingApproval,
+        "审批闸：未批准行不得被消费"
+    );
+
+    // collection.json 落盘一致性
+    let collection = read(&root.join("collection.json"));
+    assert_eq!(collection["leads_consumed"], 1);
+    assert_eq!(
+        collection["request_count"].as_i64().unwrap(),
+        total_requests
+    );
+}
