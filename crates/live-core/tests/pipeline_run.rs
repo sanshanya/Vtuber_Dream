@@ -470,6 +470,102 @@ async fn pipeline_full_resume_no_llm_calls() {
 }
 
 // ---------------------------------------------------------------------------
+// 2b. 部分恢复端到端（r7-P4）：run1 双绿 → 删掉 g2 缓存 → run2 只重跑 g2，
+//     g1 复用校准（含图 references 重校验）、audience 输入不变 → 也恢复；
+//     活跃边零膨胀。
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_partial_resume_reruns_only_evicted_viewer() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await; // expect(1)：run2 必须一次都不再叫 g1
+    // g2 只挂一次、expect(2)：run1 一次 + run2 重跑一次。
+    // （同 matcher 挂两个 expect(1) mock 时请求会全被先挂的吸收、后挂的饿死——
+    //  wiremock drop 校验报 2/0，先例见 pipeline_leads 的 mount_all(times=2)。）
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(BodyPred(name_gate("黄金观众乙")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(assistant_tool_call(
+                "call-v2",
+                "submit_viewer_perception",
+                json!({"submission": viewer_submission("g2", &e2, G2_MENTION, "明日方舟")}),
+                None,
+            )),
+        )
+        .expect(2)
+        .mount(&server)
+        .await;
+    mount_audience_ok(&server, &["g1", "g2"]).await; // run1 的一次
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+    let mut knobs = PipelineKnobs::default();
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("run1");
+
+    // 逐出仅 g2 的缓存（模拟中断/手工清理后的部分现场）
+    std::fs::remove_file(tmp.path().join("ai/perception/viewers/g2.json")).unwrap();
+    let g1_cache_before =
+        std::fs::metadata(tmp.path().join("ai/perception/viewers/g1.json")).unwrap();
+    let g1_mtime_before = g1_cache_before.modified().unwrap();
+
+    // g2 的第二发由上面同一个 expect(2) mock 服务；
+    // audience 输入不变 → 恢复（run2 零 audience 请求，由 after-before==1 钉死）
+    let before = server.received_requests().await.unwrap().len();
+    let mut knobs2 = PipelineKnobs::default();
+    let result = run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs2,
+    )
+    .await
+    .expect("run2 partial-resume");
+    let after = server.received_requests().await.unwrap().len();
+    assert_eq!(result["viewer_count"], 2);
+    assert_eq!(
+        after - before,
+        1,
+        "run2 只允许 g2 一个 LLM 请求（audience 输入不变 → 恢复）"
+    );
+    // g1 缓存文件未被重写（复用，非重跑再覆盖）
+    let g1_mtime_after = std::fs::metadata(tmp.path().join("ai/perception/viewers/g1.json"))
+        .unwrap()
+        .modified()
+        .unwrap();
+    assert_eq!(g1_mtime_before, g1_mtime_after, "g1 必须走 Reused 臂");
+    assert_eq!(
+        read(&tmp.path().join("ai/perception/viewers/g2.json"))["status"],
+        "complete"
+    );
+    // 图幂等：apply 双轮后 INTERESTED_IN 活跃边仍恰 2（D-10 在部分恢复下同样成立）
+    let store = open_store(tmp.path());
+    let active: i64 = store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM edges WHERE predicate='INTERESTED_IN' AND valid_to IS NULL",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(active, 2);
+}
+
+// ---------------------------------------------------------------------------
 // 3. 单观众失败继续（500 瞬时族耗尽 → 该观众 failed 缓存，另一人照常）
 // ---------------------------------------------------------------------------
 
