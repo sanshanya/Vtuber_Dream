@@ -1,0 +1,137 @@
+{
+  "status": "complete",
+  "input_hash": "synthetic-demo",
+  "model": "synthetic-demo",
+  "protocol": "terminal_tool_call",
+  "terminal_tool": "submit_audience_situation",
+  "analysis": {
+    "executive_summary": "合成Demo显示：两名观众通过不同内容角度连接到《异环》，另一名观众形成Vocaloid与Blender创作型独立兴趣。",
+    "audience_structure": [
+      "具体作品共同兴趣",
+      "创作型独立兴趣"
+    ],
+    "interest_graph": [
+      {
+        "entity_id": "entity:game:e406b4268aa858c21f",
+        "entity": "异环",
+        "entity_type": "game",
+        "parent_entities": [],
+        "angles": [
+          "都市探索",
+          "城市设计",
+          "角色演出"
+        ],
+        "viewer_ids": [
+          "demo-1",
+          "demo-2"
+        ],
+        "status": "近期上升",
+        "confidence": 0.9,
+        "evidence_summary": "两名观众的独立公开收藏均出现该实体。",
+        "evidence_mention_ids": [
+          "mention:demo-2:d24a5271a30d8731ba412bf2",
+          "mention:demo-1:6014e0304a0cd43a019bbebb"
+        ]
+      }
+    ],
+    "communities": [
+      {
+        "name": "异环城市与演出讨论群",
+        "description": "共同作品一致，但关注角度不同。",
+        "viewer_ids": [
+          "demo-1",
+          "demo-2"
+        ],
+        "entity_ids": [
+          "entity:game:e406b4268aa858c21f"
+        ],
+        "entities": [
+          "异环"
+        ],
+        "shared_angles": [
+          "都市空间",
+          "演出"
+        ],
+        "evidence_mention_ids": [
+          "mention:demo-2:d24a5271a30d8731ba412bf2",
+          "mention:demo-1:6014e0304a0cd43a019bbebb"
+        ],
+        "confidence": 0.88
+      }
+    ],
+    "situations": [
+      {
+        "title": "《异环》形成跨观众共同讨论入口",
+        "status": "新出现",
+        "description": "同一具体作品通过城市设计和角色演出两个角度连接核心观众。",
+        "entity_ids": [
+          "entity:game:e406b4268aa858c21f"
+        ],
+        "entities": [
+          "异环"
+        ],
+        "viewer_ids": [
+          "demo-1",
+          "demo-2"
+        ],
+        "trigger_events": [
+          "两条独立公开收藏"
+        ],
+        "evidence_mention_ids": [
+          "mention:demo-2:d24a5271a30d8731ba412bf2",
+          "mention:demo-1:6014e0304a0cd43a019bbebb"
+        ],
+        "confidence": 0.9,
+        "recommended_investigation": [
+          "下一次快照确认是否继续出现相关内容"
+        ]
+      }
+    ],
+    "content_opportunities": [
+      {
+        "title": "《异环》城市体验与角色演出讨论",
+        "entity_id": "entity:game:e406b4268aa858c21f",
+        "entity": "异环",
+        "why_now": "多个核心观众出现同一具体作品信号。",
+        "why_fit": "可同时覆盖城市探索和角色演出两个关注角度。",
+        "audience_ids": [
+          "demo-1",
+          "demo-2"
+        ],
+        "format": "素材观看 + 观点投票",
+        "run_of_show": [
+          "说明素材来源",
+          "观看关键片段",
+          "分别讨论城市与演出",
+          "记录互动反馈"
+        ],
+        "talking_points": [
+          "城市空间是否有辨识度",
+          "角色演出是否自然"
+        ],
+        "evidence_mention_ids": [
+          "mention:demo-2:d24a5271a30d8731ba412bf2",
+          "mention:demo-1:6014e0304a0cd43a019bbebb"
+        ],
+        "search_result_ids": [],
+        "confidence": "高",
+        "observation_metrics": [
+          "相关观众发言",
+          "停留时长",
+          "投票参与"
+        ],
+        "caveats": [
+          "Demo为合成数据，不代表真实观众判断"
+        ]
+      }
+    ],
+    "individual_highlights": [],
+    "content_calendar": [],
+    "data_gaps": [
+      "需要第二次快照验证趋势"
+    ],
+    "safety_notes": [
+      "只展示公开事实和可追溯推断"
+    ]
+  }
+}

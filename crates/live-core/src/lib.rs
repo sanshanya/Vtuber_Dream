@@ -11,6 +11,7 @@ pub mod agent;
 pub mod bilibili;
 pub mod collector;
 pub mod config;
+pub mod demo;
 pub mod episodes;
 pub mod graph;
 pub mod models;

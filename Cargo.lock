@@ -1069,6 +1069,7 @@ name = "live-server"
 version = "0.1.0"
 dependencies = [
  "live-core",
+ "serde_json",
 ]
 
 [[package]]

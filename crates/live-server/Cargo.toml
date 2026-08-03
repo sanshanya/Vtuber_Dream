@@ -5,5 +5,10 @@ edition.workspace = true
 license.workspace = true
 description = "axum server + headless run modes on top of live-core"
 
+[[bin]]
+name = "live-audience"
+path = "src/main.rs"
+
 [dependencies]
 live-core = { path = "../live-core" }
+serde_json = { version = "1", features = ["preserve_order"] }

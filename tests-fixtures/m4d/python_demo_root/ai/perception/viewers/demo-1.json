@@ -1,0 +1,114 @@
+{
+  "status": "complete",
+  "input_hash": "synthetic-demo",
+  "model": "synthetic-demo",
+  "protocol": "terminal_tool_call",
+  "terminal_tool": "submit_viewer_perception",
+  "analysis": {
+    "viewer_id": "demo-1",
+    "profile_summary": "演示：从公开Episode中开放式识别具体实体，并形成可追溯兴趣状态。",
+    "mentions": [
+      {
+        "mention_id": "m1",
+        "episode_id": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+        "field_path": "title",
+        "text": "异环",
+        "start": 1,
+        "end": 3,
+        "mention_type": "game",
+        "origin": "explicit",
+        "proposed_entity_name": "异环",
+        "proposed_entity_type": "game",
+        "entity_ref": "entity:e1",
+        "confidence": 0.96
+      },
+      {
+        "mention_id": "m2",
+        "episode_id": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+        "field_path": "title",
+        "text": "角色演出",
+        "start": 14,
+        "end": 18,
+        "mention_type": "content_aspect",
+        "origin": "explicit",
+        "proposed_entity_name": "角色演出",
+        "proposed_entity_type": "content_aspect",
+        "entity_ref": "entity:e2",
+        "confidence": 0.96
+      }
+    ],
+    "entities": [
+      {
+        "local_id": "e1",
+        "canonical_name": "异环",
+        "entity_type": "game",
+        "aliases": [],
+        "description": "",
+        "existing_entity_id": null,
+        "resolution": "NEW_ENTITY",
+        "evidence_mention_ids": [
+          "m1"
+        ],
+        "parent_entity_refs": [],
+        "confidence": 0.94
+      },
+      {
+        "local_id": "e2",
+        "canonical_name": "角色演出",
+        "entity_type": "content_aspect",
+        "aliases": [],
+        "description": "",
+        "existing_entity_id": null,
+        "resolution": "NEW_ENTITY",
+        "evidence_mention_ids": [
+          "m2"
+        ],
+        "parent_entity_refs": [],
+        "confidence": 0.94
+      }
+    ],
+    "relations": [],
+    "interest_states": [
+      {
+        "entity_ref": "entity:e1",
+        "status": "近期上升",
+        "preference": "关注具体内容与讨论角度",
+        "aspects": [
+          "都市探索"
+        ],
+        "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+        "evidence_mention_ids": [
+          "m1"
+        ],
+        "confidence": 0.86
+      },
+      {
+        "entity_ref": "entity:e2",
+        "status": "稳定",
+        "preference": "关注具体内容与讨论角度",
+        "aspects": [],
+        "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+        "evidence_mention_ids": [
+          "m2"
+        ],
+        "confidence": 0.86
+      }
+    ],
+    "content_preferences": [
+      "具体作品讨论",
+      "可验证素材"
+    ],
+    "recent_changes": [
+      "出现新的具体作品关注信号"
+    ],
+    "hypotheses": [
+      "需要下一次快照验证兴趣是否持续"
+    ],
+    "conversation_openers": [],
+    "content_ideas": [],
+    "enrichment_targets": [],
+    "cautions": [
+      "这是合成Demo，不代表真实观众。"
+    ]
+  }
+}

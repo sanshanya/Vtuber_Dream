@@ -1,0 +1,1777 @@
+{
+  "schema_version": 5,
+  "stats": {
+    "nodes": 31,
+    "edges": 42,
+    "episodes": 3,
+    "mentions": 6,
+    "entities": 17,
+    "interest_states": 6,
+    "communities": 3
+  },
+  "nodes": [
+    {
+      "name": "《异环》城市体验与角色演出讨论",
+      "source_kind": "ai_action",
+      "first_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "properties": {
+        "audience_ids": [
+          "demo-1",
+          "demo-2"
+        ],
+        "caveats": [
+          "Demo为合成数据，不代表真实观众判断"
+        ],
+        "confidence": "高",
+        "entity": "异环",
+        "entity_id": "entity:game:e406b4268aa858c21f",
+        "evidence_mention_ids": [
+          "mention:demo-2:d24a5271a30d8731ba412bf2",
+          "mention:demo-1:6014e0304a0cd43a019bbebb"
+        ],
+        "format": "素材观看 + 观点投票",
+        "observation_metrics": [
+          "相关观众发言",
+          "停留时长",
+          "投票参与"
+        ],
+        "run_of_show": [
+          "说明素材来源",
+          "观看关键片段",
+          "分别讨论城市与演出",
+          "记录互动反馈"
+        ],
+        "search_result_ids": [],
+        "talking_points": [
+          "城市空间是否有辨识度",
+          "角色演出是否自然"
+        ],
+        "title": "《异环》城市体验与角色演出讨论",
+        "why_fit": "可同时覆盖城市探索和角色演出两个关注角度。",
+        "why_now": "多个核心观众出现同一具体作品信号。"
+      },
+      "id": "action:cbc59bd692bd249aeb8e5f51",
+      "type": "Action"
+    },
+    {
+      "name": "Blender",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "properties": {
+        "entity_type": "bilibili_tag",
+        "identity_source": "bilibili",
+        "platform_value": "Blender"
+      },
+      "id": "entity:bilibili_tag:dc83064f3b5430de69",
+      "type": "Entity"
+    },
+    {
+      "name": "Blender",
+      "source_kind": "ai",
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "properties": {
+        "description": "",
+        "entity_type": "software"
+      },
+      "id": "entity:software:44e261f66d844eadc9",
+      "type": "Entity"
+    },
+    {
+      "name": "Vocaloid",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "properties": {
+        "entity_type": "bilibili_tag",
+        "identity_source": "bilibili",
+        "platform_value": "Vocaloid"
+      },
+      "id": "entity:bilibili_tag:5d877dad1ea67c317a",
+      "type": "Entity"
+    },
+    {
+      "name": "Vocaloid",
+      "source_kind": "ai",
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "properties": {
+        "description": "",
+        "entity_type": "music_culture"
+      },
+      "id": "entity:music_culture:f88f97887a85136135",
+      "type": "Entity"
+    },
+    {
+      "name": "剧情解析",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "properties": {
+        "entity_type": "bilibili_tag",
+        "identity_source": "bilibili",
+        "platform_value": "剧情解析"
+      },
+      "id": "entity:bilibili_tag:46e18de6ca9ed8d3ff",
+      "type": "Entity"
+    },
+    {
+      "name": "动画制作",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "properties": {
+        "entity_type": "bilibili_tag",
+        "identity_source": "bilibili",
+        "platform_value": "动画制作"
+      },
+      "id": "entity:bilibili_tag:db141e653c39fab9cb",
+      "type": "Entity"
+    },
+    {
+      "name": "实机演示",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "properties": {
+        "entity_type": "bilibili_tag",
+        "identity_source": "bilibili",
+        "platform_value": "实机演示"
+      },
+      "id": "entity:bilibili_tag:14e89e2a2b74ef9873",
+      "type": "Entity"
+    },
+    {
+      "name": "开放世界",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "properties": {
+        "entity_type": "bilibili_tag",
+        "identity_source": "bilibili",
+        "platform_value": "开放世界"
+      },
+      "id": "entity:bilibili_tag:6bab58e11798d6aed1",
+      "type": "Entity"
+    },
+    {
+      "name": "异环",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "properties": {
+        "entity_type": "bilibili_tag",
+        "identity_source": "bilibili",
+        "platform_value": "异环"
+      },
+      "id": "entity:bilibili_tag:3f5d39df0510e337f2",
+      "type": "Entity"
+    },
+    {
+      "name": "异环",
+      "source_kind": "ai",
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "properties": {
+        "description": "",
+        "entity_type": "game"
+      },
+      "id": "entity:game:e406b4268aa858c21f",
+      "type": "Entity"
+    },
+    {
+      "name": "明日方舟",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "properties": {
+        "entity_type": "bilibili_tag",
+        "identity_source": "bilibili",
+        "platform_value": "明日方舟"
+      },
+      "id": "entity:bilibili_tag:1d37f9bd79f2eccf2b",
+      "type": "Entity"
+    },
+    {
+      "name": "明日方舟",
+      "source_kind": "ai",
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "properties": {
+        "description": "",
+        "entity_type": "game"
+      },
+      "id": "entity:game:71d8b386512c1d5368",
+      "type": "Entity"
+    },
+    {
+      "name": "演示UP主丙",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "properties": {
+        "entity_type": "creator",
+        "identity_source": "bilibili",
+        "platform_id": "creator-c1"
+      },
+      "id": "entity:creator:creator-c1",
+      "type": "Entity"
+    },
+    {
+      "name": "演示UP主乙",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "properties": {
+        "entity_type": "creator",
+        "identity_source": "bilibili",
+        "platform_id": "creator-b1"
+      },
+      "id": "entity:creator:creator-b1",
+      "type": "Entity"
+    },
+    {
+      "name": "演示UP主甲",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "properties": {
+        "entity_type": "creator",
+        "identity_source": "bilibili",
+        "platform_id": "creator-a1"
+      },
+      "id": "entity:creator:creator-a1",
+      "type": "Entity"
+    },
+    {
+      "name": "角色演出",
+      "source_kind": "ai",
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "properties": {
+        "description": "",
+        "entity_type": "content_aspect"
+      },
+      "id": "entity:content_aspect:e8e76a58614761bf42",
+      "type": "Entity"
+    },
+    {
+      "name": "音乐综合",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "properties": {
+        "entity_type": "bilibili_category",
+        "identity_source": "bilibili",
+        "platform_id": "172"
+      },
+      "id": "entity:bilibili_category:172",
+      "type": "Entity"
+    },
+    {
+      "name": "Vocaloid角色曲MV与Blender动画制作流程",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-07-12T08:00:00+00:00",
+      "last_seen_at": "2026-07-12T08:00:00+00:00",
+      "properties": {
+        "event_type": "public_favorite",
+        "published_at": "2026-07-10T00:00:00+00:00",
+        "source": "favorite",
+        "url": "",
+        "viewer_id": "demo-3"
+      },
+      "id": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "type": "Episode"
+    },
+    {
+      "name": "《异环》城市设计解析与《明日方舟》世界观讨论",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-07-12T08:00:00+00:00",
+      "last_seen_at": "2026-07-12T08:00:00+00:00",
+      "properties": {
+        "event_type": "public_favorite",
+        "published_at": "2026-07-10T00:00:00+00:00",
+        "source": "favorite",
+        "url": "",
+        "viewer_id": "demo-2"
+      },
+      "id": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "type": "Episode"
+    },
+    {
+      "name": "《异环》实机演示：都市探索与角色演出",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-07-12T08:00:00+00:00",
+      "last_seen_at": "2026-07-12T08:00:00+00:00",
+      "properties": {
+        "event_type": "public_favorite",
+        "published_at": "2026-07-10T00:00:00+00:00",
+        "source": "favorite",
+        "url": "",
+        "viewer_id": "demo-1"
+      },
+      "id": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "type": "Episode"
+    },
+    {
+      "name": "Blender",
+      "source_kind": "grounded_ai",
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "properties": {
+        "end": 21,
+        "episode_id": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+        "field_path": "title",
+        "origin": "explicit",
+        "start": 14
+      },
+      "id": "mention:demo-3:fd48f9a96176fcdc9744e577",
+      "type": "Mention"
+    },
+    {
+      "name": "Vocaloid",
+      "source_kind": "grounded_ai",
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "properties": {
+        "end": 8,
+        "episode_id": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+        "field_path": "title",
+        "origin": "explicit",
+        "start": 0
+      },
+      "id": "mention:demo-3:02ec664123ad0680992dfa95",
+      "type": "Mention"
+    },
+    {
+      "name": "异环",
+      "source_kind": "grounded_ai",
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "properties": {
+        "end": 3,
+        "episode_id": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+        "field_path": "title",
+        "origin": "explicit",
+        "start": 1
+      },
+      "id": "mention:demo-1:6014e0304a0cd43a019bbebb",
+      "type": "Mention"
+    },
+    {
+      "name": "异环",
+      "source_kind": "grounded_ai",
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "properties": {
+        "end": 3,
+        "episode_id": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+        "field_path": "title",
+        "origin": "explicit",
+        "start": 1
+      },
+      "id": "mention:demo-2:d24a5271a30d8731ba412bf2",
+      "type": "Mention"
+    },
+    {
+      "name": "明日方舟",
+      "source_kind": "grounded_ai",
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "properties": {
+        "end": 16,
+        "episode_id": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+        "field_path": "title",
+        "origin": "explicit",
+        "start": 12
+      },
+      "id": "mention:demo-2:bd1eb8721af60f1f8b2cb07e",
+      "type": "Mention"
+    },
+    {
+      "name": "角色演出",
+      "source_kind": "grounded_ai",
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "properties": {
+        "end": 18,
+        "episode_id": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+        "field_path": "title",
+        "origin": "explicit",
+        "start": 14
+      },
+      "id": "mention:demo-1:5362ea02fb8c14c5735f77c5",
+      "type": "Mention"
+    },
+    {
+      "name": "《异环》形成跨观众共同讨论入口",
+      "source_kind": "ai_situation",
+      "first_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "properties": {
+        "confidence": 0.9,
+        "description": "同一具体作品通过城市设计和角色演出两个角度连接核心观众。",
+        "entities": [
+          "异环"
+        ],
+        "entity_ids": [
+          "entity:game:e406b4268aa858c21f"
+        ],
+        "evidence_mention_ids": [
+          "mention:demo-2:d24a5271a30d8731ba412bf2",
+          "mention:demo-1:6014e0304a0cd43a019bbebb"
+        ],
+        "recommended_investigation": [
+          "下一次快照确认是否继续出现相关内容"
+        ],
+        "status": "新出现",
+        "title": "《异环》形成跨观众共同讨论入口",
+        "trigger_events": [
+          "两条独立公开收藏"
+        ],
+        "viewer_ids": [
+          "demo-1",
+          "demo-2"
+        ]
+      },
+      "id": "situation:c08bccb0f1fd16d8147975f5",
+      "type": "Situation"
+    },
+    {
+      "name": "演示观众A",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.233499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.233499+00:00",
+      "properties": {
+        "viewer_id": "demo-1"
+      },
+      "id": "viewer:demo-1",
+      "type": "Viewer"
+    },
+    {
+      "name": "演示观众B",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "properties": {
+        "viewer_id": "demo-2"
+      },
+      "id": "viewer:demo-2",
+      "type": "Viewer"
+    },
+    {
+      "name": "演示观众C",
+      "source_kind": "platform_fact",
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "properties": {
+        "viewer_id": "demo-3"
+      },
+      "id": "viewer:demo-3",
+      "type": "Viewer"
+    }
+  ],
+  "edges": [
+    {
+      "predicate": "ABOUT",
+      "source_kind": "ai_action",
+      "confidence": null,
+      "valid_from": "2026-08-03T20:24:12.240499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:3eaacc608bbfcf55c6769666",
+      "source": "action:cbc59bd692bd249aeb8e5f51",
+      "target": "entity:game:e406b4268aa858c21f",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2",
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ]
+    },
+    {
+      "predicate": "CONTAINS_MENTION",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.236499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:2b7c4da74f6712d2565403ae",
+      "source": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "target": "mention:demo-1:5362ea02fb8c14c5735f77c5",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-1:5362ea02fb8c14c5735f77c5"
+      ]
+    },
+    {
+      "predicate": "CONTAINS_MENTION",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.236499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:0aab3ca0df9ea4038d9daa82",
+      "source": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "target": "mention:demo-1:6014e0304a0cd43a019bbebb",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ]
+    },
+    {
+      "predicate": "CONTAINS_MENTION",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:9fb63f1592b908ac5029a73c",
+      "source": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "target": "mention:demo-2:bd1eb8721af60f1f8b2cb07e",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-2:bd1eb8721af60f1f8b2cb07e"
+      ]
+    },
+    {
+      "predicate": "CONTAINS_MENTION",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:566e6d70c71d9670dfb621fc",
+      "source": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "target": "mention:demo-2:d24a5271a30d8731ba412bf2",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2"
+      ]
+    },
+    {
+      "predicate": "CONTAINS_MENTION",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:cb6c96cfe68eb2d359086b97",
+      "source": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "target": "mention:demo-3:02ec664123ad0680992dfa95",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-3:02ec664123ad0680992dfa95"
+      ]
+    },
+    {
+      "predicate": "CONTAINS_MENTION",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:6ae19dce1c51a98af38a4520",
+      "source": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "target": "mention:demo-3:fd48f9a96176fcdc9744e577",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-3:fd48f9a96176fcdc9744e577"
+      ]
+    },
+    {
+      "predicate": "CREATED_BY",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.235499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:a3b3678d0d00cfda781526d6",
+      "source": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "target": "entity:creator:creator-a1",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-1:39581170fe829af2:e431120c067efe82"
+      ]
+    },
+    {
+      "predicate": "CREATED_BY",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:6e604770c389cdd594a1bb60",
+      "source": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "target": "entity:creator:creator-b1",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-2:47de512c5d621a49:810ca05c44c213d3"
+      ]
+    },
+    {
+      "predicate": "CREATED_BY",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:632a1de581171b914177d680",
+      "source": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "target": "entity:creator:creator-c1",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b"
+      ]
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.236499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:9cb3a1f4d7bb696895f6db1b",
+      "source": "viewer:demo-1",
+      "target": "entity:content_aspect:e8e76a58614761bf42",
+      "properties": {
+        "aspects": [],
+        "preference": "关注具体内容与讨论角度",
+        "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+        "status": "稳定"
+      },
+      "evidence_ids": [
+        "mention:demo-1:5362ea02fb8c14c5735f77c5"
+      ]
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.236499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:7363b58cc0820ada679d2834",
+      "source": "viewer:demo-1",
+      "target": "entity:game:e406b4268aa858c21f",
+      "properties": {
+        "aspects": [
+          "都市探索"
+        ],
+        "preference": "关注具体内容与讨论角度",
+        "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+        "status": "近期上升"
+      },
+      "evidence_ids": [
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ]
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:8aea01bf2a7094ed1b3445fe",
+      "source": "viewer:demo-2",
+      "target": "entity:game:71d8b386512c1d5368",
+      "properties": {
+        "aspects": [],
+        "preference": "关注具体内容与讨论角度",
+        "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+        "status": "稳定"
+      },
+      "evidence_ids": [
+        "mention:demo-2:bd1eb8721af60f1f8b2cb07e"
+      ]
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:1b186f52b28580da788e3edd",
+      "source": "viewer:demo-2",
+      "target": "entity:game:e406b4268aa858c21f",
+      "properties": {
+        "aspects": [
+          "城市设计"
+        ],
+        "preference": "关注具体内容与讨论角度",
+        "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+        "status": "近期上升"
+      },
+      "evidence_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2"
+      ]
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:5d292efe5eeaab75430a0a6f",
+      "source": "viewer:demo-3",
+      "target": "entity:music_culture:f88f97887a85136135",
+      "properties": {
+        "aspects": [],
+        "preference": "关注具体内容与讨论角度",
+        "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+        "status": "核心"
+      },
+      "evidence_ids": [
+        "mention:demo-3:02ec664123ad0680992dfa95"
+      ]
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:e770f974b59b2bd8821eb966",
+      "source": "viewer:demo-3",
+      "target": "entity:software:44e261f66d844eadc9",
+      "properties": {
+        "aspects": [
+          "动画制作"
+        ],
+        "preference": "关注具体内容与讨论角度",
+        "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+        "status": "近期上升"
+      },
+      "evidence_ids": [
+        "mention:demo-3:fd48f9a96176fcdc9744e577"
+      ]
+    },
+    {
+      "predicate": "INVOLVES",
+      "source_kind": "ai_situation",
+      "confidence": 0.9,
+      "valid_from": "2026-08-03T20:24:12.240499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:4f8327263c5e44c85d083946",
+      "source": "situation:c08bccb0f1fd16d8147975f5",
+      "target": "entity:game:e406b4268aa858c21f",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2",
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ]
+    },
+    {
+      "predicate": "INVOLVES",
+      "source_kind": "ai_situation",
+      "confidence": 0.9,
+      "valid_from": "2026-08-03T20:24:12.240499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:0505d610c7d9f9a8d6c84698",
+      "source": "situation:c08bccb0f1fd16d8147975f5",
+      "target": "viewer:demo-1",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2",
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ]
+    },
+    {
+      "predicate": "INVOLVES",
+      "source_kind": "ai_situation",
+      "confidence": 0.9,
+      "valid_from": "2026-08-03T20:24:12.240499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:57d3a5e95b623f835d588bf3",
+      "source": "situation:c08bccb0f1fd16d8147975f5",
+      "target": "viewer:demo-2",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2",
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ]
+    },
+    {
+      "predicate": "IN_PARTITION",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.235499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:2a0a2aca10c6510cc5e8c007",
+      "source": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "target": "entity:bilibili_category:172",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-1:39581170fe829af2:e431120c067efe82"
+      ]
+    },
+    {
+      "predicate": "IN_PARTITION",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:187cec85d9887724ed7feda4",
+      "source": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "target": "entity:bilibili_category:172",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-2:47de512c5d621a49:810ca05c44c213d3"
+      ]
+    },
+    {
+      "predicate": "IN_PARTITION",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:fe12d6d9977509f895de8ee9",
+      "source": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "target": "entity:bilibili_category:172",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b"
+      ]
+    },
+    {
+      "predicate": "OBSERVED",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.233499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.233499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.233499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:9766dde1aac6f8b0d6eb2f02",
+      "source": "viewer:demo-1",
+      "target": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "properties": {
+        "source": "favorite"
+      },
+      "evidence_ids": [
+        "episode:demo-1:39581170fe829af2:e431120c067efe82"
+      ]
+    },
+    {
+      "predicate": "OBSERVED",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.236499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:84591cfd464f796e425bc0c0",
+      "source": "viewer:demo-2",
+      "target": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "properties": {
+        "source": "favorite"
+      },
+      "evidence_ids": [
+        "episode:demo-2:47de512c5d621a49:810ca05c44c213d3"
+      ]
+    },
+    {
+      "predicate": "OBSERVED",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:0fcffa21bb19db14077e67e5",
+      "source": "viewer:demo-3",
+      "target": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "properties": {
+        "source": "favorite"
+      },
+      "evidence_ids": [
+        "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b"
+      ]
+    },
+    {
+      "predicate": "REFERS_TO",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.236499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:96045e874f4b040ecae7d43c",
+      "source": "mention:demo-1:5362ea02fb8c14c5735f77c5",
+      "target": "entity:content_aspect:e8e76a58614761bf42",
+      "properties": {
+        "decision": "NEW_ENTITY"
+      },
+      "evidence_ids": [
+        "mention:demo-1:5362ea02fb8c14c5735f77c5"
+      ]
+    },
+    {
+      "predicate": "REFERS_TO",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.236499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:52e8c718c76ea25b96173288",
+      "source": "mention:demo-1:6014e0304a0cd43a019bbebb",
+      "target": "entity:game:e406b4268aa858c21f",
+      "properties": {
+        "decision": "NEW_ENTITY"
+      },
+      "evidence_ids": [
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ]
+    },
+    {
+      "predicate": "REFERS_TO",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:fde8acdec84c796f90bf31b8",
+      "source": "mention:demo-2:bd1eb8721af60f1f8b2cb07e",
+      "target": "entity:game:71d8b386512c1d5368",
+      "properties": {
+        "decision": "NEW_ENTITY"
+      },
+      "evidence_ids": [
+        "mention:demo-2:bd1eb8721af60f1f8b2cb07e"
+      ]
+    },
+    {
+      "predicate": "REFERS_TO",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:ede0b2376edf0b48abfd7cd3",
+      "source": "mention:demo-2:d24a5271a30d8731ba412bf2",
+      "target": "entity:game:e406b4268aa858c21f",
+      "properties": {
+        "decision": "SAME_AS"
+      },
+      "evidence_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2"
+      ]
+    },
+    {
+      "predicate": "REFERS_TO",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:3d8697f31aa05a711c01bc58",
+      "source": "mention:demo-3:02ec664123ad0680992dfa95",
+      "target": "entity:music_culture:f88f97887a85136135",
+      "properties": {
+        "decision": "NEW_ENTITY"
+      },
+      "evidence_ids": [
+        "mention:demo-3:02ec664123ad0680992dfa95"
+      ]
+    },
+    {
+      "predicate": "REFERS_TO",
+      "source_kind": "grounded_ai",
+      "confidence": 0.96,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:7d4d5628082a475fe5de1603",
+      "source": "mention:demo-3:fd48f9a96176fcdc9744e577",
+      "target": "entity:software:44e261f66d844eadc9",
+      "properties": {
+        "decision": "NEW_ENTITY"
+      },
+      "evidence_ids": [
+        "mention:demo-3:fd48f9a96176fcdc9744e577"
+      ]
+    },
+    {
+      "predicate": "TAGGED_AS",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.235499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:9b661b9b9c9eeee95bb8a0d7",
+      "source": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "target": "entity:bilibili_tag:14e89e2a2b74ef9873",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-1:39581170fe829af2:e431120c067efe82"
+      ]
+    },
+    {
+      "predicate": "TAGGED_AS",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.235499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:5061b423778d968d0d60ecd4",
+      "source": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "target": "entity:bilibili_tag:3f5d39df0510e337f2",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-1:39581170fe829af2:e431120c067efe82"
+      ]
+    },
+    {
+      "predicate": "TAGGED_AS",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.235499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.235499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:96039e9ef366da56f063e5fc",
+      "source": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "target": "entity:bilibili_tag:6bab58e11798d6aed1",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-1:39581170fe829af2:e431120c067efe82"
+      ]
+    },
+    {
+      "predicate": "TAGGED_AS",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:76cdf5b59aa5b28a19aa8d9d",
+      "source": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "target": "entity:bilibili_tag:1d37f9bd79f2eccf2b",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-2:47de512c5d621a49:810ca05c44c213d3"
+      ]
+    },
+    {
+      "predicate": "TAGGED_AS",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:5c445cf478e25ac6f9c9833b",
+      "source": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "target": "entity:bilibili_tag:3f5d39df0510e337f2",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-2:47de512c5d621a49:810ca05c44c213d3"
+      ]
+    },
+    {
+      "predicate": "TAGGED_AS",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:a93800a13223db67f4945481",
+      "source": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "target": "entity:bilibili_tag:46e18de6ca9ed8d3ff",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-2:47de512c5d621a49:810ca05c44c213d3"
+      ]
+    },
+    {
+      "predicate": "TAGGED_AS",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:67a998b65563b02e82c7e4ce",
+      "source": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "target": "entity:bilibili_tag:5d877dad1ea67c317a",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b"
+      ]
+    },
+    {
+      "predicate": "TAGGED_AS",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:0d72f1b956235da16995907a",
+      "source": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "target": "entity:bilibili_tag:db141e653c39fab9cb",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b"
+      ]
+    },
+    {
+      "predicate": "TAGGED_AS",
+      "source_kind": "platform_fact",
+      "confidence": 1.0,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:cfa8fda171fa75c970be5f71",
+      "source": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "target": "entity:bilibili_tag:dc83064f3b5430de69",
+      "properties": {},
+      "evidence_ids": [
+        "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b"
+      ]
+    },
+    {
+      "predicate": "TARGETS",
+      "source_kind": "ai_action",
+      "confidence": null,
+      "valid_from": "2026-08-03T20:24:12.240499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:2f70ea12ed7f080961433034",
+      "source": "action:cbc59bd692bd249aeb8e5f51",
+      "target": "viewer:demo-1",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2",
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ]
+    },
+    {
+      "predicate": "TARGETS",
+      "source_kind": "ai_action",
+      "confidence": null,
+      "valid_from": "2026-08-03T20:24:12.240499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.240499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "id": "edge:a8b9f39268a1b9d4c13be439",
+      "source": "action:cbc59bd692bd249aeb8e5f51",
+      "target": "viewer:demo-2",
+      "properties": {},
+      "evidence_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2",
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ]
+    }
+  ],
+  "mentions": [
+    {
+      "mention_id": "mention:demo-3:02ec664123ad0680992dfa95",
+      "episode_id": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "viewer_id": "demo-3",
+      "field_path": "title",
+      "text": "Vocaloid",
+      "start_offset": 0,
+      "end_offset": 8,
+      "mention_type": "music_culture",
+      "origin": "explicit",
+      "proposed_entity_name": "Vocaloid",
+      "proposed_entity_type": "music_culture",
+      "confidence": 0.96,
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "created_at": "2026-08-03T20:24:12.238498+00:00",
+      "entity_id": "entity:music_culture:f88f97887a85136135",
+      "decision": "NEW_ENTITY",
+      "canonical_name": "Vocaloid",
+      "entity_type": "music_culture"
+    },
+    {
+      "mention_id": "mention:demo-3:fd48f9a96176fcdc9744e577",
+      "episode_id": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "viewer_id": "demo-3",
+      "field_path": "title",
+      "text": "Blender",
+      "start_offset": 14,
+      "end_offset": 21,
+      "mention_type": "software",
+      "origin": "explicit",
+      "proposed_entity_name": "Blender",
+      "proposed_entity_type": "software",
+      "confidence": 0.96,
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "created_at": "2026-08-03T20:24:12.238498+00:00",
+      "entity_id": "entity:software:44e261f66d844eadc9",
+      "decision": "NEW_ENTITY",
+      "canonical_name": "Blender",
+      "entity_type": "software"
+    },
+    {
+      "mention_id": "mention:demo-2:d24a5271a30d8731ba412bf2",
+      "episode_id": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "viewer_id": "demo-2",
+      "field_path": "title",
+      "text": "异环",
+      "start_offset": 1,
+      "end_offset": 3,
+      "mention_type": "game",
+      "origin": "explicit",
+      "proposed_entity_name": "异环",
+      "proposed_entity_type": "game",
+      "confidence": 0.96,
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "created_at": "2026-08-03T20:24:12.237498+00:00",
+      "entity_id": "entity:game:e406b4268aa858c21f",
+      "decision": "SAME_AS",
+      "canonical_name": "异环",
+      "entity_type": "game"
+    },
+    {
+      "mention_id": "mention:demo-2:bd1eb8721af60f1f8b2cb07e",
+      "episode_id": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "viewer_id": "demo-2",
+      "field_path": "title",
+      "text": "明日方舟",
+      "start_offset": 12,
+      "end_offset": 16,
+      "mention_type": "game",
+      "origin": "explicit",
+      "proposed_entity_name": "明日方舟",
+      "proposed_entity_type": "game",
+      "confidence": 0.96,
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "created_at": "2026-08-03T20:24:12.237498+00:00",
+      "entity_id": "entity:game:71d8b386512c1d5368",
+      "decision": "NEW_ENTITY",
+      "canonical_name": "明日方舟",
+      "entity_type": "game"
+    },
+    {
+      "mention_id": "mention:demo-1:6014e0304a0cd43a019bbebb",
+      "episode_id": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "viewer_id": "demo-1",
+      "field_path": "title",
+      "text": "异环",
+      "start_offset": 1,
+      "end_offset": 3,
+      "mention_type": "game",
+      "origin": "explicit",
+      "proposed_entity_name": "异环",
+      "proposed_entity_type": "game",
+      "confidence": 0.96,
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "created_at": "2026-08-03T20:24:12.236499+00:00",
+      "entity_id": "entity:game:e406b4268aa858c21f",
+      "decision": "NEW_ENTITY",
+      "canonical_name": "异环",
+      "entity_type": "game"
+    },
+    {
+      "mention_id": "mention:demo-1:5362ea02fb8c14c5735f77c5",
+      "episode_id": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "viewer_id": "demo-1",
+      "field_path": "title",
+      "text": "角色演出",
+      "start_offset": 14,
+      "end_offset": 18,
+      "mention_type": "content_aspect",
+      "origin": "explicit",
+      "proposed_entity_name": "角色演出",
+      "proposed_entity_type": "content_aspect",
+      "confidence": 0.96,
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "created_at": "2026-08-03T20:24:12.236499+00:00",
+      "entity_id": "entity:content_aspect:e8e76a58614761bf42",
+      "decision": "NEW_ENTITY",
+      "canonical_name": "角色演出",
+      "entity_type": "content_aspect"
+    }
+  ],
+  "communities": [
+    {
+      "community_id": "community:1",
+      "viewer_ids": [
+        "demo-1"
+      ],
+      "entity_ids": [
+        "entity:content_aspect:e8e76a58614761bf42",
+        "entity:game:e406b4268aa858c21f"
+      ],
+      "entities": [
+        "角色演出",
+        "异环"
+      ],
+      "member_count": 3
+    },
+    {
+      "community_id": "community:2",
+      "viewer_ids": [
+        "demo-3"
+      ],
+      "entity_ids": [
+        "entity:music_culture:f88f97887a85136135",
+        "entity:software:44e261f66d844eadc9"
+      ],
+      "entities": [
+        "Vocaloid",
+        "Blender"
+      ],
+      "member_count": 3
+    },
+    {
+      "community_id": "community:3",
+      "viewer_ids": [
+        "demo-2"
+      ],
+      "entity_ids": [
+        "entity:game:71d8b386512c1d5368"
+      ],
+      "entities": [
+        "明日方舟"
+      ],
+      "member_count": 2
+    }
+  ],
+  "episodes": [
+    {
+      "episode_id": "episode:demo-1:39581170fe829af2:e431120c067efe82",
+      "viewer_id": "demo-1",
+      "source": "favorite",
+      "event_type": "public_favorite",
+      "observed_at": "2026-07-12T08:00:00+00:00",
+      "published_at": "2026-07-10T00:00:00+00:00",
+      "title": "《异环》实机演示：都市探索与角色演出",
+      "url": "",
+      "bvid": "",
+      "content_hash": "f73cc6b48b13b76499681e1737887be486945d2e",
+      "first_seen_at": "2026-08-03T20:24:12.233499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.233499+00:00",
+      "fields": [
+        {
+          "kind": "text",
+          "path": "title",
+          "text": "《异环》实机演示：都市探索与角色演出"
+        },
+        {
+          "kind": "text",
+          "path": "description",
+          "text": "关注城市空间、演出和开放世界体验。"
+        },
+        {
+          "kind": "platform_creator",
+          "path": "creator_name",
+          "text": "演示UP主甲"
+        },
+        {
+          "kind": "platform_container",
+          "path": "folder_name",
+          "text": "演示收藏"
+        },
+        {
+          "kind": "platform_tag",
+          "path": "tags[0]",
+          "text": "异环"
+        },
+        {
+          "kind": "platform_tag",
+          "path": "tags[1]",
+          "text": "开放世界"
+        },
+        {
+          "kind": "platform_tag",
+          "path": "tags[2]",
+          "text": "实机演示"
+        },
+        {
+          "kind": "platform_category",
+          "path": "platform_category.name",
+          "text": "手机游戏"
+        }
+      ],
+      "platform_facts": {
+        "creator_id": "creator-a1",
+        "creator_name": "演示UP主甲",
+        "evidence_id": "39581170fe829af2",
+        "folder_name": "演示收藏",
+        "platform_category": {
+          "id": 172,
+          "name": "手机游戏"
+        },
+        "source_label": "公开收藏",
+        "tags": [
+          "异环",
+          "开放世界",
+          "实机演示"
+        ]
+      }
+    },
+    {
+      "episode_id": "episode:demo-2:47de512c5d621a49:810ca05c44c213d3",
+      "viewer_id": "demo-2",
+      "source": "favorite",
+      "event_type": "public_favorite",
+      "observed_at": "2026-07-12T08:00:00+00:00",
+      "published_at": "2026-07-10T00:00:00+00:00",
+      "title": "《异环》城市设计解析与《明日方舟》世界观讨论",
+      "url": "",
+      "bvid": "",
+      "content_hash": "052aa7ae3a156f72c08ebb2fe9a423c279f64eae",
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "fields": [
+        {
+          "kind": "text",
+          "path": "title",
+          "text": "《异环》城市设计解析与《明日方舟》世界观讨论"
+        },
+        {
+          "kind": "text",
+          "path": "description",
+          "text": "喜欢世界观、城市设计与剧情解析。"
+        },
+        {
+          "kind": "platform_creator",
+          "path": "creator_name",
+          "text": "演示UP主乙"
+        },
+        {
+          "kind": "platform_container",
+          "path": "folder_name",
+          "text": "演示收藏"
+        },
+        {
+          "kind": "platform_tag",
+          "path": "tags[0]",
+          "text": "异环"
+        },
+        {
+          "kind": "platform_tag",
+          "path": "tags[1]",
+          "text": "明日方舟"
+        },
+        {
+          "kind": "platform_tag",
+          "path": "tags[2]",
+          "text": "剧情解析"
+        },
+        {
+          "kind": "platform_category",
+          "path": "platform_category.name",
+          "text": "手机游戏"
+        }
+      ],
+      "platform_facts": {
+        "creator_id": "creator-b1",
+        "creator_name": "演示UP主乙",
+        "evidence_id": "47de512c5d621a49",
+        "folder_name": "演示收藏",
+        "platform_category": {
+          "id": 172,
+          "name": "手机游戏"
+        },
+        "source_label": "公开收藏",
+        "tags": [
+          "异环",
+          "明日方舟",
+          "剧情解析"
+        ]
+      }
+    },
+    {
+      "episode_id": "episode:demo-3:49dfc5a3f38413ba:63d4193773a2d43b",
+      "viewer_id": "demo-3",
+      "source": "favorite",
+      "event_type": "public_favorite",
+      "observed_at": "2026-07-12T08:00:00+00:00",
+      "published_at": "2026-07-10T00:00:00+00:00",
+      "title": "Vocaloid角色曲MV与Blender动画制作流程",
+      "url": "",
+      "bvid": "",
+      "content_hash": "44e9efad431e824b15c7edc7e2838ad99d7aca2d",
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "fields": [
+        {
+          "kind": "text",
+          "path": "title",
+          "text": "Vocaloid角色曲MV与Blender动画制作流程"
+        },
+        {
+          "kind": "text",
+          "path": "description",
+          "text": "关注虚拟歌手、音乐视觉化和三维动画创作。"
+        },
+        {
+          "kind": "platform_creator",
+          "path": "creator_name",
+          "text": "演示UP主丙"
+        },
+        {
+          "kind": "platform_container",
+          "path": "folder_name",
+          "text": "演示收藏"
+        },
+        {
+          "kind": "platform_tag",
+          "path": "tags[0]",
+          "text": "Vocaloid"
+        },
+        {
+          "kind": "platform_tag",
+          "path": "tags[1]",
+          "text": "Blender"
+        },
+        {
+          "kind": "platform_tag",
+          "path": "tags[2]",
+          "text": "动画制作"
+        },
+        {
+          "kind": "platform_category",
+          "path": "platform_category.name",
+          "text": "音乐综合"
+        }
+      ],
+      "platform_facts": {
+        "creator_id": "creator-c1",
+        "creator_name": "演示UP主丙",
+        "evidence_id": "49dfc5a3f38413ba",
+        "folder_name": "演示收藏",
+        "platform_category": {
+          "id": 172,
+          "name": "音乐综合"
+        },
+        "source_label": "公开收藏",
+        "tags": [
+          "Vocaloid",
+          "Blender",
+          "动画制作"
+        ]
+      }
+    }
+  ],
+  "interest_states": [
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.236499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "canonical_name": "异环",
+      "entity_type": "game",
+      "evidence_mention_ids": [
+        "mention:demo-1:6014e0304a0cd43a019bbebb"
+      ],
+      "state_id": "edge:7363b58cc0820ada679d2834",
+      "viewer_id": "demo-1",
+      "entity_id": "entity:game:e406b4268aa858c21f",
+      "aspects": [
+        "都市探索"
+      ],
+      "preference": "关注具体内容与讨论角度",
+      "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+      "status": "近期上升"
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.236499+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.236499+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "canonical_name": "角色演出",
+      "entity_type": "content_aspect",
+      "evidence_mention_ids": [
+        "mention:demo-1:5362ea02fb8c14c5735f77c5"
+      ],
+      "state_id": "edge:9cb3a1f4d7bb696895f6db1b",
+      "viewer_id": "demo-1",
+      "entity_id": "entity:content_aspect:e8e76a58614761bf42",
+      "aspects": [],
+      "preference": "关注具体内容与讨论角度",
+      "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+      "status": "稳定"
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "canonical_name": "异环",
+      "entity_type": "game",
+      "evidence_mention_ids": [
+        "mention:demo-2:d24a5271a30d8731ba412bf2"
+      ],
+      "state_id": "edge:1b186f52b28580da788e3edd",
+      "viewer_id": "demo-2",
+      "entity_id": "entity:game:e406b4268aa858c21f",
+      "aspects": [
+        "城市设计"
+      ],
+      "preference": "关注具体内容与讨论角度",
+      "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+      "status": "近期上升"
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.237498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.237498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "canonical_name": "明日方舟",
+      "entity_type": "game",
+      "evidence_mention_ids": [
+        "mention:demo-2:bd1eb8721af60f1f8b2cb07e"
+      ],
+      "state_id": "edge:8aea01bf2a7094ed1b3445fe",
+      "viewer_id": "demo-2",
+      "entity_id": "entity:game:71d8b386512c1d5368",
+      "aspects": [],
+      "preference": "关注具体内容与讨论角度",
+      "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+      "status": "稳定"
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "canonical_name": "Vocaloid",
+      "entity_type": "music_culture",
+      "evidence_mention_ids": [
+        "mention:demo-3:02ec664123ad0680992dfa95"
+      ],
+      "state_id": "edge:5d292efe5eeaab75430a0a6f",
+      "viewer_id": "demo-3",
+      "entity_id": "entity:music_culture:f88f97887a85136135",
+      "aspects": [],
+      "preference": "关注具体内容与讨论角度",
+      "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+      "status": "核心"
+    },
+    {
+      "predicate": "INTERESTED_IN",
+      "source_kind": "ai_state",
+      "confidence": 0.86,
+      "valid_from": "2026-08-03T20:24:12.238498+00:00",
+      "valid_to": null,
+      "first_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "last_seen_at": "2026-08-03T20:24:12.238498+00:00",
+      "run_id": "run:53921c8318844cd8be77cb69c66efb8c",
+      "canonical_name": "Blender",
+      "entity_type": "software",
+      "evidence_mention_ids": [
+        "mention:demo-3:fd48f9a96176fcdc9744e577"
+      ],
+      "state_id": "edge:e770f974b59b2bd8821eb966",
+      "viewer_id": "demo-3",
+      "entity_id": "entity:software:44e261f66d844eadc9",
+      "aspects": [
+        "动画制作"
+      ],
+      "preference": "关注具体内容与讨论角度",
+      "rationale": "演示数据中的公开收藏和平台标签形成可追溯证据。",
+      "status": "近期上升"
+    }
+  ]
+}

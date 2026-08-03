@@ -1,0 +1,12 @@
+{
+  "status": "complete",
+  "model": "synthetic-demo",
+  "protocol": "tool_call_only",
+  "situation_input_hash": "synthetic-demo",
+  "viewer_input_hashes": {
+    "demo-1": "synthetic-demo",
+    "demo-2": "synthetic-demo",
+    "demo-3": "synthetic-demo"
+  },
+  "synthetic_demo": true
+}
