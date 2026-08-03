@@ -526,3 +526,39 @@ fn query_graph_filters_types_predicates_needle_and_hides_situation() {
     assert_eq!(mentions.len(), 1, "边证据 mention 必须回填: {result}");
     assert_eq!(mentions[0]["mention_id"], "m-1");
 }
+
+/// graph 集成 M1：references 的 entities 桶只认"有 Entity 节点镜像"的行——
+/// 手迁造成的 entities 孤行不得过终局存在性校验（accepted→落库 FK 崩分裂防御）。
+#[test]
+fn references_requires_node_mirror_for_entities() {
+    let store = fixture_store();
+    let insert_entity = |id: &str| {
+        store
+            .conn
+            .execute(
+                "INSERT INTO entities(entity_id,canonical_name,normalized_name,entity_type,description,source_kind,properties_json,first_seen_at,last_seen_at) \
+                 VALUES(?,?,'','game','','ai_semantic','{}','t0','t1')",
+                rusqlite::params![id, id],
+            )
+            .unwrap();
+    };
+    insert_entity("ent-ok");
+    insert_entity("ent-orphan");
+    // 只给 ent-ok 建镜像节点（resolve_entity 的受控形态）
+    store
+        .upsert_node("ent-ok", "Entity", "ent-ok", &json!({}), "ai", None)
+        .unwrap();
+    let out = query::references(
+        &store,
+        &["ent-ok".to_string(), "ent-orphan".to_string()],
+        &[],
+        &[],
+    )
+    .unwrap();
+    let entities: Vec<&str> = out["entities"].iter().map(String::as_str).collect();
+    assert_eq!(
+        entities,
+        ["ent-ok"],
+        "孤儿实体行不得过 references: {entities:?}"
+    );
+}

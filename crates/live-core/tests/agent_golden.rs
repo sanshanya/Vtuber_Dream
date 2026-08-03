@@ -357,7 +357,8 @@ async fn golden_audience_happy_path() {
         assistant_tool_call(
             "call-1",
             "query_graph",
-            json!({"needle": "塞尔达"}),
+            // schema 参数名是 query（评审 graph-m3：此前误写 needle → 全表路径逃过端到端钉）
+            json!({"query": "塞尔达"}),
             Some("先看图"),
         ),
     )
@@ -404,6 +405,17 @@ async fn golden_audience_happy_path() {
          VALUES('ent1','塞尔达传说','塞尔达传说','游戏','','ai_semantic','{}','t0','t1')",
         [],
     ).unwrap();
+    // references 的 entities 桶 JOIN nodes（graph 集成 M1）：镜像节点必须同生
+    store
+        .upsert_node(
+            "ent1",
+            "Entity",
+            "塞尔达传说",
+            &json!({}),
+            "ai_semantic",
+            None,
+        )
+        .unwrap();
     store
         .upsert_episode(&episode("177", "ep-a1", "塞尔达开荒实况"))
         .unwrap();

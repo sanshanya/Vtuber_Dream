@@ -168,7 +168,17 @@ pub fn references(
         let mut found = std::collections::BTreeSet::new();
         for chunk in ordered.chunks(GRAPH_QUERY_LIMIT as usize) {
             let placeholders = vec!["?"; chunk.len()].join(",");
-            let sql = format!("SELECT {column} FROM {table} WHERE {column} IN ({placeholders})");
+            // graph 集成 M1：entities 桶必须与 nodes 镜像对齐——没有 Entity 节点的
+            // 实体行（手迁/导入破坏镜像）不得过审（否则 accepted→落库 FK 崩分裂）。
+            let sql = if table == "entities" {
+                format!(
+                    "SELECT e.entity_id FROM entities e \
+                     JOIN nodes n ON n.node_id = e.entity_id AND n.node_type='Entity' \
+                     WHERE e.entity_id IN ({placeholders})"
+                )
+            } else {
+                format!("SELECT {column} FROM {table} WHERE {column} IN ({placeholders})")
+            };
             let rows = select_all(store, &sql, chunk.iter().cloned().map(Into::into).collect())?;
             for row in rows {
                 if let Some(Value::String(id)) = row.get(column) {
