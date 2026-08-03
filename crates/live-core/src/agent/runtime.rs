@@ -281,7 +281,19 @@ struct TerminalArgs<S> {
     submission: S,
 }
 
-/// 终局工具工厂：serde schema 解析 → 业务校验 → 接受/拒绝。
+/// 终局校验器三态（R4：基础设施失败与业务拒收分道——Python SDK tool-error 通道镜像）。
+/// 此前 infrastructure 失败被白标为「模型可修正的校验拒收」，模型空烧修正轮回。
+pub enum TerminalOutcome {
+    /// 校验通过 → `accepted:true` + 计数载荷（Python 终局工具返回形状）。
+    Accept(Value),
+    /// 业务校验拒绝 → Python 三键 `accepted/false+errors+instruction`；submission 槽保持 None。
+    Reject(Vec<String>),
+    /// 基础设施失败（图 IO/SQLite 等）→ `{"error": ...}`；槽位**不污染**
+    /// （Python `validation_errors` 不覆写语义；模型可读错误重试，不被指示"修正"程序故障）。
+    Fatal(String),
+}
+
+/// 终局工具工厂：serde schema 解析 → 业务校验 → 接受/拒绝/故障。
 /// 拒绝形状与 Python tools.py 三终局一致：
 /// `{"accepted":false,"errors":[...],"instruction":"修正后重新调用本工具"}`，
 /// 且 submission 槽必须保持 None（测试钉）。
@@ -289,13 +301,13 @@ pub fn make_terminal_tool<C, S, V>(name: &str, description: &str, validator: V) 
 where
     C: RunCtx,
     S: for<'de> Deserialize<'de> + Serialize + schemars::JsonSchema + 'static,
-    V: Fn(&mut C, &S) -> Result<Value, Vec<String>> + 'static,
+    V: Fn(&mut C, &S) -> TerminalOutcome + 'static,
 {
     let schema = schemars::schema_for!(TerminalArgs<S>);
     AgentTool {
         name: name.to_string(),
         description: description.to_string(),
-        parameters: serde_json::to_value(schema).unwrap_or(Value::Null),
+        parameters: serde_json::to_value(schema).expect("schema 构造失败是编译期缺陷"),
         terminal: true,
         handler: Box::new(move |ctx: &mut C, args: &Value| {
             match serde_json::from_value::<TerminalArgs<S>>(args.clone()) {
@@ -311,7 +323,7 @@ where
                     })
                 }
                 Ok(parsed) => match validator(ctx, &parsed.submission) {
-                    Ok(payload) => {
+                    TerminalOutcome::Accept(payload) => {
                         // Python parity：每次调用都覆写 validation_errors；接受时为空。
                         ctx.slot().validation_errors.clear();
                         if let Ok(value) = serde_json::to_value(&parsed.submission) {
@@ -323,7 +335,7 @@ where
                         }
                         payload
                     }
-                    Err(errors) => {
+                    TerminalOutcome::Reject(errors) => {
                         let slot = ctx.slot();
                         slot.validation_errors = errors.clone();
                         slot.value = None;
@@ -333,6 +345,7 @@ where
                             "instruction": "修正后重新调用本工具",
                         })
                     }
+                    TerminalOutcome::Fatal(message) => json!({"error": message}),
                 },
             }
         }),

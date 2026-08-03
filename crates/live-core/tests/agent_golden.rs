@@ -544,3 +544,41 @@ async fn spawn_drop<T: Send + 'static>(value: T) {
         .await
         .expect("drop task");
 }
+
+/// R4：基础设施失败走 Fatal 通道——不白标为模型可修正的校验拒收，
+/// 且槽位（submission/validation_errors）不被污染（Python SDK tool-error 通道镜像）。
+#[test]
+fn terminal_fatal_channel_on_store_failure() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = fixture_store();
+    // 毒化：删 entities 表 → entity_exists 查询必败
+    store.conn.execute("DROP TABLE entities", []).unwrap();
+    let mut ctx = ViewerAgentCtx {
+        viewer_data: json!({"viewer": {"id": "v1"}}),
+        episodes: Default::default(),
+        research: ResearchService::new(tmp.path(), mock_client(DEAD_ORIGIN), 20),
+        store,
+        slot: {
+            let mut slot = live_core::agent::runtime::SubmissionSlot::default();
+            slot.value = Some(json!({"legacy": "kept"}));
+            slot.validation_errors = vec!["kept".to_string()];
+            slot
+        },
+    };
+    let mut tool = live_core::agent::tools::viewer_terminal_tool();
+    let out = (tool.handler)(&mut ctx, &json!({"submission": viewer_submission(true)}));
+    assert!(
+        out.get("accepted").is_none(),
+        "Fatal 不得有 accepted 键: {out}"
+    );
+    assert!(
+        out["error"]
+            .as_str()
+            .unwrap()
+            .contains("entity lookup failed"),
+        "{out}"
+    );
+    // 槽位不污染：既有 value/errors 原样保留（Python validation_errors 不覆写语义）
+    assert_eq!(ctx.slot.value, Some(json!({"legacy": "kept"})));
+    assert_eq!(ctx.slot.validation_errors, vec!["kept".to_string()]);
+}

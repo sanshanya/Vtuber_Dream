@@ -7,7 +7,9 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 
-use super::runtime::{AgentSpec, AgentTool, RunCtx, SubmissionSlot, make_terminal_tool};
+use super::runtime::{
+    AgentSpec, AgentTool, RunCtx, SubmissionSlot, TerminalOutcome, make_terminal_tool,
+};
 use crate::models::ProbeResult;
 
 /// 探针校验错误语（Python 逐字）。
@@ -83,9 +85,9 @@ pub fn probe_tools() -> Vec<AgentTool<ProbeContext>> {
             |ctx: &mut ProbeContext, submission: &ProbeResult| {
                 if submission.a == 7 && submission.b == 14 && submission.total == 21 {
                     ctx.submission = Some(submission.clone());
-                    Ok(json!({"total": submission.total}))
+                    TerminalOutcome::Accept(json!({"total": submission.total}))
                 } else {
-                    Err(vec![PROBE_VALIDATION_ERROR.to_string()])
+                    TerminalOutcome::Reject(vec![PROBE_VALIDATION_ERROR.to_string()])
                 }
             },
         ),

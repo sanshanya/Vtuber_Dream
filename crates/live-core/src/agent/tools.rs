@@ -25,7 +25,9 @@ use crate::models::{AudienceSituationSubmission, ViewerPerceptionSubmission};
 use crate::storage::{read_json, write_json};
 
 use super::prompts::{audience_instructions, viewer_instructions};
-use super::runtime::{AgentSpec, AgentTool, RunCtx, SubmissionSlot, make_terminal_tool};
+use super::runtime::{
+    AgentSpec, AgentTool, RunCtx, SubmissionSlot, TerminalOutcome, make_terminal_tool,
+};
 use super::validators::{validate_audience_submission, validate_viewer_submission};
 
 // ---------------------------------------------------------------------------
@@ -613,8 +615,43 @@ pub fn viewer_terminal_tool() -> AgentTool<ViewerAgentCtx> {
             );
             let search_ids: HashSet<String> =
                 known_search_result_ids(&ctx.research).into_iter().collect();
+            // R4：实体存在性查询是基础设施面——预探测，DB 故障走 Fatal
+            // （不再 unwrap_or(false) 白标为"entity 不存在"的校验拒收）。
+            let mut probe_ids = std::collections::BTreeSet::new();
+            for entity in &submission.entities {
+                if let Some(existing) = &entity.existing_entity_id
+                    && !existing.is_empty()
+                {
+                    probe_ids.insert(existing.clone());
+                }
+                probe_ids.extend(entity.parent_entity_refs.iter().cloned());
+            }
+            probe_ids.extend(submission.mentions.iter().map(|m| m.entity_ref.clone()));
+            probe_ids.extend(
+                submission
+                    .relations
+                    .iter()
+                    .flat_map(|r| [r.subject_ref.clone(), r.object_ref.clone()]),
+            );
+            probe_ids.extend(
+                submission
+                    .interest_states
+                    .iter()
+                    .map(|s| s.entity_ref.clone()),
+            );
+            let mut exists_map = std::collections::HashMap::new();
+            for candidate_id in probe_ids {
+                match ctx.store.entity_exists(&candidate_id) {
+                    Ok(found) => {
+                        exists_map.insert(candidate_id, found);
+                    }
+                    Err(err) => {
+                        return TerminalOutcome::Fatal(format!("entity lookup failed: {err}"));
+                    }
+                }
+            }
             let entity_exists =
-                |candidate_id: &str| ctx.store.entity_exists(candidate_id).unwrap_or(false);
+                |candidate_id: &str| exists_map.get(candidate_id).copied().unwrap_or(false);
             let errors = validate_viewer_submission(
                 submission,
                 &viewer_id,
@@ -623,7 +660,7 @@ pub fn viewer_terminal_tool() -> AgentTool<ViewerAgentCtx> {
                 &search_ids,
             );
             if errors.is_empty() {
-                Ok(json!({
+                TerminalOutcome::Accept(json!({
                     "viewer_id": submission.viewer_id,
                     "mentions": submission.mentions.len(),
                     "entities": submission.entities.len(),
@@ -631,7 +668,7 @@ pub fn viewer_terminal_tool() -> AgentTool<ViewerAgentCtx> {
                     "interest_states": submission.interest_states.len(),
                 }))
             } else {
-                Err(errors)
+                TerminalOutcome::Reject(errors)
             }
         },
     )
@@ -696,8 +733,13 @@ pub fn audience_terminal_tool() -> AgentTool<AudienceAgentCtx> {
             {
                 mention_refs.extend(mentions.iter().cloned());
             }
-            let references = query::references(&ctx.store, &entity_refs, &[], &mention_refs)
-                .map_err(|err| vec![format!("graph references failed: {err}")])?;
+            // R4：references 失败 = 基础设施故障 → Fatal（不白标为模型可修正的校验拒收）。
+            let references = match query::references(&ctx.store, &entity_refs, &[], &mention_refs) {
+                Ok(references) => references,
+                Err(err) => {
+                    return TerminalOutcome::Fatal(format!("graph references failed: {err}"));
+                }
+            };
             let to_hashset = |key: &str| -> HashSet<String> {
                 references
                     .get(key)
@@ -715,14 +757,14 @@ pub fn audience_terminal_tool() -> AgentTool<AudienceAgentCtx> {
                 &search_ids,
             );
             if errors.is_empty() {
-                Ok(json!({
+                TerminalOutcome::Accept(json!({
                     "interest_items": submission.interest_graph.len(),
                     "communities": submission.communities.len(),
                     "situations": submission.situations.len(),
                     "content_opportunities": submission.content_opportunities.len(),
                 }))
             } else {
-                Err(errors)
+                TerminalOutcome::Reject(errors)
             }
         },
     )
