@@ -7,6 +7,7 @@ pub const PROTOCOL_NOTE: &str =
     "事实、推断、状态、行动必须分层；普通 assistant 文本不是程序输出（AGENTS.md §2）";
 
 pub mod bilibili;
+pub mod collector;
 pub mod config;
 pub mod episodes;
 pub mod graph;

@@ -237,7 +237,7 @@ pub use seeds::{deterministic_mention_seeds, validate_span};
 // Episode
 // ---------------------------------------------------------------------------
 
-fn get_value<'a>(value: &'a Value, key: &str) -> &'a Value {
+pub(crate) fn get_value<'a>(value: &'a Value, key: &str) -> &'a Value {
     value.get(key).unwrap_or(&Value::Null)
 }
 

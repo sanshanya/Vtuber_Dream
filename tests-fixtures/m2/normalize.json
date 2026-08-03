@@ -1,0 +1,394 @@
+{
+  "profile": [
+    {
+      "args": {
+        "uid": "128396105",
+        "profile": {
+          "name": "朝仓小月",
+          "face": "https://f.jpg",
+          "sign": "签",
+          "level": 6,
+          "official": {
+            "title": "bilibili直播签约"
+          }
+        },
+        "stats": {
+          "following": 128,
+          "follower": 2142
+        }
+      },
+      "expected": {
+        "uid": "128396105",
+        "name": "朝仓小月",
+        "face": "https://f.jpg",
+        "sign": "签",
+        "level": 6,
+        "official_title": "bilibili直播签约",
+        "following": 128,
+        "followers": 2142,
+        "profile_url": "https://space.bilibili.com/128396105"
+      }
+    },
+    {
+      "args": {
+        "uid": "128396105",
+        "profile": {},
+        "stats": {}
+      },
+      "expected": {
+        "uid": "128396105",
+        "name": "",
+        "face": "",
+        "sign": "",
+        "level": 0,
+        "official_title": "",
+        "following": 0,
+        "followers": 0,
+        "profile_url": "https://space.bilibili.com/128396105"
+      }
+    }
+  ],
+  "followings": [
+    {
+      "args": {
+        "uid": "128396105",
+        "items": [
+          {
+            "mid": 321,
+            "uname": "上行关注",
+            "sign": "签1"
+          },
+          {
+            "mid": "",
+            "uname": "无 mid 丢"
+          },
+          {
+            "mid": 322,
+            "uname": "  ",
+            "sign": "  "
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "84a99aba7bc640d4",
+          "source": "following",
+          "creator_id": "321",
+          "creator_name": "上行关注",
+          "title": "上行关注",
+          "description": "签1",
+          "published_at": "",
+          "url": "https://space.bilibili.com/321",
+          "bvid": "",
+          "tags": []
+        },
+        {
+          "id": "282c8e91772b24be",
+          "source": "following",
+          "creator_id": "322",
+          "creator_name": "",
+          "title": "",
+          "description": "",
+          "published_at": "",
+          "url": "https://space.bilibili.com/322",
+          "bvid": "",
+          "tags": []
+        }
+      ]
+    }
+  ],
+  "videos": [
+    {
+      "args": {
+        "uid": "128396105",
+        "items": [
+          {
+            "bvid": "BV1u14LzIEYm",
+            "title": "新视频",
+            "description": "宽葂渌字",
+            "created": 1753852800
+          },
+          {
+            "bvid": "",
+            "title": "无 bvid"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "c23f1137e418cf97",
+          "source": "video",
+          "creator_id": "128396105",
+          "creator_name": "",
+          "title": "新视频",
+          "description": "宽葂渌字",
+          "published_at": "1753852800",
+          "url": "https://www.bilibili.com/video/BV1u14LzIEYm",
+          "bvid": "BV1u14LzIEYm",
+          "tags": []
+        },
+        {
+          "id": "d4117f3940f162a4",
+          "source": "video",
+          "creator_id": "128396105",
+          "creator_name": "",
+          "title": "无 bvid",
+          "description": "",
+          "published_at": "",
+          "url": "",
+          "bvid": "",
+          "tags": []
+        }
+      ]
+    }
+  ],
+  "dynamics": [
+    {
+      "args": {
+        "uid": "128396105",
+        "items": [
+          {
+            "id_str": "1108825358399762457",
+            "modules": {
+              "module_dynamic": {
+                "desc": {
+                  "text": "动态正文"
+                }
+              },
+              "module_author": {
+                "pub_ts": 1753852850,
+                "name": "发帖人"
+              }
+            },
+            "desc": "补充值"
+          },
+          {
+            "id_str": "media",
+            "modules": {
+              "module_dynamic": {
+                "desc": {
+                  "text": ""
+                }
+              },
+              "author": {
+                "pub_ts": ""
+              }
+            }
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "8f38ba1cd78cb695",
+          "source": "dynamic",
+          "creator_id": "128396105",
+          "creator_name": "",
+          "title": "动态正文",
+          "description": "发帖人 补充值",
+          "published_at": "1753852850",
+          "url": "https://t.bilibili.com/1108825358399762457",
+          "bvid": "",
+          "tags": []
+        }
+      ]
+    }
+  ],
+  "favorites": [
+    {
+      "args": {
+        "uid": "128396105",
+        "folder": {
+          "id": "3291",
+          "title": "游戏收集"
+        },
+        "items": [
+          {
+            "bvid": "BV1GJ4zeqEeS",
+            "title": "收藏视频",
+            "intro": "简介",
+            "upper": {
+              "mid": 92,
+              "name": "某UP"
+            },
+            "fav_time": 1753852900
+          },
+          {
+            "bvid": "",
+            "title": "缺 bvid 镇平"
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "7a3d9c06b5e88c5e",
+          "source": "favorite",
+          "folder_id": "3291",
+          "folder_name": "游戏收集",
+          "creator_id": "92",
+          "creator_name": "某UP",
+          "title": "收藏视频",
+          "description": "简介",
+          "published_at": "1753852900",
+          "url": "https://www.bilibili.com/video/BV1GJ4zeqEeS",
+          "bvid": "BV1GJ4zeqEeS",
+          "tags": []
+        },
+        {
+          "id": "e1c3048212aff1fc",
+          "source": "favorite",
+          "folder_id": "3291",
+          "folder_name": "游戏收集",
+          "creator_id": "",
+          "creator_name": "",
+          "title": "缺 bvid 镇平",
+          "description": "",
+          "published_at": "",
+          "url": "",
+          "bvid": "",
+          "tags": []
+        }
+      ]
+    }
+  ],
+  "bangumi": [
+    {
+      "args": {
+        "uid": "128396105",
+        "items": [
+          {
+            "title": "间谍过家家",
+            "season_id": "31099",
+            "subtitle": "第二季",
+            "evaluate": "神作",
+            "styles": [
+              {
+                "name": "番剧"
+              },
+              {
+                "name": "冒险"
+              }
+            ]
+          },
+          {
+            "title": ""
+          }
+        ]
+      },
+      "expected": [
+        {
+          "id": "cb46678e8624aa95",
+          "source": "bangumi",
+          "creator_id": "",
+          "creator_name": "",
+          "title": "间谍过家家",
+          "description": "第二季 神作 番剧 冒险",
+          "published_at": "",
+          "url": "https://www.bilibili.com/bangumi/play/ss31099",
+          "bvid": "",
+          "tags": [
+            "番剧",
+            "冒险"
+          ]
+        }
+      ]
+    }
+  ],
+  "games": [
+    {
+      "args": {
+        "uid": "128396105",
+        "items": [
+          {
+            "name": "异环",
+            "summary": "开放世界",
+            "game_id": "105"
+          },
+          {
+            "title": "Warframe",
+            "description": "科幻射击",
+            "id": 7
+          },
+          {
+            "game_name": "拼力",
+            "url": "https://g.bilibili.com/play"
+          },
+          {}
+        ]
+      },
+      "expected": [
+        {
+          "id": "d8e4a355ad743440",
+          "source": "game",
+          "creator_id": "",
+          "creator_name": "",
+          "title": "异环",
+          "description": "开放世界",
+          "published_at": "",
+          "url": "",
+          "bvid": "",
+          "tags": []
+        },
+        {
+          "id": "da02352192d7524f",
+          "source": "game",
+          "creator_id": "",
+          "creator_name": "",
+          "title": "Warframe",
+          "description": "科幻射击",
+          "published_at": "",
+          "url": "",
+          "bvid": "",
+          "tags": []
+        },
+        {
+          "id": "c535aad3aef082e9",
+          "source": "game",
+          "creator_id": "",
+          "creator_name": "",
+          "title": "拼力",
+          "description": "",
+          "published_at": "",
+          "url": "https://g.bilibili.com/play",
+          "bvid": "",
+          "tags": []
+        }
+      ]
+    }
+  ],
+  "collect_text": [
+    {
+      "input": {
+        "text": "正文",
+        "title": "标题",
+        "desc": "详情",
+        "other": "忽略",
+        "nested": {
+          "name": "名",
+          "children": [
+            {
+              "title": "嵌"
+            }
+          ]
+        },
+        "list": [
+          {
+            "description": "诊"
+          },
+          {
+            "sometext": "不取",
+            "summary": "摘"
+          }
+        ]
+      },
+      "expected": [
+        "正文",
+        "标题",
+        "详情",
+        "名",
+        "嵌",
+        "诊",
+        "摘"
+      ]
+    }
+  ]
+}
