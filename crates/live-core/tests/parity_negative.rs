@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 const FIXED_NOW: &str = "2026-08-03T07:02:19.191879+00:00";
 
 fn mem_store() -> Store {
-    Store::open_with_clock(Path::new(":memory:"), Box::new(|| FIXED_NOW.to_string())).unwrap()
+    Store::open_with_clock(Path::new(":memory:"), || FIXED_NOW.to_string()).unwrap()
 }
 
 fn begin(store: &Store, run_id: &str) {

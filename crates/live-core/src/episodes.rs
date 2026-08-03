@@ -9,11 +9,24 @@
 //! - 所有 span 偏移为字符偏移（Python str 语义），Rust 内部以 char 计数，不是字节。
 
 use std::collections::BTreeMap;
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use sha1::{Digest, Sha1};
+
+static NORM_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"[\s\-_·•/\\]+"#).expect("static regex"));
+static SAFE_TYPE_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r#"[^0-9a-zA-Z一-鿿]+"#).expect("static regex"));
+static QUOTED_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
+    vec![
+        Regex::new(r"《([^《》]{1,120})》").expect("static regex"),
+        Regex::new(r"【([^【】]{1,120})】").expect("static regex"),
+        Regex::new(r"#([^#\n]{1,80})#").expect("static regex"),
+    ]
+});
 
 // ---------------------------------------------------------------------------
 // 基础原语
@@ -179,18 +192,13 @@ fn write_json_string(text: &str, out: &mut String) {
 /// `_norm`：strip + casefold（Rust 近似 to_lowercase）+ 去 `[\s\-_·•/\\]+`。
 pub fn norm(value: &str) -> String {
     let lowered = value.trim().to_lowercase();
-    Regex::new(r#"[\s\-_·•/\\]+"#)
-        .expect("static regex")
-        .replace_all(&lowered, "")
-        .into_owned()
+    NORM_REGEX.replace_all(&lowered, "").into_owned()
 }
 
 /// `_safe_type`：非 `0-9a-zA-Z一-鿿` 序列折叠为 `_`，去首尾 `_`，空 → "concept"。
 pub fn safe_type(value: &str) -> String {
     let lowered = value.trim().to_lowercase();
-    let replaced = Regex::new(r#"[^0-9a-zA-Z一-鿿]+"#)
-        .expect("static regex")
-        .replace_all(&lowered, "_");
+    let replaced = SAFE_TYPE_REGEX.replace_all(&lowered, "_");
     let trimmed = replaced.trim_matches('_');
     if trimmed.is_empty() {
         "concept".to_string()
@@ -243,15 +251,6 @@ pub fn source_label(source_type: &str, fallback: &str) -> String {
 /// `source_text(value, limit)` = str(value or "").strip()[:limit]
 pub fn source_text(value: &Value, limit: usize) -> String {
     char_prefix(py_str(value).trim(), limit)
-}
-
-/// `clip(value, limit)` = re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
-pub fn clip(value: &Value, limit: usize) -> String {
-    let flattened = py_str(value);
-    let collapsed = Regex::new(r"\s+")
-        .expect("static regex")
-        .replace_all(&flattened, " ");
-    char_prefix(collapsed.trim(), limit)
 }
 
 /// `source_string_list`：list[str]，元素 source_text(4000)，去空去重保序。
@@ -506,6 +505,13 @@ pub struct EpisodeField {
     pub kind: String,
 }
 
+impl EpisodeField {
+    /// 图谱存储形态；字段名与 Python episode fields 记录一致（经 json_canon 排序后落库）。
+    pub fn to_json(&self) -> Value {
+        serde_json::json!({"path": self.path, "text": self.text, "kind": self.kind})
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Episode {
     pub episode_id: String,
@@ -733,14 +739,6 @@ pub fn build_viewer_episodes(viewer: &Value, max_evidence_per_viewer: usize) -> 
 // 确定式 mention seeds 与 span 校验
 // ---------------------------------------------------------------------------
 
-fn quoted_patterns() -> Vec<Regex> {
-    vec![
-        Regex::new(r"《([^《》]{1,120})》").expect("static regex"),
-        Regex::new(r"【([^【】]{1,120})】").expect("static regex"),
-        Regex::new(r"#([^#\n]{1,80})#").expect("static regex"),
-    ]
-}
-
 /// 字节偏移 → 字符偏移（regex 返回字节，Python 语义是字符）。
 fn byte_to_char_offset(text: &str, byte_offset: usize) -> usize {
     text[..byte_offset].chars().count()
@@ -807,7 +805,7 @@ pub fn deterministic_mention_seeds(episodes: &[Episode]) -> Vec<Value> {
             if field.kind != "text" {
                 continue;
             }
-            for pattern in quoted_patterns() {
+            for pattern in QUOTED_PATTERNS.iter() {
                 for capture in pattern.captures_iter(&field.text) {
                     if let Some(spot) = capture.get(1) {
                         add(

@@ -18,7 +18,9 @@ use std::path::Path;
 use rusqlite::{Connection, OptionalExtension, params};
 use serde_json::{Map, Value};
 
-use crate::episodes::{Episode, hash_parts, json_canon, norm, py_repr_list, safe_type};
+use crate::episodes::{
+    Episode, EpisodeField, hash_parts, json_canon, norm, py_repr_list, safe_type,
+};
 use crate::models::EntityProposal;
 
 pub const GRAPH_SCHEMA_VERSION: i64 = 6;
@@ -37,6 +39,17 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 
 fn repo_err<T>(message: impl Into<String>) -> Result<T> {
     Err(StoreError::Repo(message.into()))
+}
+
+/// Python `old.update(new)` 语义：旧属性并入新 Map，新值覆盖同键；
+/// 键序 = 旧序原位替换 + 新键追加（serde_json Map preserve_order 与 Python dict 一致）。
+fn merge_props(new_props: Map<String, Value>, old_json: &str) -> Map<String, Value> {
+    let Value::Object(old) = serde_json::from_str::<Value>(old_json).unwrap_or(Value::Null) else {
+        return new_props;
+    };
+    let mut merged = old;
+    merged.extend(new_props);
+    merged
 }
 
 const SCHEMA_SQL: &str = r#"
@@ -152,23 +165,19 @@ pub struct ActiveEdge {
 }
 
 pub struct Store {
+    /// 逃生舱：事务脚本与测试直接复用底层连接（build.rs 的 SAVEPOINT 即此用途）。
+    /// 图写入优先走受控方法，零散 SQL 只使用本连接与 schema 之外的直接写仍属违约。
     pub conn: Connection,
-    clock: Box<dyn Fn() -> String + Send + Sync>,
+    /// 时钟注入点：为黄金样本/回放测试固定时间；仅接受 fn 指针（不动态）。
+    clock: fn() -> String,
 }
 
 impl Store {
     pub fn open(path: &Path) -> Result<Self> {
-        Self::open_with_clock(path, Box::new(crate::episodes::now_iso))
+        Self::open_with_clock(path, crate::episodes::now_iso)
     }
 
-    pub fn open_in_memory() -> Result<Self> {
-        Self::open_with_clock(Path::new(":memory:"), Box::new(crate::episodes::now_iso))
-    }
-
-    pub fn open_with_clock(
-        path: &Path,
-        clock: Box<dyn Fn() -> String + Send + Sync>,
-    ) -> Result<Self> {
+    pub fn open_with_clock(path: &Path, clock: fn() -> String) -> Result<Self> {
         if let Some(parent) = path.parent()
             && parent != Path::new("")
             && parent != Path::new(":memory:")
@@ -279,16 +288,7 @@ impl Store {
         let mut first_seen = now.clone();
         if let Some((props_json, seen)) = row {
             first_seen = seen;
-            // Python old.update(new)：新值覆盖同键。
-            if let Value::Object(old) =
-                serde_json::from_str::<Value>(&props_json).unwrap_or(Value::Null)
-            {
-                let mut union = old;
-                for (key, value) in merged {
-                    union.insert(key, value);
-                }
-                merged = union;
-            }
+            merged = merge_props(merged, &props_json);
         }
         self.conn.execute(
             "INSERT INTO nodes(node_id,node_type,name,properties_json,source_kind,first_seen_at,last_seen_at) \
@@ -335,15 +335,8 @@ impl Store {
             "identity_source".to_string(),
             Value::String("bilibili".to_string()),
         );
-        if let Some((_, props_json)) = row
-            && let Value::Object(old) =
-                serde_json::from_str::<Value>(&props_json).unwrap_or(Value::Null)
-        {
-            let mut union = old;
-            for (key, value) in merged {
-                union.insert(key, value);
-            }
-            merged = union;
+        if let Some((_, props_json)) = row {
+            merged = merge_props(merged, &props_json);
         }
         let merged_value = Value::Object(merged);
         self.conn.execute(
@@ -450,15 +443,8 @@ impl Store {
             .collect();
         let mut merged_confidence = confidence;
         if let Some((_, _, props_json, evidence_json, old_conf)) = &row {
-            if let Value::Object(old) =
-                serde_json::from_str::<Value>(props_json).unwrap_or(Value::Null)
-            {
-                let mut union = old;
-                for (key, value) in merged_props {
-                    union.insert(key, value);
-                }
-                merged_props = union;
-            }
+            // 先移动 merged_props 所有权，再在本作用域重建。
+            merged_props = merge_props(merged_props, props_json);
             let mut old_evidence: Vec<String> =
                 serde_json::from_str(evidence_json).unwrap_or_default();
             old_evidence.extend(merged_evidence);
@@ -546,22 +532,6 @@ impl Store {
         Ok(edge_id)
     }
 
-    pub fn close_active_edges(
-        &self,
-        source_id: &str,
-        predicate: &str,
-        source_kind: &str,
-        run_id: &str,
-    ) -> Result<()> {
-        let now = self.now();
-        self.conn.execute(
-            "UPDATE edges SET valid_to=?,last_seen_at=? \
-             WHERE source_id=? AND predicate=? AND source_kind=? AND valid_to IS NULL AND run_id<>?",
-            params![now, now, source_id, predicate, source_kind, run_id],
-        )?;
-        Ok(())
-    }
-
     pub fn close_missing_viewer_semantic_edges(&self, viewer_id: &str, run_id: &str) -> Result<()> {
         let now = self.now();
         self.conn.execute(
@@ -609,19 +579,7 @@ impl Store {
 
     pub fn upsert_episode(&self, episode: &Episode) -> Result<()> {
         let now = self.now();
-        let fields_value = Value::Array(
-            episode
-                .fields
-                .iter()
-                .map(|field| {
-                    let mut item = Map::new();
-                    item.insert("path".to_string(), Value::String(field.path.clone()));
-                    item.insert("text".to_string(), Value::String(field.text.clone()));
-                    item.insert("kind".to_string(), Value::String(field.kind.clone()));
-                    Value::Object(item)
-                })
-                .collect(),
-        );
+        let fields_value = Value::Array(episode.fields.iter().map(EpisodeField::to_json).collect());
         let content_hash = hash_parts(
             &[json_canon(&serde_json::json!({
                 "viewer_id": episode.viewer_id,
@@ -696,6 +654,18 @@ impl Store {
         Ok(found.is_some())
     }
 
+    /// 别名幂等写入（ai 来源）：alias_key=norm(alias)，冲突时 confidence 取 max。
+    fn upsert_alias(&self, entity_id: &str, alias: &str, confidence: f64, now: &str) -> Result<()> {
+        self.conn.execute(
+            "INSERT INTO entity_aliases(alias_key,entity_id,alias,source_kind,confidence,created_at) \
+             VALUES(?,?,?,?,?,?) \
+             ON CONFLICT(alias_key,entity_id) DO UPDATE SET \
+               alias=excluded.alias,confidence=MAX(entity_aliases.confidence,excluded.confidence)",
+            params![norm(alias), entity_id, alias, "ai", confidence, now],
+        )?;
+        Ok(())
+    }
+
     /// 解析实体提案：返回 (resolved_entity_id 或 "", decision)。
     pub fn resolve_entity(
         &self,
@@ -741,13 +711,7 @@ impl Store {
             }
             let now = self.now();
             for alias in dedup_keep_order(std::iter::once(name.clone()).chain(aliases.clone())) {
-                self.conn.execute(
-                    "INSERT INTO entity_aliases(alias_key,entity_id,alias,source_kind,confidence,created_at) \
-                     VALUES(?,?,?,?,?,?) \
-                     ON CONFLICT(alias_key,entity_id) DO UPDATE SET \
-                       alias=excluded.alias,confidence=MAX(entity_aliases.confidence,excluded.confidence)",
-                    params![norm(&alias), existing, alias, "ai", proposal.confidence, now],
-                )?;
+                self.upsert_alias(&existing, &alias, proposal.confidence, &now)?;
             }
             return Ok((existing, decision));
         }
@@ -813,15 +777,8 @@ impl Store {
                 .map(Value::Number)
                 .unwrap_or(Value::Null),
         );
-        if let Some((_, props_json)) = row
-            && let Value::Object(old) =
-                serde_json::from_str::<Value>(&props_json).unwrap_or(Value::Null)
-        {
-            let mut union = old;
-            for (key, value) in properties {
-                union.insert(key, value);
-            }
-            properties = union;
+        if let Some((_, props_json)) = row {
+            properties = merge_props(properties, &props_json);
         }
         self.conn.execute(
             "INSERT INTO entities(\
@@ -859,13 +816,7 @@ impl Store {
             None,
         )?;
         for alias in dedup_keep_order(std::iter::once(name.clone()).chain(aliases.clone())) {
-            self.conn.execute(
-                "INSERT INTO entity_aliases(alias_key,entity_id,alias,source_kind,confidence,created_at) \
-                 VALUES(?,?,?,?,?,?) \
-                 ON CONFLICT(alias_key,entity_id) DO UPDATE SET \
-                   alias=excluded.alias,confidence=MAX(entity_aliases.confidence,excluded.confidence)",
-                params![norm(&alias), resolved, alias, "ai", proposal.confidence, now],
-            )?;
+            self.upsert_alias(&resolved, &alias, proposal.confidence, &now)?;
         }
         Ok((resolved, decision))
     }

@@ -38,8 +38,7 @@ fn viewer_submission(name: &str) -> ViewerPerceptionSubmission {
 }
 
 fn build_demo_graph() -> Store {
-    let store =
-        Store::open_with_clock(Path::new(":memory:"), Box::new(|| FIXED_NOW.to_string())).unwrap();
+    let store = Store::open_with_clock(Path::new(":memory:"), || FIXED_NOW.to_string()).unwrap();
     store
         .begin_run_fixed(
             FIXTURE_RUN_ID,
@@ -252,8 +251,7 @@ fn apply_demo1(store: &Store, run_id: &str, tweak: impl Fn(&mut ViewerPerception
 
 #[test]
 fn interest_state_rerun_is_idempotent() {
-    let store =
-        Store::open_with_clock(Path::new(":memory:"), Box::new(|| FIXED_NOW.to_string())).unwrap();
+    let store = Store::open_with_clock(Path::new(":memory:"), || FIXED_NOW.to_string()).unwrap();
     apply_demo1(&store, "run:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", |_| {});
     let first = interest_edges(&store);
     assert_eq!(first.len(), 2);
@@ -265,8 +263,7 @@ fn interest_state_rerun_is_idempotent() {
 
 #[test]
 fn interest_state_change_closes_interval_and_opens_new() {
-    let store =
-        Store::open_with_clock(Path::new(":memory:"), Box::new(|| FIXED_NOW.to_string())).unwrap();
+    let store = Store::open_with_clock(Path::new(":memory:"), || FIXED_NOW.to_string()).unwrap();
     apply_demo1(&store, "run:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", |_| {});
     let before = interest_edges(&store);
     // 第二次运行：e2「角色演出」状态从 稳定 → 近期上升（内容变化）。

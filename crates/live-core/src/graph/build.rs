@@ -21,7 +21,7 @@ use crate::models::{
 // ---------------------------------------------------------------------------
 
 /// entity_id("bilibili_tag"|"bilibili_category", name)；creator 优先 platform raw_id。
-pub fn entity_id(entity_type: &str, name: &str) -> String {
+pub(crate) fn entity_id(entity_type: &str, name: &str) -> String {
     format!(
         "entity:{}:{}",
         crate::episodes::safe_type(entity_type),
@@ -29,7 +29,7 @@ pub fn entity_id(entity_type: &str, name: &str) -> String {
     )
 }
 
-pub fn creator_entity_id(raw_id: &str, name: &str) -> String {
+pub(crate) fn creator_entity_id(raw_id: &str, name: &str) -> String {
     if raw_id.is_empty() {
         entity_id("creator", name)
     } else {
@@ -259,7 +259,7 @@ fn apply_guard_edges(
 
 /// viewer:self / entity:<local_id> / <local_id> / episode:* / entity:*。
 /// 不可解 → None（v6：调用方显式报错）。
-pub fn node_ref(
+pub(crate) fn node_ref(
     reference: &str,
     local_entities: &std::collections::HashMap<String, String>,
     viewer_id: &str,
@@ -301,6 +301,29 @@ fn resolve_evidence(
 // 观众提交应用
 // ---------------------------------------------------------------------------
 
+/// SAVEPOINT 包裹一次提交：成功 RELEASE（autocommit 顶层即 COMMIT）；
+/// 失败 ROLLBACK TO + RELEASE，中断只影响当前提交单元，重跑幂等（模块头注释口径）。
+fn with_savepoint(name: &str, store: &Store, apply: impl FnOnce() -> Result<()>) -> Result<()> {
+    store.conn.execute_batch(&format!("SAVEPOINT {name}"))?;
+    match apply() {
+        Ok(()) => {
+            store
+                .conn
+                .execute_batch(&format!("RELEASE SAVEPOINT {name}"))?;
+            Ok(())
+        }
+        Err(err) => {
+            let _ = store
+                .conn
+                .execute_batch(&format!("ROLLBACK TO SAVEPOINT {name}"));
+            let _ = store
+                .conn
+                .execute_batch(&format!("RELEASE SAVEPOINT {name}"));
+            Err(err)
+        }
+    }
+}
+
 pub fn apply_viewer_submission(
     store: &Store,
     run_id: &str,
@@ -309,21 +332,9 @@ pub fn apply_viewer_submission(
     output: &ViewerPerceptionSubmission,
 ) -> Result<()> {
     let viewer_id = output.viewer_id.clone();
-    store.conn.execute_batch("SAVEPOINT viewer_apply")?;
-    let result = apply_viewer_inner(store, run_id, viewer_name, episodes, output, &viewer_id);
-    match result {
-        Ok(()) => {
-            store.conn.execute_batch("RELEASE SAVEPOINT viewer_apply")?;
-            Ok(())
-        }
-        Err(err) => {
-            let _ = store
-                .conn
-                .execute_batch("ROLLBACK TO SAVEPOINT viewer_apply");
-            let _ = store.conn.execute_batch("RELEASE SAVEPOINT viewer_apply");
-            Err(err)
-        }
-    }
+    with_savepoint("viewer_apply", store, || {
+        apply_viewer_inner(store, run_id, viewer_name, episodes, output, &viewer_id)
+    })
 }
 
 fn apply_viewer_inner(
@@ -521,23 +532,9 @@ pub fn apply_audience_submission(
     run_id: &str,
     submission: &AudienceSituationSubmission,
 ) -> Result<()> {
-    store.conn.execute_batch("SAVEPOINT audience_apply")?;
-    let result = apply_audience_inner(store, run_id, submission);
-    match result {
-        Ok(()) => {
-            store
-                .conn
-                .execute_batch("RELEASE SAVEPOINT audience_apply")?;
-            Ok(())
-        }
-        Err(err) => {
-            let _ = store
-                .conn
-                .execute_batch("ROLLBACK TO SAVEPOINT audience_apply");
-            let _ = store.conn.execute_batch("RELEASE SAVEPOINT audience_apply");
-            Err(err)
-        }
-    }
+    with_savepoint("audience_apply", store, || {
+        apply_audience_inner(store, run_id, submission)
+    })
 }
 
 fn apply_audience_inner(
