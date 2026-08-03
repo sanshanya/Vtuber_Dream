@@ -366,6 +366,7 @@ use crate::config::Config;
 use crate::graph::build;
 use crate::graph::project::{AUDIENCE_GRAPH_LIMIT, ProjectOptions, project};
 use crate::graph::store::{Store, StoreError};
+use crate::leads;
 use crate::models::{AudienceSituationSubmission, ViewerPerceptionSubmission};
 use crate::storage::{self, load_viewers};
 
@@ -442,6 +443,17 @@ fn stats_json(stats: &RuntimeStats) -> Value {
 
 fn write_state(path: &Path, fields: Value) -> Result<(), PipelineError> {
     storage::write_json(path, &fields).map_err(PipelineError::Storage)
+}
+
+/// M4.x kickoff D4：leads 账本摘要注入用户消息（hash 之外——账本漂移不是
+/// Python parity 的输入身份，缓存有效性不因此失效；登记 design-Δ）。
+/// 账本为空则零面世（首跑提示面与 M4 逐字节一致）。
+fn ledger_annex(output_dir: &Path, viewer: Option<&str>, prompt: String) -> String {
+    let rows = leads::read_ledger(&leads::ledger_path(output_dir));
+    if rows.is_empty() {
+        return prompt;
+    }
+    format!("{prompt}\n\n{}", leads::summary_line(&rows, viewer))
 }
 
 fn reasoning_json(config: &Config) -> Value {
@@ -615,7 +627,11 @@ async fn run_one_viewer(
         "submit_viewer_perception",
         "live_core::models::ViewerPerceptionSubmission",
     );
-    let prompt = viewer_user_prompt(&input_payload);
+    let prompt = ledger_annex(
+        &config.output_dir,
+        Some(&uid),
+        viewer_user_prompt(&input_payload),
+    );
     let mut ctx = ViewerAgentCtx {
         viewer_data: context_data,
         episodes,
@@ -790,7 +806,7 @@ async fn run_audience_stage(
         graph_run_id: None,
         slot: Default::default(),
     };
-    let prompt = audience_user_prompt(&input);
+    let prompt = ledger_annex(&config.output_dir, None, audience_user_prompt(&input));
     let started = std::time::Instant::now();
     let outcome = run_toolcall_agent::<AudienceAgentCtx, AudienceSituationSubmission>(
         runtime,
@@ -1213,6 +1229,15 @@ async fn run_pipeline_inner(
             continue;
         }
         viewer_submissions.insert(uid.clone(), analysis);
+        // M4.x kickoff D3：Ok/Reused 双臂在 apply 成功点汇流——账本补写幂等，
+        // 缓存命中路径同样补账（首跑中断后恢复不丢账）；D7：账本失败不杀管道。
+        let _ = leads::record_leads(
+            &config.output_dir,
+            uid,
+            &run_id,
+            &utc_now(),
+            &submission.leads,
+        );
         if let Some(checkpoint) = knobs.checkpoint.as_deref_mut() {
             checkpoint();
         }
@@ -1300,11 +1325,20 @@ async fn run_pipeline_inner(
             "completed Situation is missing its input hash".to_string(),
         ));
     }
-    if let Some(audience_submission) =
-        serde_json::from_value::<AudienceSituationSubmission>(overall.clone()).ok()
-        && let Err(err) = build::apply_audience_submission(&store, &run_id, &audience_submission)
+    if let Ok(audience_submission) =
+        serde_json::from_value::<AudienceSituationSubmission>(overall.clone())
     {
-        bail!(PipelineError::Store(err));
+        if let Err(err) = build::apply_audience_submission(&store, &run_id, &audience_submission) {
+            bail!(PipelineError::Store(err));
+        }
+        // M4.x：audience leads 以 AUDIENCE_VIEWER_ID 入账（apply 成功后，同 viewer 纪律）。
+        let _ = leads::record_leads(
+            &config.output_dir,
+            leads::AUDIENCE_VIEWER_ID,
+            &run_id,
+            &utc_now(),
+            &audience_submission.leads,
+        );
     }
     match store.complete_run(&run_id) {
         Ok(()) => {}
