@@ -1,0 +1,488 @@
+[
+  {
+    "name": "two-cliques-weak-bridge",
+    "minimum_size": 1,
+    "nodes": [
+      {
+        "id": "viewer:u1",
+        "type": "Viewer",
+        "name": "u1"
+      },
+      {
+        "id": "viewer:u2",
+        "type": "Viewer",
+        "name": "u2"
+      },
+      {
+        "id": "viewer:u3",
+        "type": "Viewer",
+        "name": "u3"
+      },
+      {
+        "id": "viewer:u4",
+        "type": "Viewer",
+        "name": "u4"
+      },
+      {
+        "id": "ent-e1",
+        "type": "Entity",
+        "name": "异环"
+      },
+      {
+        "id": "ent-e2",
+        "type": "Entity",
+        "name": "明日方舟"
+      }
+    ],
+    "edges": [
+      {
+        "source": "viewer:u1",
+        "target": "ent-e1",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      },
+      {
+        "source": "viewer:u2",
+        "target": "ent-e1",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      },
+      {
+        "source": "viewer:u1",
+        "target": "viewer:u2",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      },
+      {
+        "source": "viewer:u3",
+        "target": "ent-e2",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      },
+      {
+        "source": "viewer:u4",
+        "target": "ent-e2",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      },
+      {
+        "source": "viewer:u3",
+        "target": "viewer:u4",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      },
+      {
+        "source": "ent-e1",
+        "target": "ent-e2",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.05
+      }
+    ],
+    "expected": [
+      {
+        "community_id": "community:1",
+        "viewer_ids": [
+          "u1",
+          "u2"
+        ],
+        "entity_ids": [
+          "ent-e1"
+        ],
+        "entities": [
+          "异环"
+        ],
+        "member_count": 3
+      },
+      {
+        "community_id": "community:2",
+        "viewer_ids": [
+          "u3",
+          "u4"
+        ],
+        "entity_ids": [
+          "ent-e2"
+        ],
+        "entities": [
+          "明日方舟"
+        ],
+        "member_count": 3
+      }
+    ]
+  },
+  {
+    "name": "chain-four-equal",
+    "minimum_size": 1,
+    "nodes": [
+      {
+        "id": "viewer:a",
+        "type": "Viewer",
+        "name": "a"
+      },
+      {
+        "id": "viewer:b",
+        "type": "Viewer",
+        "name": "b"
+      },
+      {
+        "id": "viewer:c",
+        "type": "Viewer",
+        "name": "c"
+      },
+      {
+        "id": "viewer:d",
+        "type": "Viewer",
+        "name": "d"
+      }
+    ],
+    "edges": [
+      {
+        "source": "viewer:a",
+        "target": "viewer:b",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.5
+      },
+      {
+        "source": "viewer:b",
+        "target": "viewer:c",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.5
+      },
+      {
+        "source": "viewer:c",
+        "target": "viewer:d",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.5
+      }
+    ],
+    "expected": [
+      {
+        "community_id": "community:1",
+        "viewer_ids": [
+          "a",
+          "b"
+        ],
+        "entity_ids": [],
+        "entities": [],
+        "member_count": 2
+      },
+      {
+        "community_id": "community:2",
+        "viewer_ids": [
+          "c",
+          "d"
+        ],
+        "entity_ids": [],
+        "entities": [],
+        "member_count": 2
+      }
+    ]
+  },
+  {
+    "name": "star-five",
+    "minimum_size": 1,
+    "nodes": [
+      {
+        "id": "viewer:hub",
+        "type": "Viewer",
+        "name": "hub"
+      },
+      {
+        "id": "viewer:l1",
+        "type": "Viewer",
+        "name": "l1"
+      },
+      {
+        "id": "viewer:l2",
+        "type": "Viewer",
+        "name": "l2"
+      },
+      {
+        "id": "viewer:l3",
+        "type": "Viewer",
+        "name": "l3"
+      },
+      {
+        "id": "viewer:l4",
+        "type": "Viewer",
+        "name": "l4"
+      }
+    ],
+    "edges": [
+      {
+        "source": "viewer:hub",
+        "target": "viewer:l1",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.6
+      },
+      {
+        "source": "viewer:hub",
+        "target": "viewer:l2",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.6
+      },
+      {
+        "source": "viewer:hub",
+        "target": "viewer:l3",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.6
+      },
+      {
+        "source": "viewer:hub",
+        "target": "viewer:l4",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.6
+      }
+    ],
+    "expected": [
+      {
+        "community_id": "community:1",
+        "viewer_ids": [
+          "hub",
+          "l1",
+          "l2",
+          "l3",
+          "l4"
+        ],
+        "entity_ids": [],
+        "entities": [],
+        "member_count": 5
+      }
+    ]
+  },
+  {
+    "name": "square-equal",
+    "minimum_size": 1,
+    "nodes": [
+      {
+        "id": "viewer:p",
+        "type": "Viewer",
+        "name": "p"
+      },
+      {
+        "id": "viewer:q",
+        "type": "Viewer",
+        "name": "q"
+      },
+      {
+        "id": "viewer:r",
+        "type": "Viewer",
+        "name": "r"
+      },
+      {
+        "id": "viewer:s",
+        "type": "Viewer",
+        "name": "s"
+      }
+    ],
+    "edges": [
+      {
+        "source": "viewer:p",
+        "target": "viewer:q",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.5
+      },
+      {
+        "source": "viewer:q",
+        "target": "viewer:r",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.5
+      },
+      {
+        "source": "viewer:r",
+        "target": "viewer:s",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.5
+      },
+      {
+        "source": "viewer:s",
+        "target": "viewer:p",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.5
+      }
+    ],
+    "expected": [
+      {
+        "community_id": "community:1",
+        "viewer_ids": [
+          "p",
+          "q",
+          "r",
+          "s"
+        ],
+        "entity_ids": [],
+        "entities": [],
+        "member_count": 4
+      }
+    ]
+  },
+  {
+    "name": "single-edge",
+    "minimum_size": 1,
+    "nodes": [
+      {
+        "id": "viewer:x",
+        "type": "Viewer",
+        "name": "x"
+      },
+      {
+        "id": "viewer:y",
+        "type": "Viewer",
+        "name": "y"
+      }
+    ],
+    "edges": [
+      {
+        "source": "viewer:x",
+        "target": "viewer:y",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.5
+      }
+    ],
+    "expected": [
+      {
+        "community_id": "community:1",
+        "viewer_ids": [
+          "x",
+          "y"
+        ],
+        "entity_ids": [],
+        "entities": [],
+        "member_count": 2
+      }
+    ]
+  },
+  {
+    "name": "no-edges",
+    "minimum_size": 1,
+    "nodes": [
+      {
+        "id": "viewer:solo",
+        "type": "Viewer",
+        "name": "solo"
+      }
+    ],
+    "edges": [],
+    "expected": []
+  },
+  {
+    "name": "filtered-by-minimum-size",
+    "minimum_size": 3,
+    "nodes": [
+      {
+        "id": "viewer:m1",
+        "type": "Viewer",
+        "name": "m1"
+      },
+      {
+        "id": "viewer:m2",
+        "type": "Viewer",
+        "name": "m2"
+      },
+      {
+        "id": "viewer:m3",
+        "type": "Viewer",
+        "name": "m3"
+      },
+      {
+        "id": "viewer:m4",
+        "type": "Viewer",
+        "name": "m4"
+      }
+    ],
+    "edges": [
+      {
+        "source": "viewer:m1",
+        "target": "viewer:m2",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.8
+      },
+      {
+        "source": "viewer:m3",
+        "target": "viewer:m4",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.8
+      }
+    ],
+    "expected": []
+  },
+  {
+    "name": "disconnected-unequal",
+    "minimum_size": 1,
+    "nodes": [
+      {
+        "id": "viewer:t1",
+        "type": "Viewer",
+        "name": "t1"
+      },
+      {
+        "id": "viewer:t2",
+        "type": "Viewer",
+        "name": "t2"
+      },
+      {
+        "id": "viewer:t3",
+        "type": "Viewer",
+        "name": "t3"
+      },
+      {
+        "id": "viewer:o1",
+        "type": "Viewer",
+        "name": "o1"
+      },
+      {
+        "id": "viewer:o2",
+        "type": "Viewer",
+        "name": "o2"
+      }
+    ],
+    "edges": [
+      {
+        "source": "viewer:t1",
+        "target": "viewer:t2",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      },
+      {
+        "source": "viewer:t2",
+        "target": "viewer:t3",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      },
+      {
+        "source": "viewer:t1",
+        "target": "viewer:t3",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      },
+      {
+        "source": "viewer:o1",
+        "target": "viewer:o2",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9
+      }
+    ],
+    "expected": [
+      {
+        "community_id": "community:1",
+        "viewer_ids": [
+          "t1",
+          "t2",
+          "t3"
+        ],
+        "entity_ids": [],
+        "entities": [],
+        "member_count": 3
+      },
+      {
+        "community_id": "community:2",
+        "viewer_ids": [
+          "o1",
+          "o2"
+        ],
+        "entity_ids": [],
+        "entities": [],
+        "member_count": 2
+      }
+    ]
+  }
+]

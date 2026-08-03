@@ -49,7 +49,7 @@ fn select_all(store: &Store, sql: &str, args: Vec<Sql>) -> Result<Vec<Map<String
     Ok(rows)
 }
 
-fn fetch_all(
+pub(crate) fn fetch_all(
     store: &Store,
     sql: &str,
     mut params: Vec<Sql>,

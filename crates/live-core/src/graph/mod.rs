@@ -2,6 +2,7 @@
 //! build（Episode/AI 提交的受控写入）、query（search/references/episodes 读面基元）。
 
 pub mod build;
+pub mod project;
 pub mod query;
 pub mod store;
 
