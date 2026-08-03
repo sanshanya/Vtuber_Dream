@@ -1,0 +1,156 @@
+{
+  "mixin_key": {
+    "image_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+    "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png",
+    "image_key": "7cd084941338484aae1ad9425b84077c",
+    "sub_key": "4932caff0ff746eab6f01bf08b70ac45",
+    "expected": "ea1db124af3c7062474693fa704f4ff8"
+  },
+  "sign_wbi": [
+    {
+      "params": {
+        "mid": "128396105",
+        "pn": 1,
+        "ps": 50,
+        "order": "pubdate"
+      },
+      "timestamp": 1754134800,
+      "expected": {
+        "mid": "128396105",
+        "order": "pubdate",
+        "pn": "1",
+        "ps": "50",
+        "wts": "1754134800",
+        "w_rid": "3a70b0cbf91debf3328a74046a21f85d"
+      }
+    },
+    {
+      "params": {
+        "keyword": "异环(新游)'\" test!",
+        "search_type": "video",
+        "page": 1
+      },
+      "timestamp": 1754134812,
+      "expected": {
+        "keyword": "异环新游\" test",
+        "page": "1",
+        "search_type": "video",
+        "wts": "1754134812",
+        "w_rid": "79fc86fa3d72830e544283d940dbf2d9"
+      }
+    },
+    {
+      "params": {
+        "bvid": "BV1u14LzIEYm",
+        "drop": null,
+        "mid": 491319
+      },
+      "timestamp": 1754134813,
+      "expected": {
+        "bvid": "BV1u14LzIEYm",
+        "mid": "491319",
+        "wts": "1754134813",
+        "w_rid": "e7dd033cee05ff93556bd34a93be3ed3"
+      }
+    }
+  ],
+  "guard_member": [
+    {
+      "input": {
+        "uid": 128396105,
+        "uinfo": {
+          "uid": 128396105,
+          "base": {
+            "name": "朝仓小月",
+            "face": "https://i2.hdslb.com/face.jpg",
+            "origin_info": {
+              "name": "oldname",
+              "face": "https://old.jpg"
+            }
+          },
+          "medal": {
+            "guard_level": 3,
+            "level": 21
+          },
+          "guard": {
+            "level": 3
+          }
+        },
+        "guard_level": 2,
+        "medal_level": 21,
+        "rank": 4
+      },
+      "expected": {
+        "uid": "128396105",
+        "name": "朝仓小月",
+        "face": "https://i2.hdslb.com/face.jpg",
+        "guard_level": 2,
+        "medal_level": 21,
+        "rank": 4
+      }
+    },
+    {
+      "input": {
+        "uid": "491319",
+        "uinfo": {
+          "base": {
+            "origin_info": {
+              "name": "落樱",
+              "face": "https://face"
+            }
+          },
+          "medal": {
+            "level": 9
+          },
+          "guard": {
+            "level": 1
+          }
+        }
+      },
+      "expected": {
+        "uid": "491319",
+        "name": "落樱",
+        "face": "https://face",
+        "guard_level": 1,
+        "medal_level": 9,
+        "rank": 0
+      }
+    },
+    {
+      "input": {
+        "uid": "",
+        "uinfo": {
+          "base": {
+            "name": "无名"
+          }
+        }
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "uid": "0",
+        "uinfo": {
+          "base": {
+            "name": "空号"
+          }
+        }
+      },
+      "expected": null
+    },
+    {
+      "input": {
+        "uid": 777,
+        "uinfo": {}
+      },
+      "expected": {
+        "uid": "777",
+        "name": "",
+        "face": "",
+        "guard_level": 0,
+        "medal_level": 0,
+        "rank": 0
+      }
+    }
+  ]
+}
