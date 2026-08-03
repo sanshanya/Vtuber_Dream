@@ -427,10 +427,7 @@ fn find_values_inner(value: &Value, wanted_key: &str, out: &mut Vec<String>) {
 
 pub mod run;
 
-pub use run::{
-    CollectError, CollectMode, all_content_items, collect, collect_streamer, collect_viewer,
-    collect_with_client, enrich_video_metadata, write_platform_snapshot,
-};
+pub use run::{CollectError, CollectMode, collect, collect_with_client};
 
 // ---------------------------------------------------------------------------
 // 仅两个测试钉钉：normalize parity fixture + 帮助测试

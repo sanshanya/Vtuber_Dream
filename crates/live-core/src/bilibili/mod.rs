@@ -14,12 +14,10 @@ use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-/// WBI 混排表（Python MIXIN_KEY_ENC_TAB 原样）。
-const MIXIN_KEY_ENC_TAB: [usize; 64] = [
-    46, 47, 18, 2, 53, 8, 23, 32, 15, 50, 10, 31, 58, 3, 45, 35, 27, 43, 5, 49, 33, 9, 42, 19, 29,
-    28, 14, 39, 12, 38, 41, 13, 37, 48, 7, 16, 24, 55, 40, 61, 26, 17, 0, 1, 60, 51, 30, 4, 22, 25,
-    54, 21, 56, 59, 6, 63, 57, 62, 11, 36, 20, 34, 44, 52,
-];
+pub(crate) mod guard;
+pub(crate) mod wbi;
+
+pub(crate) use wbi::{key_from_url, mixin_key, sign_wbi};
 
 /// 分页硬尺子（design 文档"任何阈值必须有命名"；clamp 意图写进各自的调用处注释）。
 pub const FOLLOWINGS_PAGE_CAP: i64 = 50;
@@ -59,90 +57,7 @@ impl BilibiliError {
 }
 
 // ---------------------------------------------------------------------------
-// 纯函数（直连 tests-fixtures/m2/parity.json，不依赖网络）
-// ---------------------------------------------------------------------------
-
-/// Python `_key_from_url`：取 path 的文件名去掉后缀。
-pub fn key_from_url(url: &str) -> String {
-    let without_query = url.split('?').next().unwrap_or("");
-    let file = without_query.rsplit('/').next().unwrap_or("");
-    file.rsplit_once('.')
-        .map(|(stem, _)| stem)
-        .unwrap_or(file)
-        .to_string()
-}
-
-/// Python `_mixin_key`：按混排表取前 32 字符。
-pub fn mixin_key(image_key: &str, sub_key: &str) -> String {
-    let raw = format!("{image_key}{sub_key}");
-    let chars: Vec<char> = raw.chars().collect();
-    MIXIN_KEY_ENC_TAB
-        .iter()
-        .filter_map(|index| chars.get(*index))
-        .take(32)
-        .collect()
-}
-
-/// Python urlencode(quote_via=quote_plus) 对齐：unreserved `A-Za-z0-9_.-~` 原样，
-/// 空格→`+`，其余 UTF-8 百分号大写编码。
-fn urlencode_pair(key: &str, value: &str) -> String {
-    fn encode(text: &str) -> String {
-        let mut out = String::new();
-        for byte in text.as_bytes() {
-            match *byte {
-                b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'_' | b'.' | b'-' | b'~' => {
-                    out.push(*byte as char)
-                }
-                b' ' => out.push('+'),
-                _ => {
-                    out.push('%');
-                    out.push_str(&format!("{byte:02X}"));
-                }
-            }
-        }
-        out
-    }
-    format!("{}={}", encode(key), encode(value))
-}
-
-/// Python `sign_wbi`（params 已物化为字符串对；None 剔除由调用方完成）。
-/// 过滤规则：值中的 `[''()*` 尽数删除，再 quote_plus 编码；wts=wall 时间戳。
-pub fn sign_wbi(
-    params: &[(String, Option<String>)],
-    mixin: &str,
-    timestamp: Option<i64>,
-) -> Vec<(String, String)> {
-    let wts = timestamp.unwrap_or_else(|| chrono::Utc::now().timestamp());
-    let mut signed: Vec<(String, String)> = params
-        .iter()
-        .filter_map(|(key, value)| value.as_ref().map(|value| (key.clone(), sanitize(value))))
-        .collect();
-    signed.push(("wts".to_string(), wts.to_string()));
-    signed.sort_by(|left, right| left.0.cmp(&right.0));
-    let query = signed
-        .iter()
-        .map(|(key, value)| urlencode_pair(key, value))
-        .collect::<Vec<_>>()
-        .join("&");
-    use md5::Digest as _;
-    let mut hasher = md5::Md5::new();
-    hasher.update(format!("{query}{mixin}").as_bytes());
-    let digest = hasher.finalize();
-    let mut out = signed;
-    out.push(("w_rid".to_string(), format!("{digest:x}")));
-    out
-}
-
-/// Python `re.sub(r"[!'()*]", "", str(value))`。
-fn sanitize(value: &str) -> String {
-    value
-        .chars()
-        .filter(|c| !matches!(c, '!' | '\'' | '(' | ')' | '*'))
-        .collect()
-}
-
-// ---------------------------------------------------------------------------
-// guard 名单归一化（Python normalize_guard_member）
+// Python 标量语义 helpers（pick/str_slot/str_or/py_truth/py_int）
 // ---------------------------------------------------------------------------
 
 fn pick(mapping: &Value, key: &str) -> String {
@@ -191,107 +106,6 @@ fn py_int(value: Option<&Value>) -> i64 {
         Some(Value::String(t)) => t.trim().parse().unwrap_or(0),
         _ => 0,
     }
-}
-
-/// 大航海成员归一化。返回 None = 忽略该条（Python 语义：uid 缺失或为 "0"）。
-pub fn normalize_guard_member(item: &Value) -> Option<Vec<(String, Value)>> {
-    let uinfo = item.get("uinfo").cloned().unwrap_or_default();
-    let base = uinfo.get("base").cloned().unwrap_or(Value::Null);
-    let origin = base.get("origin_info").cloned().unwrap_or(Value::Null);
-    let medal = uinfo.get("medal").cloned().unwrap_or(Value::Null);
-    let guard = uinfo.get("guard").cloned().unwrap_or(Value::Null);
-
-    let uid = str_slot(item.get("uid"));
-    let uid = if uid.is_empty() {
-        str_slot(uinfo.get("uid"))
-    } else {
-        uid
-    };
-    if uid.is_empty() || uid == "0" {
-        return None;
-    }
-    let name = name_chain(item, &base, &origin);
-    Some(vec![
-        ("uid".to_string(), Value::String(uid)),
-        ("name".to_string(), Value::String(name)),
-        (
-            "face".to_string(),
-            Value::String(face_chain(item, &base, &origin)),
-        ),
-        (
-            "guard_level".to_string(),
-            first_int_or_none([
-                item.get("guard_level"),
-                medal.get("guard_level"),
-                guard.get("level"),
-            ]),
-        ),
-        (
-            "medal_level".to_string(),
-            first_int_or_none([
-                item.get("medal_level"),
-                item.get("level"),
-                medal.get("level"),
-            ]),
-        ),
-        (
-            "rank".to_string(),
-            first_int([item.get("rank"), item.get("user_rank"), None]),
-        ),
-    ])
-}
-
-/// 大航海 rank：`int(rank or user_rank or 0)`——or-链：falsy(0/""/None) 落到下一槽。
-fn first_int(candidates: [Option<&Value>; 3]) -> Value {
-    for value in candidates {
-        match value {
-            Some(Value::Null) | None => continue,
-            Some(Value::Number(n)) if n.as_f64() == Some(0.0) => continue,
-            Some(Value::String(t)) if t.trim().is_empty() => continue,
-            Some(Value::Bool(false)) => continue,
-            other => return Value::from(py_int(other)),
-        }
-    }
-    Value::from(0)
-}
-
-/// 大航海 guard_level/medal_level：Python 是 `is None` 链——只有 None 才落槽；
-/// 非 None 值由 `int(x or 0)` 收口（"" → 0，不再尝试下一候选）。
-fn first_int_or_none(candidates: [Option<&Value>; 3]) -> Value {
-    for value in candidates {
-        match value {
-            Some(Value::Null) | None => continue,
-            other => return Value::from(py_int(other)),
-        }
-    }
-    Value::from(0)
-}
-
-fn name_chain(item: &Value, base: &Value, origin: &Value) -> String {
-    // Python 的 or 链：username/uname/name/base.name/origin.name（int 槽位不足虑，Python 里仅 str）
-    for slot in [
-        item.get("username"),
-        item.get("uname"),
-        item.get("name"),
-        base.get("name"),
-        origin.get("name"),
-    ] {
-        let text = str_slot(slot);
-        if !text.is_empty() {
-            return text;
-        }
-    }
-    String::new()
-}
-
-fn face_chain(item: &Value, base: &Value, origin: &Value) -> String {
-    for slot in [base.get("face"), origin.get("face"), item.get("face")] {
-        let text = str_slot(slot);
-        if !text.is_empty() {
-            return text;
-        }
-    }
-    String::new()
 }
 
 // ---------------------------------------------------------------------------
@@ -560,7 +374,7 @@ impl BilibiliClient {
                 Vec::new()
             };
             for item in top3.into_iter().chain(listing.iter().cloned()) {
-                if let Some(row) = normalize_guard_member(&item) {
+                if let Some(row) = guard::normalize_guard_member(&item) {
                     let uid = row_number_get(&row, "uid").unwrap_or_default();
                     if !uid.is_empty() && seen.insert(uid.clone()) {
                         members.push(Value::Object(row.into_iter().collect()));
@@ -1015,97 +829,6 @@ fn row_number_get(row: &[(String, Value)], key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn fixture_parity_key_and_defaults() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests-fixtures/m2/parity.json");
-        let fixture: Value = serde_json::from_str(&std::fs::read_to_string(root).unwrap()).unwrap();
-        let keys = &fixture["mixin_key"];
-        assert_eq!(
-            key_from_url(keys["image_url"].as_str().unwrap()),
-            keys["image_key"]
-        );
-        assert_eq!(
-            key_from_url(keys["sub_url"].as_str().unwrap()),
-            keys["sub_key"]
-        );
-        assert_eq!(
-            mixin_key(
-                keys["image_key"].as_str().unwrap(),
-                keys["sub_key"].as_str().unwrap()
-            ),
-            keys["expected"].as_str().unwrap(),
-            "Python mixin_key 字节对账",
-        );
-        for case in fixture["sign_wbi"].as_array().unwrap() {
-            let params: Vec<(String, Option<String>)> = case["params"]
-                .as_object()
-                .unwrap()
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.clone(),
-                        match value {
-                            Value::Null => None,
-                            other => Some(match other {
-                                Value::String(text) => text.clone(),
-                                Value::Number(n) => n.to_string(),
-                                other => other.to_string(),
-                            }),
-                        },
-                    )
-                })
-                .collect();
-            let signed = sign_wbi(
-                &params,
-                keys["expected"].as_str().unwrap().to_string().as_str(),
-                case["timestamp"].as_i64(),
-            );
-            let expected = case["expected"].as_object().unwrap();
-            let mut map = signed
-                .iter()
-                .cloned()
-                .collect::<std::collections::BTreeMap<_, _>>();
-            map.remove("w_rid");
-            for (key, value) in expected {
-                if key != "w_rid" {
-                    assert_eq!(
-                        map.remove(key).unwrap(),
-                        value.as_str().unwrap(),
-                        "sign_wbi 字段 {key}（params {:?}）",
-                        case["params"],
-                    );
-                }
-            }
-            assert!(map.is_empty(), "sign_wbi 多签了字段 {map:?}");
-            assert_eq!(
-                signed.iter().find(|(k, _)| k == "w_rid").unwrap().1,
-                expected["w_rid"].as_str().unwrap(),
-                "Python MD5 指纹（params {:?}）",
-                case["params"],
-            );
-        }
-    }
-
-    #[test]
-    fn normalize_guard_member_parity_fixture() {
-        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../tests-fixtures/m2/parity.json");
-        let fixture: Value = serde_json::from_str(&std::fs::read_to_string(root).unwrap()).unwrap();
-        for case in fixture["guard_member"].as_array().unwrap() {
-            let expected = &case["expected"];
-            let actual = normalize_guard_member(&case["input"])
-                .map(|row| row.into_iter().collect::<serde_json::Map<_, _>>())
-                .map(Value::Object)
-                .unwrap_or(Value::Null);
-            if expected.is_null() {
-                assert!(actual.is_null(), "ignore-case 应丢: {:?}", case["input"]);
-            } else {
-                assert_eq!(&actual, expected, "guard 归一化: {:?}", case["input"]);
-            }
-        }
-    }
 
     #[test]
     fn hidden_codes_match_python() {
