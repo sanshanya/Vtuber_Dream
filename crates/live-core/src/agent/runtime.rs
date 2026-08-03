@@ -312,6 +312,8 @@ where
                 }
                 Ok(parsed) => match validator(ctx, &parsed.submission) {
                     Ok(payload) => {
+                        // Python parity：每次调用都覆写 validation_errors；接受时为空。
+                        ctx.slot().validation_errors.clear();
                         if let Ok(value) = serde_json::to_value(&parsed.submission) {
                             ctx.slot().value = Some(value);
                         }

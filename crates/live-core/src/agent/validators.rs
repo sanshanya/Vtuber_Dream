@@ -9,7 +9,7 @@
 //! 按运行隔离——调用方只准传本运行 `known_search_result_ids(research)`，校验器负例钉死。
 //! 修复 8：占位符/空提交拒绝；阈值 Python 无既有值，为本仓自定（常量命名 + 负例测试）。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 
 use crate::episodes::{Episode, validate_span};
 use crate::models::{AudienceSituationSubmission, Lead, ViewerPerceptionSubmission};
@@ -151,7 +151,7 @@ fn validate_leads(
 pub fn validate_viewer_submission(
     submission: &ViewerPerceptionSubmission,
     viewer_id: &str,
-    episodes: &HashMap<String, Episode>,
+    episodes: &BTreeMap<String, Episode>,
     entity_exists: &dyn Fn(&str) -> bool,
     search_result_ids: &HashSet<String>,
 ) -> Vec<String> {

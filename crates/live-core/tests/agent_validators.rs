@@ -1,7 +1,7 @@
 //! M3-C 终局校验台负例矩阵：Python test_*_validator_semantics.py family 平移
 //! +§9.1 修复 1/6/8 回归 + leads 校验。
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashSet};
 
 use live_core::agent::validators::{validate_audience_submission, validate_viewer_submission};
 use live_core::episodes::{Episode, EpisodeField};
@@ -43,8 +43,8 @@ fn episode() -> Episode {
     }
 }
 
-fn episodes() -> HashMap<String, Episode> {
-    HashMap::from([(EP1.to_string(), episode())])
+fn episodes() -> BTreeMap<String, Episode> {
+    BTreeMap::from([(EP1.to_string(), episode())])
 }
 
 fn no_exists(_: &str) -> bool {

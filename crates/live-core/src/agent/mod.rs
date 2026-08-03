@@ -4,6 +4,7 @@
 //! M3-C 挂载：validators（终局校验台 +§9.1 修复 1/6/8 + leads）。
 
 pub mod probe;
+pub mod prompts;
 pub mod runtime;
 pub mod tools;
 pub mod validators;
