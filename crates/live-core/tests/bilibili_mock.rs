@@ -307,3 +307,141 @@ async fn live_record_danmaku_shards_with_index_and_202_error() {
         .expect_err("202 must surface");
     assert!(matches!(err, BilibiliError::Api { code: 202, .. }) && !err.hidden());
 }
+
+#[tokio::test(flavor = "multi_thread")]
+async fn auth_status_numeric_mid_and_int_login() {
+    // Python：str(data.get("mid") or "")——mid 恒为数字也能取到；isLogin=1 → True
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/nav"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"code": 0, "data": {"isLogin": 1, "mid": 349312345, "uname": "我"}}),
+        ))
+        .mount(&server)
+        .await;
+    let status = call(server, |client| client.auth_status())
+        .await
+        .expect("auth status");
+    assert_eq!(status["is_login"], true);
+    assert_eq!(status["mid"], "349312345"); // 批次D 修复前：数字 mid 恒被判空 ""
+    assert_eq!(status["uname"], "我");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn followings_filters_non_dict_entries_before_page_judgment() {
+    // Python：先 isinstance 过滤；页 20 条中 2 条垃圾 → 过滤后 18 < 20 → 不翻页。
+    // 若误把垃圾计入页长 → 继续请求 page=2 → 无 mock → 404 出错（本测试的隐形断言）。
+    let server = MockServer::start().await;
+    let mut items: Vec<serde_json::Value> = (0..18)
+        .map(|i| json!({"mid": 100 + i, "uname": format!("u{i}")}))
+        .collect();
+    items.push(serde_json::Value::Null);
+    items.push(json!("junk"));
+    Mock::given(method("GET"))
+        .and(path("/x/relation/followings"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"code": 0, "data": {"list": items}})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let rows = call(server, |client| client.followings("128", 20))
+        .await
+        .expect("followings");
+    assert_eq!(rows.len(), 18, "非 dict 条目不得入列");
+    assert!(rows.iter().all(|row| row.is_object()));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn vvoucher_null_is_not_risk_challenge() {
+    // Python 要求 data.get("v_voucher") 为真值——null 应变种放行并取 data（此处为 null→Null）
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/nav"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": {"v_voucher": null}})),
+        )
+        .mount(&server)
+        .await;
+    let data = call(server, |client| client.nav()).await.expect("nav");
+    assert_eq!(
+        data,
+        json!({"v_voucher": null}),
+        "v_voucher=null 不得误判风控"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn missing_data_field_returns_null_instead_of_body() {
+    // Python：data 键缺席 → None（各端点归一为 {}）——绝不让 code/message 混进结果
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x/relation/stat"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"code": 0, "message": "0"})))
+        .mount(&server)
+        .await;
+    let data = call(server, |client| client.relation_stat("128"))
+        .await
+        .expect("stat");
+    assert!(data.is_null());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn api_message_empty_string_falls_back_to_msg() {
+    // Python：message or msg or "unknown error"——空串 message 也回落
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x/relation/stat"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": -1, "message": "", "msg": "参数错误"})),
+        )
+        .mount(&server)
+        .await;
+    let err = call(server, |client| client.relation_stat("128"))
+        .await
+        .expect_err("api error");
+    assert!(
+        matches!(&err, BilibiliError::Api { message, .. } if message == "参数错误"),
+        "{err:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn favorite_folders_attr_numeric_string_privacy_filter() {
+    // Python：int(attr or 0) & 1——数字字符串 "21" 一样判私有被剔除
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x/v3/fav/folder/created/list-all"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"code": 0, "data": {"list": [
+                {"id": 1, "attr": "21"}, {"id": 2, "attr": 0}, {"id": 3, "attr": true}
+            ]}}),
+        ))
+        .mount(&server)
+        .await;
+    let rows = call(server, |client| client.favorite_folders("128", 3))
+        .await
+        .expect("folders");
+    let ids: Vec<i64> = rows.iter().map(|r| r["id"].as_i64().unwrap()).collect();
+    assert_eq!(ids, [2], "attr=21/true(私有) 剔除；attr=0 保留");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn video_tags_name_chain_keeps_fallback() {
+    // or_fallback 唯一现存调用点的语义钉（tag_name 空时回落 name）
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x/tag/archive/tags"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"code": 0, "data": [{"tag_name": ""}, {"name": "n2"}, {"tag_name": "t1"}]}),
+        ))
+        .mount(&server)
+        .await;
+    let tags = call(server, |client| client.video_tags("BV1xx"))
+        .await
+        .expect("tags");
+    // Python：[dict.fromkeys(tags)]——tag_name "" 不入列表
+    assert_eq!(tags, vec!["n2".to_string(), "t1".to_string()]);
+}

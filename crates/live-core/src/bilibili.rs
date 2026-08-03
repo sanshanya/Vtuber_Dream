@@ -145,12 +145,42 @@ fn pick(mapping: &Value, key: &str) -> String {
         .to_string()
 }
 
-/// `str(x or "")` → 字符串槽位：None/0/"" 视为空。
+/// Python `str(x or "")` 的 or-truthiness：None/0/"" 视为空，其余数字照常转字符串。
 fn str_slot(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(text)) => text.trim().to_string(),
-        Some(Value::Number(number)) => number.to_string(),
+        Some(Value::Number(number)) if number.as_f64() != Some(0.0) => number.to_string(),
         _ => String::new(),
+    }
+}
+
+/// Python `str(x or "")`（不 trim——auth_status 级别的原样槽位）。
+fn str_or(value: Option<&Value>) -> String {
+    str_slot(value)
+}
+
+/// Python `bool(x)`：数字/字符串 truthiness（isLogin 可能下发 1）。
+fn py_truth(value: Option<&Value>) -> bool {
+    match value {
+        Some(Value::Bool(b)) => *b,
+        Some(Value::Number(n)) => n.as_f64() != Some(0.0),
+        Some(Value::String(t)) => !t.trim().is_empty(),
+        Some(Value::Array(a)) => !a.is_empty(),
+        Some(Value::Object(m)) => !m.is_empty(),
+        _ => false,
+    }
+}
+
+/// Python `int(x or 0)`：`int("21")`=21、`int(2.0)`=2、`int(True)`=1、falsy→0。
+fn py_int(value: Option<&Value>) -> i64 {
+    match value {
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .or_else(|| n.as_f64().map(|f| f as i64))
+            .unwrap_or(0),
+        Some(Value::Bool(true)) => 1,
+        Some(Value::String(t)) => t.trim().parse().unwrap_or(0),
+        _ => 0,
     }
 }
 
@@ -181,7 +211,7 @@ pub fn normalize_guard_member(item: &Value) -> Option<Vec<(String, Value)>> {
         ),
         (
             "guard_level".to_string(),
-            first_int([
+            first_int_or_none([
                 item.get("guard_level"),
                 medal.get("guard_level"),
                 guard.get("level"),
@@ -189,7 +219,7 @@ pub fn normalize_guard_member(item: &Value) -> Option<Vec<(String, Value)>> {
         ),
         (
             "medal_level".to_string(),
-            first_int([
+            first_int_or_none([
                 item.get("medal_level"),
                 item.get("level"),
                 medal.get("level"),
@@ -202,17 +232,30 @@ pub fn normalize_guard_member(item: &Value) -> Option<Vec<(String, Value)>> {
     ])
 }
 
+/// 大航海 rank：`int(rank or user_rank or 0)`——or-链：falsy(0/""/None) 落到下一槽。
 fn first_int(candidates: [Option<&Value>; 3]) -> Value {
-    Value::from(
-        candidates
-            .into_iter()
-            .find_map(|value| match value {
-                Some(Value::Number(n)) => n.as_i64(),
-                Some(Value::String(s)) => s.trim().parse().ok(),
-                _ => None,
-            })
-            .unwrap_or(0),
-    )
+    for value in candidates {
+        match value {
+            Some(Value::Null) | None => continue,
+            Some(Value::Number(n)) if n.as_f64() == Some(0.0) => continue,
+            Some(Value::String(t)) if t.trim().is_empty() => continue,
+            Some(Value::Bool(false)) => continue,
+            other => return Value::from(py_int(other)),
+        }
+    }
+    Value::from(0)
+}
+
+/// 大航海 guard_level/medal_level：Python 是 `is None` 链——只有 None 才落槽；
+/// 非 None 值由 `int(x or 0)` 收口（"" → 0，不再尝试下一候选）。
+fn first_int_or_none(candidates: [Option<&Value>; 3]) -> Value {
+    for value in candidates {
+        match value {
+            Some(Value::Null) | None => continue,
+            other => return Value::from(py_int(other)),
+        }
+    }
+    Value::from(0)
 }
 
 fn name_chain(item: &Value, base: &Value, origin: &Value) -> String {
@@ -368,8 +411,9 @@ impl BilibiliClient {
             endpoint: endpoint.clone(),
             detail: err.to_string(),
         })?;
+        // Python requests.raise_for_status：只有 4xx/5xx 判 HTTP 错误。
         let status = response.status().as_u16();
-        if status != 200 {
+        if status >= 400 {
             return Err(BilibiliError::Http {
                 endpoint: endpoint.clone(),
                 status,
@@ -380,28 +424,38 @@ impl BilibiliClient {
         })?;
         let code = body.get("code").and_then(Value::as_i64).unwrap_or(0);
         if code != 0 {
-            let message = body
-                .get("message")
-                .or_else(|| body.get("msg"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown error")
-                .to_string();
+            // Python `payload.get("message") or payload.get("msg") or "unknown error"`：
+            // 空串 message 也回落到 msg（or-truthiness）。
+            let pick_message = |key: &str| {
+                body.get(key)
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            };
+            let mut message = pick_message("message");
+            if message.is_empty() {
+                message = pick_message("msg");
+            }
+            if message.is_empty() {
+                message = "unknown error".to_string();
+            }
             return Err(BilibiliError::Api {
                 endpoint: endpoint.clone(),
                 code,
                 message,
             });
         }
-        if let Some(data) = body.get("data") {
-            if let Value::Object(map) = data
-                && map.len() == 1
-                && map.contains_key("v_voucher")
-            {
-                return Err(BilibiliError::Voucher { endpoint });
-            }
-            return Ok(data.clone());
+        // Python：`data = payload.get("data")`——键缺席即 None，由各端点自行归一。
+        let data = body.get("data").cloned().unwrap_or(Value::Null);
+        // v_voucher：Python 要求真值且单键（null/"" 不构成风控判定）。
+        if let Value::Object(map) = &data
+            && map.len() == 1
+            && matches!(map.get("v_voucher"), Some(v) if py_truth(Some(v)))
+        {
+            return Err(BilibiliError::Voucher { endpoint });
         }
-        Ok(body)
+        Ok(data)
     }
 
     fn mixin_key_sync(&mut self) -> Result<String, BilibiliError> {
@@ -450,9 +504,9 @@ impl BilibiliClient {
     pub fn auth_status(&mut self) -> Result<Value, BilibiliError> {
         let nav = self.nav()?;
         Ok(serde_json::json!({
-            "is_login": nav.get("isLogin").and_then(Value::as_bool).unwrap_or(false),
-            "mid": pick(&nav, "mid"),
-            "uname": pick(&nav, "uname"),
+            "is_login": py_truth(nav.get("isLogin")),
+            "mid": str_or(nav.get("mid")),
+            "uname": str_or(nav.get("uname")),
         }))
     }
 
@@ -567,11 +621,14 @@ impl BilibiliClient {
                 false,
                 Some(&format!("https://space.bilibili.com/{uid}/fans/follow")),
             )?;
-            let items = data
+            let items: Vec<Value> = data
                 .get("list")
                 .and_then(Value::as_array)
                 .cloned()
-                .unwrap_or_default();
+                .unwrap_or_default()
+                .into_iter()
+                .filter(Value::is_object)
+                .collect();
             let got = items.len() as i64;
             rows.extend(items);
             if got < page_size {
@@ -655,14 +712,18 @@ impl BilibiliClient {
             false,
             Some(&format!("https://space.bilibili.com/{uid}/favlist")),
         )?;
-        let items = data
+        // Python：[item for item in list if isinstance(dict)] if int(attr or 0) & 1 == 0
+        let items: Vec<Value> = data
             .get("list")
             .and_then(Value::as_array)
             .cloned()
-            .unwrap_or_default();
+            .unwrap_or_default()
+            .into_iter()
+            .filter(Value::is_object)
+            .collect();
         Ok(items
             .into_iter()
-            .filter(|item| item.get("attr").and_then(Value::as_i64).unwrap_or(0) & 1 == 0)
+            .filter(|item| py_int(item.get("attr")) & 1 == 0)
             .take(limit as usize)
             .collect())
     }
@@ -697,18 +758,18 @@ impl BilibiliClient {
                     "https://www.bilibili.com/medialist/detail/ml{media_id}"
                 )),
             )?;
-            let items = data
+            // Python：先 isinstance 过滤，"页不满"用过滤后长度；has_more 按 truthiness。
+            let items: Vec<Value> = data
                 .get("medias")
                 .and_then(Value::as_array)
                 .cloned()
-                .unwrap_or_default();
-            rows.extend(items.iter().cloned());
-            if (items.len() as i64) < page_size
-                || !data
-                    .get("has_more")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-            {
+                .unwrap_or_default()
+                .into_iter()
+                .filter(Value::is_object)
+                .collect();
+            let got = items.len() as i64;
+            rows.extend(items);
+            if got < page_size || !py_truth(data.get("has_more")) {
                 break;
             }
             page += 1;
@@ -955,11 +1016,17 @@ impl OrFallback for String {
     }
 }
 
+/// 列表族端点统一收编：Python `[item for item in … or [] if isinstance(item, dict)][:limit]`
+/// ——先过滤非 dict 条目（垃圾条目既不入列、也不参与"页不满"判定）。
 fn take_items(value: Option<&Value>, limit: i64) -> Vec<Value> {
     value
         .and_then(Value::as_array)
-        .map(|rows| rows.iter().take(limit.max(0) as usize).cloned().collect())
+        .cloned()
         .unwrap_or_default()
+        .into_iter()
+        .filter(Value::is_object)
+        .take(limit.max(0) as usize)
+        .collect()
 }
 
 fn row_number_get(row: &[(String, Value)], key: &str) -> Option<String> {
@@ -1035,6 +1102,7 @@ mod tests {
                     );
                 }
             }
+            assert!(map.is_empty(), "sign_wbi 多签了字段 {map:?}");
             assert_eq!(
                 signed.iter().find(|(k, _)| k == "w_rid").unwrap().1,
                 expected["w_rid"].as_str().unwrap(),

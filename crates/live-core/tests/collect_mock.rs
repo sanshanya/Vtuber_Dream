@@ -290,6 +290,10 @@ async fn collect_full_run_happy_path() {
     // collection.json 完成态
     let collection = read(&root.join("collection.json"));
     assert_eq!(collection["status"], "complete");
+    assert_eq!(
+        summary["authenticated_uid"], "42",
+        "数字 mid 必须转字符串（批次D 修 S1）"
+    );
     assert_eq!(summary["viewer_count"], 3);
     assert_eq!(summary["guard_count"], 2);
     assert_eq!(summary["manual_viewer_count"], 1);
@@ -346,6 +350,25 @@ async fn collect_full_run_happy_path() {
     // 手工观众 seed_source
     let manual = read(&root.join("viewers").join("1003.json"));
     assert_eq!(manual["viewer"]["seed_source"], "manual");
+
+    // 写盘键序 = Python dict 插入序（serde_json preserve_order 的面：字节 parity）
+    let raw = std::fs::read_to_string(root.join("viewers").join("1001.json")).unwrap();
+    let positions: Vec<usize> = [
+        "schema_version",
+        "collected_at",
+        "viewer",
+        "profile",
+        "sources",
+        "request_budget",
+        "source_operations_used",
+    ]
+    .iter()
+    .map(|key| raw.find(key).unwrap_or_else(|| panic!("missing key {key}")))
+    .collect();
+    assert!(
+        positions.windows(2).all(|w| w[0] < w[1]),
+        "viewers/1001.json 键序必须按插入序：{positions:?}"
+    );
 
     // 房间级浅存在：评论区
     let comments = read(&root.join("shared").join("room_comments.json"));

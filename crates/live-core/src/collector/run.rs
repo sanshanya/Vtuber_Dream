@@ -55,6 +55,10 @@ fn py_int(value: Option<&Value>) -> i64 {
 /// Python `or` 语义取第一个 truthy 字符串（0/None/False/"" 全 falsy）。
 fn or_chain(values: &[&Value]) -> String {
     for value in values {
+        // Python `or` truthiness：数字 0 同样是 falsy（防幽灵分区 id=0 / 收藏夹 id=0）。
+        if matches!(value, Value::Number(n) if n.as_f64() == Some(0.0)) {
+            continue;
+        }
         let text = pystr(Some(value));
         if !text.is_empty() {
             return text;
@@ -1104,6 +1108,30 @@ fn collect_inner(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn or_chain_treats_numeric_zero_as_falsy() {
+        let zero = json!(0);
+        let name = json!("名称");
+        let empty = json!("");
+        let bull = json!(false);
+        assert_eq!(or_chain(&[&zero, &name]), "名称");
+        assert_eq!(or_chain(&[&bull, &empty, &zero]), "");
+        assert_eq!(or_chain(&[&json!(2.0), &name]), "2.0"); // Python str(2.0)="2.0"
+    }
+
+    #[test]
+    fn platform_snapshot_drops_unobserved_zero_category() {
+        let tmp = tempfile::tempdir().unwrap();
+        let metadata = json!({
+            "BVx": {"category": {"id": 0, "name": "", "parent_id": 0, "v2_name": ""}, "tags": []},
+            "BVy": {"category": {"id": 167, "name": "知识", "parent_id": 0, "v2_name": ""}, "tags": ["t1"]},
+        });
+        let snapshot = write_platform_snapshot(tmp.path(), &metadata, Vec::new()).unwrap();
+        let categories = snapshot["observed_video_categories"].as_array().unwrap();
+        assert_eq!(categories.len(), 1, "id=0+空名分区必须被丢弃（未观测事实）");
+        assert_eq!(categories[0]["id"], 167);
+    }
 
     #[test]
     fn call_source_budget_skipped_never_calls_fetch() {
