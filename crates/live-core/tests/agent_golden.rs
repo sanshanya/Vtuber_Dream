@@ -73,6 +73,31 @@ async fn mount_turn(
         .await;
 }
 
+/// reasoning 归属钉（评审5-m2）：有 reasoning 的 assistant 消息必须紧跟自己 tool_calls 的结果。
+fn reasoning_attribution() -> impl Fn(&Value) -> bool + Send + Sync {
+    |body: &Value| {
+        body["messages"].as_array().is_some_and(|msgs| {
+            msgs.iter().enumerate().all(|(index, message)| {
+                if message["role"].as_str() != Some("assistant")
+                    || message["reasoning_content"].is_null()
+                {
+                    return true;
+                }
+                let id = message["tool_calls"][0]["id"].as_str();
+                id.is_some()
+                    && msgs.get(index + 1).is_some_and(|tool| {
+                        tool["role"].as_str() == Some("tool") && tool["tool_call_id"].as_str() == id
+                    })
+            })
+        })
+    }
+}
+
+/// parallel_tool_calls=false 的 wire 钉（评审5-m1；剧本计数 messages_len(2k) 的隐性前提）。
+fn parallel_calls_disabled() -> impl Fn(&Value) -> bool + Send + Sync {
+    |body: &Value| body["parallel_tool_calls"] == serde_json::Value::Bool(false)
+}
+
 fn replayed_reasoning(expect: &str) -> impl Fn(&Value) -> bool + Send + Sync + 'static {
     let expect = expect.to_string();
     move |body: &Value| {
@@ -184,6 +209,7 @@ async fn golden_viewer_reject_then_accept() {
         &server,
         |body: &Value| {
             messages_len(2)(body)
+                && parallel_calls_disabled()(body)
                 && body["messages"][0]["content"].as_str().is_some_and(|s| {
                     s.contains("个人 Perception Agent") && s.contains("项目附加规则")
                 })
@@ -201,7 +227,11 @@ async fn golden_viewer_reject_then_accept() {
     .await;
     mount_turn(
         &server,
-        |body: &Value| messages_len(4)(body) && replayed_reasoning("先查实体候选")(body),
+        |body: &Value| {
+            messages_len(4)(body)
+                && replayed_reasoning("先查实体候选")(body)
+                && reasoning_attribution()(body)
+        },
         assistant_tool_call(
             "call-2",
             "submit_viewer_perception",
@@ -215,6 +245,7 @@ async fn golden_viewer_reject_then_accept() {
         |body: &Value| {
             messages_len(6)(body)
                 && replayed_reasoning("整理后提交初稿")(body)
+                && reasoning_attribution()(body)
                 && body["messages"].as_array().is_some_and(|m| {
                     m.iter().any(|msg| {
                         msg["content"].as_str().is_some_and(|c| {
@@ -318,6 +349,7 @@ async fn golden_audience_happy_path() {
         &server,
         |body: &Value| {
             messages_len(2)(body)
+                && parallel_calls_disabled()(body)
                 && body["messages"][0]["content"]
                     .as_str()
                     .is_some_and(|s| s.contains("整体 Situation Agent"))

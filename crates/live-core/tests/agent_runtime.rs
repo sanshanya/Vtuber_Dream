@@ -102,11 +102,37 @@ fn messages_len(n: usize) -> impl Fn(&Value) -> bool + Send + Sync + 'static {
 }
 
 /// 断言 assistant 历史消息中不含 reasoning_content 键（剥离开关验证）。
+/// 断言 assistant 历史消息中**全都不含** reasoning_content 键（剥离开关验证，评审5-m3）。
 fn no_reasoning_replayed() -> impl Fn(&Value) -> bool + Send + Sync {
     |body: &Value| {
         body["messages"].as_array().is_some_and(|msgs| {
-            msgs.iter().any(|m| {
-                m["role"].as_str() == Some("assistant") && m.get("reasoning_content").is_none()
+            let assistants: Vec<&Value> = msgs
+                .iter()
+                .filter(|m| m["role"].as_str() == Some("assistant"))
+                .collect();
+            !assistants.is_empty()
+                && assistants
+                    .iter()
+                    .all(|m| m.get("reasoning_content").is_none())
+        })
+    }
+}
+
+/// reasoning 归属钉（评审5-m2）：有 reasoning 的 assistant 消息必须紧跟自己 tool_calls 的结果。
+fn reasoning_attribution() -> impl Fn(&Value) -> bool + Send + Sync {
+    |body: &Value| {
+        body["messages"].as_array().is_some_and(|msgs| {
+            msgs.iter().enumerate().all(|(index, message)| {
+                if message["role"].as_str() != Some("assistant")
+                    || message["reasoning_content"].is_null()
+                {
+                    return true;
+                }
+                let id = message["tool_calls"][0]["id"].as_str();
+                id.is_some()
+                    && msgs.get(index + 1).is_some_and(|tool| {
+                        tool["role"].as_str() == Some("tool") && tool["tool_call_id"].as_str() == id
+                    })
             })
         })
     }
@@ -154,7 +180,11 @@ async fn reasoning_replay_and_terminal_tool_call() {
     .await;
     mount_turn(
         &server,
-        |body: &Value| messages_len(6)(body) && replayed_reasoning("继续乘法")(body),
+        |body: &Value| {
+            messages_len(6)(body)
+                && replayed_reasoning("继续乘法")(body)
+                && reasoning_attribution()(body)
+        },
         assistant_tool_call(
             "call-3",
             "submit_probe_result",
@@ -251,8 +281,15 @@ async fn ordinary_text_triggers_forced_terminal_resubmission() {
     mount_turn(
         &server,
         |body: &Value| {
+            // 协议 M1：forced 请求的 system 必须是具名强制文案（替换主 instructions）。
+            let forced_instructions = body["messages"][0]["role"].as_str() == Some("system")
+                && body["messages"][0]["content"].as_str().is_some_and(|c| {
+                    c.contains("现在只能调用 submit_probe_result")
+                        && c.contains("必须修正所有校验问题并通过该工具提交")
+                });
             let forced_ok =
                 body["tool_choice"]["function"]["name"].as_str() == Some("submit_probe_result");
+            let four_messages = body["messages"].as_array().map(Vec::len) == Some(4);
             let draft_kept = body["messages"].as_array().is_some_and(|msgs| {
                 msgs.iter().any(|m| {
                     m["role"].as_str() == Some("assistant")
@@ -271,7 +308,12 @@ async fn ordinary_text_triggers_forced_terminal_resubmission() {
                             .is_some_and(|c| c.contains("上一轮以普通文本结束"))
                 })
             });
-            forced_ok && draft_kept && only_terminal && has_urged_user
+            forced_ok
+                && draft_kept
+                && only_terminal
+                && has_urged_user
+                && forced_instructions
+                && four_messages
         },
         assistant_tool_call(
             "call-forced",
@@ -534,4 +576,140 @@ async fn transport_errors_are_redacted_before_trace() {
     drop(trace);
     let trace_text = std::fs::read_to_string(&trace_path).unwrap();
     assert!(!trace_text.contains("隐藏思考"), "{trace_text}");
+}
+
+/// 协议 M2：408/409/429/5xx 与 reqwest 瞬态同族内层重试（≤2）——429→200 透明恢复。
+#[tokio::test(flavor = "multi_thread")]
+async fn http_429_then_200_recovers_within_inner_retry() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let server = MockServer::start().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(move |_: &Request| {
+            if counter_clone.fetch_add(1, Ordering::SeqCst) == 0 {
+                ResponseTemplate::new(429).set_body_json(json!({
+                    "error": {"message": "rate limited", "type": "rate_limit_error", "code": "rate_limit"}
+                }))
+            } else {
+                ResponseTemplate::new(200).set_body_json(assistant_tool_call(
+                    "call-ok",
+                    "submit_probe_result",
+                    json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+                    None,
+                ))
+            }
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("429 应被内层瞬时重试恢复");
+    assert_eq!(outcome.submission.total, 21);
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+}
+
+/// 协议 m5：forced 期间 dispatch 收窄——非终局名得 SDK 文本 not found 而后终局可成。
+#[tokio::test(flavor = "multi_thread")]
+async fn forced_dispatch_rejects_non_terminal_with_python_text() {
+    let server = MockServer::start().await;
+    mount_turn(&server, messages_len(2), assistant_text("草稿")).await;
+    // forced turn 1：模型调皮调非终局工具 → 收窄拒
+    mount_turn(
+        &server,
+        |body: &Value| {
+            body["tool_choice"]["function"]["name"].as_str() == Some("submit_probe_result")
+                && body["messages"].as_array().map(Vec::len) == Some(4)
+        },
+        assistant_tool_call("call-naughty", "get_probe_seed", json!({}), None),
+    )
+    .await;
+    // forced turn 2：终局接受；请求历史必须包含 not found 工具结果
+    mount_turn(
+        &server,
+        |body: &Value| {
+            body["messages"].as_array().is_some_and(|msgs| {
+                msgs.iter().any(|m| {
+                    m["role"].as_str() == Some("tool")
+                        && m["content"]
+                            .as_str()
+                            .is_some_and(|c| c.contains("Tool 'get_probe_seed' not found."))
+                })
+            })
+        },
+        assistant_tool_call(
+            "call-forced-2",
+            "submit_probe_result",
+            json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+            None,
+        ),
+    )
+    .await;
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("forced 收窄后终局应接受");
+    assert_eq!(outcome.submission.total, 21);
+}
+
+/// 工程 m2：非法 tool arguments JSON 不执行 handler、回喂可读错误。
+#[tokio::test(flavor = "multi_thread")]
+async fn invalid_tool_arguments_json_gets_feedback_without_handler() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .and(BodyPred(messages_len(2)))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "id": "chatcmpl-bad", "object": "chat.completion", "created": 1,
+            "model": "custom-reasoning-model",
+            "choices": [{"index": 0, "message": {"role": "assistant", "content": null,
+                "tool_calls": [{"id": "call-bad", "type": "function",
+                    "function": {"name": "get_probe_seed", "arguments": "not-json"}}]},
+                "finish_reason": "tool_calls"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    mount_turn(
+        &server,
+        |body: &Value| {
+            body["messages"].as_array().is_some_and(|msgs| {
+                msgs.iter().any(|m| {
+                    m["role"].as_str() == Some("tool")
+                        && m["content"]
+                            .as_str()
+                            .is_some_and(|c| c.contains("invalid tool arguments"))
+                })
+            })
+        },
+        assistant_tool_call(
+            "call-fix",
+            "submit_probe_result",
+            json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+            None,
+        ),
+    )
+    .await;
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("非法参数反馈后模型可自愈");
+    assert_eq!(outcome.submission.total, 21);
+    // handler 若被执行，工具结果会是 {"seed":7}，turn1 谓词不匹配 → 404 → 上面 expect 即失败（路由即钉）。
 }

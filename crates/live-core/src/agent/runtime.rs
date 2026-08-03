@@ -578,13 +578,21 @@ impl AgentRuntime {
                     }),
                 );
                 let tool_started = Instant::now();
-                let result = match tools.iter_mut().find(|t| t.name == call.function.name) {
-                    Some(tool) => {
-                        let args: Value =
-                            serde_json::from_str(&call.function.arguments).unwrap_or(Value::Null);
-                        (tool.handler)(ctx, &args)
-                    }
-                    None => json!({"error": format!("unknown tool: {}", call.function.name)}),
+                // forced(visible=Some) 期间 dispatch 面同步收窄（Python forced agent
+                // tools=[terminal_tool]，非终局名落 SDK "not found" 文本，逐字对齐）。
+                let routed = match visible {
+                    Some(only) => tools
+                        .get_mut(only)
+                        .filter(|tool| tool.name == call.function.name),
+                    None => tools.iter_mut().find(|t| t.name == call.function.name),
+                };
+                let result = match routed {
+                    Some(tool) => match serde_json::from_str(&call.function.arguments) {
+                        Ok(args) => (tool.handler)(ctx, &args),
+                        // 非法 arguments：不执行 handler，回喂可读错误让模型自愈（工程 m2）。
+                        Err(err) => json!({"error": format!("invalid tool arguments: {err}")}),
+                    },
+                    None => json!({"error": format!("Tool '{}' not found.", call.function.name)}),
                 };
                 trace.write(
                     "tool_end",
@@ -627,6 +635,11 @@ fn is_transient(err: &async_openai::error::OpenAIError) -> bool {
     use async_openai::error::OpenAIError;
     match err {
         OpenAIError::Reqwest(err) => err.is_timeout() || err.is_connect() || err.is_request(),
+        // Python openai SDK `_should_retry` 同型：408/409/429/5xx 内层重试（≤ HTTP_EXTRA_ATTEMPTS）。
+        OpenAIError::ApiError(resp) => {
+            matches!(resp.status_code.as_u16(), 408 | 409 | 429)
+                || resp.status_code.is_server_error()
+        }
         _ => false,
     }
 }
@@ -690,7 +703,13 @@ pub async fn run_toolcall_agent<C: RunCtx, S: for<'de> Deserialize<'de>>(
             Ok(()) => None,
             Err(RoundEnd::Fatal(err)) => Some(err.to_string()),
             Err(RoundEnd::PlainTextEnd(draft)) => {
-                // 具名强制重提交（Python 文案逐字）：历史已含草稿，追加 user 追述。
+                // 具名强制重提交（Python runtime.py:191-224 逐字）：
+                // ① forced agent 的 instructions **替换** system 首条（主 instructions 丢弃）；
+                // ② 历史已含草稿，追加 user 追述。两点都进 wire，model 才看得到强制语。
+                history[0] = OaiMessage::system(format!(
+                    "上一轮没有通过终局工具提交，因此不是有效结果。重新阅读完整输入和上一轮普通文本，\
+                     现在只能调用 {terminal_name}。必须修正所有校验问题并通过该工具提交。"
+                ));
                 history.push(OaiMessage::user(format!(
                     "上一轮以普通文本结束，因此不是有效结果。保留前述全部思考、工具调用和工具结果；\
                      现在只能调用 {terminal_name} 提交。上一轮文本草稿：\n{}",
