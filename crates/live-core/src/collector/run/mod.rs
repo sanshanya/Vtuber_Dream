@@ -127,11 +127,15 @@ pub fn collect_with_client(
                 &root,
                 config.collection.lead_fetch_budget_per_run,
                 &mut |row| fetch_lead_yield(&mut client, row),
+                emit,
             );
             if consumed > 0 {
                 emit(&format!("[LEADS] 本轮消费 {consumed} 条已批准线索"));
                 summary["leads_consumed"] = json!(consumed);
             }
+            // MXA-2（r3-F1）：request_count 在 collect_inner 内冻结——消费请求真实
+            // 发生，写盘前刷新不漏报（否则传染 baseline 的 collection_request_count）。
+            summary["request_count"] = json!(client.request_count());
             storage::write_json(&root.join("collection.json"), &summary)
                 .map_err(CollectError::Storage)?;
             emit(&format!(

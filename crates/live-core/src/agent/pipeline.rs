@@ -1230,14 +1230,18 @@ async fn run_pipeline_inner(
         }
         viewer_submissions.insert(uid.clone(), analysis);
         // M4.x kickoff D3：Ok/Reused 双臂在 apply 成功点汇流——账本补写幂等，
-        // 缓存命中路径同样补账（首跑中断后恢复不丢账）；D7：账本失败不杀管道。
-        let _ = leads::record_leads(
+        // 缓存命中路径同样补账（首跑中断后恢复不丢账）。
+        // MXA-4（r6 驳 D7「无通道」前提）：fail-open 保持但响铃——
+        // 线索无痕蒸发 ≠ 豁免项。
+        if let Err(err) = leads::record_leads(
             &config.output_dir,
             uid,
             &run_id,
             &utc_now(),
             &submission.leads,
-        );
+        ) {
+            progress_say(knobs, &format!("[LEADS] 观众 {uid} 账本写入失败：{err}"));
+        }
         if let Some(checkpoint) = knobs.checkpoint.as_deref_mut() {
             checkpoint();
         }
@@ -1332,13 +1336,16 @@ async fn run_pipeline_inner(
             bail!(PipelineError::Store(err));
         }
         // M4.x：audience leads 以 AUDIENCE_VIEWER_ID 入账（apply 成功后，同 viewer 纪律）。
-        let _ = leads::record_leads(
+        // MXA-4：fail-open 保持但响铃。
+        if let Err(err) = leads::record_leads(
             &config.output_dir,
             leads::AUDIENCE_VIEWER_ID,
             &run_id,
             &utc_now(),
             &audience_submission.leads,
-        );
+        ) {
+            progress_say(knobs, &format!("[LEADS] 整体账本写入失败：{err}"));
+        }
     }
     match store.complete_run(&run_id) {
         Ok(()) => {}

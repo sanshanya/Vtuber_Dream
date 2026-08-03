@@ -92,6 +92,7 @@ pub fn ledger_path(output_dir: &Path) -> PathBuf {
 }
 
 /// fail-open 读：不存在/不可读 → 空集；坏行（非 JSON / 缺键）静默跳过。
+/// 只喂**读面**（annex/摘要）；写面必须用 `read_ledger_guarded`（MXA-1 防线）。
 pub fn read_ledger(path: &Path) -> Vec<LedgerRow> {
     let Ok(text) = std::fs::read_to_string(path) else {
         return Vec::new();
@@ -107,6 +108,31 @@ pub fn read_ledger(path: &Path) -> Vec<LedgerRow> {
         .collect()
 }
 
+/// 守卫读（MXA-1）：不存在 → 空集；存在但任何一行不可解析 → Err。
+/// 防「fail-open 读损集合被写面误当全景 → 同键重复追加」（验收「重跑不增行」防线）。
+pub fn read_ledger_guarded(path: &Path) -> std::io::Result<Vec<LedgerRow>> {
+    let text = match std::fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(err) => return Err(err),
+    };
+    let mut rows = Vec::new();
+    for (index, line) in text.lines().enumerate() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let row = serde_json::from_str::<LedgerRow>(trimmed).map_err(|err| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidData,
+                format!("leads.jsonl 第{}行不可解析：{err}", index + 1),
+            )
+        })?;
+        rows.push(row);
+    }
+    Ok(rows)
+}
+
 /// 追加新线索（幂等）：同 dedupe_key 任意状态已存在则跳行。返回实际追加行数。
 pub fn record_leads(
     output_dir: &Path,
@@ -116,7 +142,8 @@ pub fn record_leads(
     leads: &[Lead],
 ) -> std::io::Result<usize> {
     let path = ledger_path(output_dir);
-    let existing: std::collections::HashSet<String> = read_ledger(&path)
+    // MXA-1：写面用守卫读——读损即 Err（调用方响铃），绝不带病重复追加。
+    let existing: std::collections::HashSet<String> = read_ledger_guarded(&path)?
         .into_iter()
         .map(|row| row.dedupe_key)
         .collect();
@@ -293,6 +320,30 @@ mod tests {
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].dedupe_key, good.dedupe_key);
         assert!(read_ledger(&dir.join("不存在.jsonl")).is_empty());
+    }
+
+    /// MXA-1（r1-F1 负钉）：账本存在但含不可解析行 → record 拒绝写入（同键不能重复
+    /// 追加的风险高于丢一笔新线），账本原文不动。
+    #[test]
+    fn record_refuses_when_ledger_has_bad_line() {
+        let dir = tmp_dir("guarded");
+        let good = pending_row(&lead("video", "BV1"), "u", "run:a", "t");
+        let text = format!(
+            "{}\nnot json at all\n",
+            serde_json::to_string(&good).unwrap()
+        );
+        let path = ledger_path(&dir);
+        std::fs::write(&path, &text).unwrap();
+        let leads = vec![lead("video", "BV2")];
+        let result = record_leads(&dir, "u", "run:b", "t2", &leads);
+        assert!(result.is_err(), "读损账本必须拒绝追加，防重复写");
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            text,
+            "拒绝时账本文本逐字节不动"
+        );
+        // 读面（fail-open）不受影响：annex/摘要仍拿得到好的那一行
+        assert_eq!(read_ledger(&path).len(), 1);
     }
 
     /// kickoff D7：写入面失败以 Err 返回（调用方 let _ 吞），绝不 panic。

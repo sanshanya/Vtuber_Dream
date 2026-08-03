@@ -3,7 +3,7 @@
 //! deferred 不烧预算。消费产物落袋是 G2 账目消费器的管辖，本通道只记数与状态。
 
 use crate::bilibili::BilibiliClient;
-use crate::leads::{LeadStatus, LedgerRow, ledger_path, read_ledger, rewrite_ledger};
+use crate::leads::{LeadStatus, LedgerRow, ledger_path, read_ledger_guarded, rewrite_ledger};
 use std::path::Path;
 
 /// 单行为产抓取时每一种类型的条目快照上限（kickoff D5：search/creator 各自 8）。
@@ -12,18 +12,26 @@ pub const LEAD_RESULT_LIMIT: i64 = 8;
 pub const LEAD_SEARCH_ORDER: &str = "totalrank";
 
 /// 真实抓取映射（kickoff D5）。room/未知类型天生缺席 → 上层归 deferred。
+///
+/// MXA-3（r7）：本地图是账本被人工编辑后的第一站——入口做 locator 卫生
+/// （trim + 空白拒），否则全空格 search 会被下游 trim 成空返回、假证 consumed
+/// （禁倒退终态永可不再入），尾空格行每轮烧预算重试至死。
 pub fn fetch_lead_yield(client: &mut BilibiliClient, row: &LedgerRow) -> Result<i64, String> {
+    let locator = row.locator.trim();
+    if locator.is_empty() {
+        return Err("lead locator 空白（账本可能被手工编辑）".to_string());
+    }
     match row.lead_type.as_str() {
         "search" => client
-            .search_videos(&row.locator, LEAD_RESULT_LIMIT, LEAD_SEARCH_ORDER)
+            .search_videos(locator, LEAD_RESULT_LIMIT, LEAD_SEARCH_ORDER)
             .map(|items| items.len() as i64)
             .map_err(|err| err.to_string()),
         "creator" => client
-            .videos(&row.locator, LEAD_RESULT_LIMIT)
+            .videos(locator, LEAD_RESULT_LIMIT)
             .map(|items| items.len() as i64)
             .map_err(|err| err.to_string()),
         "video" => client
-            .video_detail(&row.locator)
+            .video_detail(locator)
             .map(|_detail| 1)
             .map_err(|err| err.to_string()),
         other => Err(format!("no fetcher for lead type {other}")),
@@ -32,16 +40,26 @@ pub fn fetch_lead_yield(client: &mut BilibiliClient, row: &LedgerRow) -> Result<
 
 /// 按预算消费账本：只碰 `approved` 行；返回消费成功行数。
 /// fetch 失败 → 行保持 approved 并记 `resolution_note`（下轮重试）；预算 0 → 秒返。
-/// 账本读写失败与老账目坏行由 leads 模块 fail-open（=丢账目不丢采集）。
+///
+/// MXA-4：账本读写失败响铃（emit），绝不静默；rewrite 失败返回 0（不虚报
+/// leads_consumed）。MXA-1：读用守卫（坏行在场时整轮消费停火，保不可解析行不被
+/// 重写丢弃）。
 pub fn consume_approved_leads(
     output_dir: &Path,
     budget: i64,
     fetch: &mut dyn FnMut(&LedgerRow) -> Result<i64, String>,
+    emit: &mut dyn FnMut(&str),
 ) -> usize {
     if budget <= 0 {
         return 0;
     }
-    let mut rows = read_ledger(&ledger_path(output_dir));
+    let mut rows = match read_ledger_guarded(&ledger_path(output_dir)) {
+        Ok(rows) => rows,
+        Err(err) => {
+            emit(&format!("[LEADS] 账本不可读或含坏行，本轮消费停火：{err}"));
+            return 0;
+        }
+    };
     if !rows.iter().any(|row| row.status == LeadStatus::Approved) {
         return 0;
     }
@@ -85,8 +103,12 @@ pub fn consume_approved_leads(
         }
         dirty = true;
     }
-    if dirty {
-        let _ = rewrite_ledger(output_dir, &rows);
+    if dirty && let Err(err) = rewrite_ledger(output_dir, &rows) {
+        // MXA-4：写不回就不能记成功（内存态已改但盘面未变，返回 0 保 leads_consumed 真值）
+        emit(&format!(
+            "[LEADS] 账本写回失败，本轮消费结果未持久化：{err}"
+        ));
+        return 0;
     }
     consumed
 }
@@ -94,7 +116,8 @@ pub fn consume_approved_leads(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::leads::{self, LedgerRow};
+    use crate::bilibili::BilibiliClient;
+    use crate::leads::{self, LedgerRow, read_ledger};
 
     fn tmp(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("m4x-consume-{}-{tag}", std::process::id()));
@@ -142,7 +165,7 @@ mod tests {
                 row("k3", "search", LeadStatus::PendingApproval),
             ],
         );
-        let n = consume_approved_leads(&dir, 1, &mut |_row| Ok(5));
+        let n = consume_approved_leads(&dir, 1, &mut |_row| Ok(5), &mut |_: &str| {});
         assert_eq!(n, 1);
         let back = read_ledger(&leads::ledger_path(&dir));
         assert_eq!(back[0].status, LeadStatus::Consumed);
@@ -154,9 +177,15 @@ mod tests {
             "非 approved 不动"
         );
         // 预算截断的余行留到下一轮消费（跨 run 续抓）；抓尽后再轮 = 零动作幂等。
-        assert_eq!(consume_approved_leads(&dir, 5, &mut |_r| Ok(3)), 1);
+        assert_eq!(
+            consume_approved_leads(&dir, 5, &mut |_r| Ok(3), &mut |_: &str| {}),
+            1
+        );
         assert_eq!(read_ledger(&leads::ledger_path(&dir))[1].yield_count, 3);
-        assert_eq!(consume_approved_leads(&dir, 5, &mut |_r| Ok(1)), 0);
+        assert_eq!(
+            consume_approved_leads(&dir, 5, &mut |_r| Ok(1), &mut |_: &str| {}),
+            0
+        );
     }
 
     /// 抓取失败 = 烧预算但保持 approved + 留痕，下轮重试；坏行不炸。
@@ -164,7 +193,8 @@ mod tests {
     fn failure_keeps_approved_with_note() {
         let dir = tmp("fail");
         write(&dir, &[row("k1", "video", LeadStatus::Approved)]);
-        let n = consume_approved_leads(&dir, 2, &mut |_r| Err("biu".repeat(200)));
+        let n =
+            consume_approved_leads(&dir, 2, &mut |_r| Err("biu".repeat(200)), &mut |_: &str| {});
         assert_eq!(n, 0);
         let back = read_ledger(&leads::ledger_path(&dir));
         assert_eq!(back[0].status, LeadStatus::Approved);
@@ -182,7 +212,7 @@ mod tests {
                 row("k2", "nonsense", LeadStatus::Approved),
             ],
         );
-        let n = consume_approved_leads(&dir, 1, &mut |_r| Ok(9));
+        let n = consume_approved_leads(&dir, 1, &mut |_r| Ok(9), &mut |_: &str| {});
         assert_eq!(n, 0);
         let back = read_ledger(&leads::ledger_path(&dir));
         assert_eq!(back[0].status, LeadStatus::Deferred);
@@ -196,11 +226,77 @@ mod tests {
     fn zero_budget_sleeps() {
         let dir = tmp("zero");
         write(&dir, &[row("k1", "video", LeadStatus::Approved)]);
-        assert_eq!(consume_approved_leads(&dir, 0, &mut |_r| Ok(9)), 0);
+        assert_eq!(
+            consume_approved_leads(&dir, 0, &mut |_r| Ok(9), &mut |_: &str| {}),
+            0
+        );
         assert_eq!(
             read_ledger(&leads::ledger_path(&dir))[0].status,
             LeadStatus::Approved
         );
+    }
+
+    /// MXA-4（r4-G-4）：写回失败 → 响铃 + 返回 0（不谎报 leads_consumed）。
+    /// 确定性触发：把 `leads.jsonl.tmp` 预建成目录 → tmp 创建必失败。
+    #[test]
+    fn rewrite_failure_rings_and_reports_zero() {
+        let dir = tmp("ring");
+        write(&dir, &[row("k1", "video", LeadStatus::Approved)]);
+        std::fs::create_dir_all(leads::ledger_path(&dir).with_extension("jsonl.tmp")).unwrap();
+        let mut rings: Vec<String> = Vec::new();
+        let n = consume_approved_leads(&dir, 2, &mut |_r| Ok(9), &mut |m: &str| {
+            rings.push(m.to_string())
+        });
+        assert_eq!(n, 0, "写不回就不计成功");
+        assert!(
+            rings.iter().any(|m| m.contains("写回失败")),
+            "rings={rings:?}"
+        );
+        // 盘面没动：k1 仍是 approved（可重试）
+        assert_eq!(
+            read_ledger(&leads::ledger_path(&dir))[0].status,
+            LeadStatus::Approved
+        );
+    }
+
+    /// MXA-1/MXA-4：账本含坏行 → 整轮消费停火 + 响铃（坏行不被重写丢弃）。
+    #[test]
+    fn corrupt_ledger_stops_consumption_with_ring() {
+        let dir = tmp("guard");
+        let good = row("k1", "video", LeadStatus::Approved);
+        let text = format!("{}\nnot json\n", serde_json::to_string(&good).unwrap());
+        std::fs::write(leads::ledger_path(&dir), &text).unwrap();
+        let mut rings: Vec<String> = Vec::new();
+        let n = consume_approved_leads(&dir, 2, &mut |_r| Ok(1), &mut |m: &str| {
+            rings.push(m.to_string())
+        });
+        assert_eq!(n, 0);
+        assert!(rings.iter().any(|m| m.contains("停火")), "{rings:?}");
+        assert_eq!(
+            std::fs::read_to_string(leads::ledger_path(&dir)).unwrap(),
+            text,
+            "停火时账本文本不动"
+        );
+    }
+
+    /// MXA-3（r7）：空白 locator 在任何网络请求前被拒（不会假证 consumed）。
+    #[test]
+    fn blank_locator_rejected_before_any_request() {
+        let mut client = BilibiliClient::with_origin(
+            "http://127.0.0.1:9",
+            "http://127.0.0.1:9",
+            "SESSDATA=test",
+            0.0,
+            5.0,
+        )
+        .unwrap();
+        for (lead_type, locator) in [("search", "   "), ("video", ""), ("creator", "\t")] {
+            let mut candidate = row("k1", lead_type, LeadStatus::Approved);
+            candidate.locator = locator.to_string();
+            let err = fetch_lead_yield(&mut client, &candidate).unwrap_err();
+            assert!(err.contains("空白"), "{lead_type}: {err}");
+        }
+        assert_eq!(client.request_count(), 0, "卫生闸前不得发任何请求");
     }
 
     /// 消费后下轮摘要段读得到 yield（kickoff「下轮 AI 上下文」全环闭合点）。
@@ -208,7 +304,7 @@ mod tests {
     fn summary_reflects_consumed_rows() {
         let dir = tmp("sum");
         write(&dir, &[row("k1", "video", LeadStatus::Approved)]);
-        consume_approved_leads(&dir, 1, &mut |_r| Ok(1));
+        consume_approved_leads(&dir, 1, &mut |_r| Ok(1), &mut |_: &str| {});
         let line = crate::leads::summary_line(&read_ledger(&leads::ledger_path(&dir)), None);
         assert_eq!(
             line,
