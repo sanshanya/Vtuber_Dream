@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "collected_at": "2026-07-12T08:00:00+00:00",
+  "viewer": {
+    "id": "g2",
+    "name": "黄金观众乙",
+    "face": "",
+    "profile_url": "https://space.bilibili.com/g2",
+    "guard_level": 3,
+    "medal_level": 20,
+    "seed_source": "golden"
+  },
+  "profile": {
+    "uid": "g2",
+    "name": "黄金观众乙",
+    "face": "",
+    "sign": "关注独立游戏与制作流程。",
+    "official_title": "",
+    "level": 5,
+    "following": 0,
+    "followers": 0,
+    "profile_url": "https://space.bilibili.com/g2"
+  },
+  "sources": {
+    "profile": {
+      "status": "ok",
+      "count": 1,
+      "detail": ""
+    },
+    "relation_stat": {
+      "status": "ok",
+      "count": 1,
+      "detail": ""
+    },
+    "followings": {
+      "status": "empty",
+      "count": 0,
+      "detail": "",
+      "items": []
+    },
+    "videos": {
+      "status": "empty",
+      "count": 0,
+      "detail": "",
+      "items": []
+    },
+    "dynamics": {
+      "status": "empty",
+      "count": 0,
+      "detail": "",
+      "items": []
+    },
+    "favorites": {
+      "status": "ok",
+      "count": 1,
+      "detail": "golden synthetic",
+      "folders": [],
+      "items": [
+        {
+          "id": "b1",
+          "source": "favorite",
+          "title": "《异环》城市设计解析与《明日方舟》世界观讨论",
+          "description": "喜欢世界观、城市设计与剧情解析。",
+          "published_at": "2026-07-10T00:00:00+00:00",
+          "url": "",
+          "bvid": "",
+          "tags": [
+            "异环",
+            "明日方舟",
+            "剧情解析"
+          ],
+          "platform_category": {
+            "id": 172,
+            "name": "手机游戏"
+          },
+          "creator_id": "creator-b1",
+          "creator_name": "演示UP主乙",
+          "folder_name": "演示收藏"
+        }
+      ]
+    },
+    "bangumi": {
+      "status": "empty",
+      "count": 0,
+      "detail": "",
+      "items": []
+    },
+    "games": {
+      "status": "empty",
+      "count": 0,
+      "detail": "",
+      "items": []
+    },
+    "coins": {
+      "status": "unsupported",
+      "count": 0,
+      "detail": "",
+      "items": []
+    },
+    "likes": {
+      "status": "unsupported",
+      "count": 0,
+      "detail": "",
+      "items": []
+    }
+  }
+}

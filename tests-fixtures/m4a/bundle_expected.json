@@ -1,0 +1,286 @@
+{
+  "settings": {
+    "model": "ep-m-20260424154710-ggz8h",
+    "api": "chat_completions",
+    "reasoning": {
+      "enabled": true,
+      "effort": "xhigh",
+      "replay_content": true
+    },
+    "rules": [
+      "个人是基本感知单元，任何观众都不能因为没有共同兴趣而被删除。",
+      "禁止使用人工固定关键词表决定兴趣；必须从完整公开证据中开放式发现实体、关系和状态。",
+      "B站分区、TAG、热搜和榜单只属于平台事实，不能直接等同于观众兴趣。",
+      "每项推断必须引用真实证据；无证据只能标记为待验证假设。",
+      "当前性判断和具体视频必须调用B站工具验证，不得伪造标题、BV号、作者或链接。",
+      "内容建议必须说明涉及观众、证据、执行流程、观察指标和风险边界。",
+      "不推断敏感属性，不建议主播暴露对观众公开行为的追踪来源。"
+    ]
+  },
+  "input_payload": {
+    "viewer": {
+      "id": "g1",
+      "name": "黄金观众甲",
+      "face": "",
+      "profile_url": "https://space.bilibili.com/g1",
+      "guard_level": 3,
+      "medal_level": 20,
+      "seed_source": "golden"
+    },
+    "public_profile": {
+      "uid": "g1",
+      "name": "黄金观众甲",
+      "face": "",
+      "sign": "关注独立游戏与制作流程。",
+      "official_title": "",
+      "level": 5,
+      "following": 0,
+      "followers": 0,
+      "profile_url": "https://space.bilibili.com/g1"
+    },
+    "source_statuses": {
+      "profile": {
+        "status": "ok",
+        "count": 1,
+        "detail": ""
+      },
+      "followings": {
+        "status": "empty",
+        "count": 0,
+        "detail": ""
+      },
+      "videos": {
+        "status": "empty",
+        "count": 0,
+        "detail": ""
+      },
+      "dynamics": {
+        "status": "empty",
+        "count": 0,
+        "detail": ""
+      },
+      "favorites": {
+        "status": "ok",
+        "count": 1,
+        "detail": "golden synthetic"
+      },
+      "bangumi": {
+        "status": "empty",
+        "count": 0,
+        "detail": ""
+      },
+      "games": {
+        "status": "empty",
+        "count": 0,
+        "detail": ""
+      },
+      "coins": {
+        "status": "unsupported",
+        "count": 0,
+        "detail": ""
+      },
+      "likes": {
+        "status": "unsupported",
+        "count": 0,
+        "detail": ""
+      }
+    },
+    "episodes": [
+      {
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "viewer_id": "g1",
+        "source": "favorite",
+        "event_type": "public_favorite",
+        "observed_at": "2026-07-12T08:00:00+00:00",
+        "published_at": "2026-07-10T00:00:00+00:00",
+        "title": "《异环》实机演示：都市探索与角色演出",
+        "url": "",
+        "bvid": "",
+        "fields": [
+          {
+            "path": "title",
+            "text": "《异环》实机演示：都市探索与角色演出",
+            "kind": "text"
+          },
+          {
+            "path": "description",
+            "text": "关注城市空间、演出和开放世界体验。",
+            "kind": "text"
+          },
+          {
+            "path": "creator_name",
+            "text": "演示UP主甲",
+            "kind": "platform_creator"
+          },
+          {
+            "path": "folder_name",
+            "text": "演示收藏",
+            "kind": "platform_container"
+          },
+          {
+            "path": "tags[0]",
+            "text": "异环",
+            "kind": "platform_tag"
+          },
+          {
+            "path": "tags[1]",
+            "text": "开放世界",
+            "kind": "platform_tag"
+          },
+          {
+            "path": "tags[2]",
+            "text": "实机演示",
+            "kind": "platform_tag"
+          },
+          {
+            "path": "platform_category.name",
+            "text": "手机游戏",
+            "kind": "platform_category"
+          }
+        ],
+        "platform_facts": {
+          "evidence_id": "d9195a9baa0c4159",
+          "creator_id": "creator-a1",
+          "creator_name": "演示UP主甲",
+          "folder_name": "演示收藏",
+          "tags": [
+            "异环",
+            "开放世界",
+            "实机演示"
+          ],
+          "platform_category": {
+            "id": 172,
+            "name": "手机游戏"
+          },
+          "source_label": "公开收藏"
+        }
+      },
+      {
+        "episode_id": "episode:g1:9bfe6faaa149db9f:1cafbf3cfcdac677",
+        "viewer_id": "g1",
+        "source": "profile",
+        "event_type": "public_profile",
+        "observed_at": "2026-07-12T08:00:00+00:00",
+        "published_at": "",
+        "title": "黄金观众甲",
+        "url": "https://space.bilibili.com/g1",
+        "bvid": "",
+        "fields": [
+          {
+            "path": "title",
+            "text": "黄金观众甲",
+            "kind": "text"
+          },
+          {
+            "path": "description",
+            "text": "关注独立游戏与制作流程。",
+            "kind": "text"
+          }
+        ],
+        "platform_facts": {
+          "evidence_id": "9bfe6faaa149db9f",
+          "creator_id": "",
+          "creator_name": "",
+          "folder_name": "",
+          "tags": [],
+          "platform_category": {},
+          "source_label": "个人简介"
+        }
+      }
+    ],
+    "deterministic_mention_seeds": [
+      {
+        "seed_id": "seed:ce529efe0b6c4a38876e",
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "field_path": "title",
+        "text": "异环",
+        "start": 1,
+        "end": 3,
+        "surface_kind": "quoted_expression",
+        "origin": "explicit"
+      },
+      {
+        "seed_id": "seed:fb8047dab1469b963488",
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "field_path": "title",
+        "text": "实机演示",
+        "start": 4,
+        "end": 8,
+        "surface_kind": "platform_tag_in_text",
+        "origin": "platform"
+      },
+      {
+        "seed_id": "seed:4e19d87c1a1226ab15bc",
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "field_path": "description",
+        "text": "开放世界",
+        "start": 10,
+        "end": 14,
+        "surface_kind": "platform_tag_in_text",
+        "origin": "platform"
+      },
+      {
+        "seed_id": "seed:9b434cd166644f58b8ab",
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "field_path": "creator_name",
+        "text": "演示UP主甲",
+        "start": 0,
+        "end": 6,
+        "surface_kind": "platform_creator",
+        "origin": "platform"
+      },
+      {
+        "seed_id": "seed:43ba916906895c383413",
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "field_path": "folder_name",
+        "text": "演示收藏",
+        "start": 0,
+        "end": 4,
+        "surface_kind": "platform_container",
+        "origin": "platform"
+      },
+      {
+        "seed_id": "seed:4e36e0b6b7dc9e429e3e",
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "field_path": "tags[0]",
+        "text": "异环",
+        "start": 0,
+        "end": 2,
+        "surface_kind": "platform_tag",
+        "origin": "platform"
+      },
+      {
+        "seed_id": "seed:cd4e34aee266ab8ebed0",
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "field_path": "tags[1]",
+        "text": "开放世界",
+        "start": 0,
+        "end": 4,
+        "surface_kind": "platform_tag",
+        "origin": "platform"
+      },
+      {
+        "seed_id": "seed:7226600e51d74ee35ad2",
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "field_path": "tags[2]",
+        "text": "实机演示",
+        "start": 0,
+        "end": 4,
+        "surface_kind": "platform_tag",
+        "origin": "platform"
+      },
+      {
+        "seed_id": "seed:fbccef39323db04d7a60",
+        "episode_id": "episode:g1:d9195a9baa0c4159:21733d1f8b68decb",
+        "field_path": "platform_category.name",
+        "text": "手机游戏",
+        "start": 0,
+        "end": 4,
+        "surface_kind": "platform_category",
+        "origin": "platform"
+      }
+    ]
+  },
+  "input_hash": "75b9e7d6da095a81c51814056e7edb1239082bf6ac2390a2eafc580014719011",
+  "episode_count": 2
+}

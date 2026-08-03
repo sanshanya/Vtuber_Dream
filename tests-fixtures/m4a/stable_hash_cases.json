@@ -1,0 +1,48 @@
+[
+  {
+    "name": "ascii-flat",
+    "input": {
+      "b": 1,
+      "a": "x"
+    },
+    "hash": "cdab067e9f3beb32d1252cfd63e492592fecbf591b0d08cadb24bb17f3864246",
+    "canonical": "{\"a\":\"x\",\"b\":1}"
+  },
+  {
+    "name": "unicode",
+    "input": {
+      "名": "异环",
+      "tags": [
+        "都市",
+        "演出"
+      ]
+    },
+    "hash": "cdc7315a01388001b0648a49a747c3fce8cf32e819f8d0cb1edcefe513534779",
+    "canonical": "{\"tags\":[\"都市\",\"演出\"],\"名\":\"异环\"}"
+  },
+  {
+    "name": "float",
+    "input": {
+      "conf": 0.86,
+      "big": 300000000.0,
+      "neg": -1.25
+    },
+    "hash": "5a7117797d8f672e654e3f0d234abfbf2e7f2ff6402778d28cf315a3168b37b2",
+    "canonical": "{\"big\":300000000.0,\"conf\":0.86,\"neg\":-1.25}"
+  },
+  {
+    "name": "nested-none",
+    "input": {
+      "a": [
+        1,
+        null,
+        {
+          "z": true,
+          "y": false
+        }
+      ]
+    },
+    "hash": "c879906b42cfff45d3918f8e00940cc15aa88d29fc1c21cf51e83cf1553dc75a",
+    "canonical": "{\"a\":[1,null,{\"y\":false,\"z\":true}]}"
+  }
+]

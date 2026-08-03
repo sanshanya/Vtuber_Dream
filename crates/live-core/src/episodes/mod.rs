@@ -232,7 +232,8 @@ mod build;
 mod evidence;
 mod seeds;
 
-pub use build::{build_viewer_episodes, evidence_to_episode};
+pub use build::{build_viewer_episodes, episodes_from_context, evidence_to_episode};
+pub mod baseline;
 pub use evidence::viewer_evidence;
 pub use seeds::{deterministic_mention_seeds, validate_span};
 

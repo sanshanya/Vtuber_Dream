@@ -1,0 +1,63 @@
+[
+  {
+    "name": "full",
+    "in": {
+      "entity_ref": "entity:e1",
+      "entity": "异环",
+      "status": "近期上升",
+      "confidence": 0.9,
+      "aspects": [
+        "都市"
+      ],
+      "evidence_mention_ids": [
+        "m1"
+      ],
+      "rationale": "r"
+    },
+    "out": {
+      "entity_ref": "entity:e1",
+      "entity": "异环",
+      "status": "近期上升",
+      "aspects": [
+        "都市"
+      ],
+      "rationale": "r",
+      "evidence_mention_ids": [
+        "m1"
+      ],
+      "confidence": 0.9
+    }
+  },
+  {
+    "name": "drops",
+    "in": {
+      "entity_ref": "",
+      "entity_id": null,
+      "entity": "异环",
+      "status": "稳定",
+      "aspects": [],
+      "rationale": "",
+      "confidence": 0.0,
+      "preference": ""
+    },
+    "out": {
+      "entity": "异环",
+      "status": "稳定",
+      "confidence": 0.0
+    }
+  },
+  {
+    "name": "false-kept",
+    "in": {
+      "entity": "X",
+      "confidence": 0,
+      "aspects": [],
+      "status": "无法判断"
+    },
+    "out": {
+      "entity": "X",
+      "status": "无法判断",
+      "confidence": 0
+    }
+  }
+]

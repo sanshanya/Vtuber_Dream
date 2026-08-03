@@ -1,0 +1,83 @@
+{
+  "baseline_summary": {
+    "viewer_count": 2
+  },
+  "platform_snapshot": {
+    "hot_searches": [
+      "异环"
+    ]
+  },
+  "streamer": {
+    "uid": "demo-streamer"
+  },
+  "viewer_index": [
+    {
+      "viewer_id": "g1",
+      "viewer_name": "黄金观众甲",
+      "profile_summary": "独立游戏偏好者",
+      "episode_count": 1,
+      "mention_count": 1,
+      "entity_count": 1,
+      "interest_state_count": 1
+    }
+  ],
+  "interest_state_index": [
+    {
+      "viewer_id": "g1",
+      "viewer_name": "黄金观众甲",
+      "entity_id": "ent-x",
+      "canonical_name": "异环",
+      "status": "近期上升",
+      "preference": "关注具体内容",
+      "aspects": [
+        "都市探索"
+      ],
+      "rationale": "公开收藏出现该实体。",
+      "evidence_mention_ids": [
+        "m1"
+      ],
+      "confidence": 0.9
+    }
+  ],
+  "graph_index": {
+    "stats": {
+      "nodes": 3,
+      "edges": 2,
+      "episodes": 1,
+      "mentions": 2,
+      "entities": 1,
+      "interest_states": 1,
+      "communities": 1
+    },
+    "node_type_counts": {
+      "Viewer": 1,
+      "Entity": 1,
+      "Episode": 1
+    },
+    "predicate_counts": {
+      "INTERESTED_IN": 1,
+      "OBSERVED": 1
+    },
+    "communities": [
+      {
+        "community_id": "community:1",
+        "viewer_ids": [
+          "g1"
+        ],
+        "entity_ids": [
+          "ent-x"
+        ],
+        "entities": [
+          "异环"
+        ],
+        "member_count": 2
+      }
+    ]
+  },
+  "detail_access": {
+    "viewer_tool": "get_viewer_analysis",
+    "graph_tool": "query_graph",
+    "instruction": "按需查询具体个人、实体、关系和Mention证据；不要无条件读取所有详情。"
+  },
+  "omitted_interest_state_count": 0
+}

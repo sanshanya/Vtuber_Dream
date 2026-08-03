@@ -1,0 +1,7 @@
+{
+  "llm_requests": 6,
+  "tool_calls": 17,
+  "input_tokens": 850,
+  "output_tokens": 350,
+  "total_tokens": 1200
+}

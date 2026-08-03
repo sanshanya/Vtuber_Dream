@@ -1,0 +1,43 @@
+[
+  {
+    "name": "level1",
+    "prefix": "u",
+    "viewer_count": 60,
+    "state_count": 80,
+    "summary_len": 1900,
+    "expected": {
+      "raised": false,
+      "omitted_interest_state_count": 39,
+      "interest_state_index_count": 41,
+      "blanked_all_summaries": false,
+      "viewer_index_count": 60,
+      "payload_chars": 495759
+    }
+  },
+  {
+    "name": "level2",
+    "prefix": "w",
+    "viewer_count": 300,
+    "state_count": 0,
+    "summary_len": 1900,
+    "expected": {
+      "raised": false,
+      "omitted_interest_state_count": 0,
+      "interest_state_index_count": 0,
+      "blanked_all_summaries": true,
+      "viewer_index_count": 300,
+      "payload_chars": 42439
+    }
+  },
+  {
+    "name": "raise",
+    "prefix": "x",
+    "viewer_count": 10000,
+    "state_count": 0,
+    "summary_len": 0,
+    "expected": {
+      "raised": true,
+      "message": "audience index exceeds bounded initial context"
+    }
+  }
+]

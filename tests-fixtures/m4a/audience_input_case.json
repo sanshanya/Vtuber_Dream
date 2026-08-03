@@ -1,0 +1,361 @@
+{
+  "analysis": {
+    "summary": {
+      "viewer_count": 2
+    },
+    "platform_snapshot": {
+      "hot_searches": [
+        "异环"
+      ]
+    },
+    "streamer": {
+      "uid": "demo-streamer"
+    },
+    "viewer_profiles": [
+      {
+        "viewer": {
+          "id": "g1",
+          "name": "黄金观众甲",
+          "face": "",
+          "profile_url": "https://space.bilibili.com/g1",
+          "guard_level": 3,
+          "medal_level": 20,
+          "seed_source": "golden"
+        },
+        "profile": {
+          "uid": "g1",
+          "name": "黄金观众甲",
+          "face": "",
+          "sign": "关注独立游戏与制作流程。",
+          "official_title": "",
+          "level": 5,
+          "following": 0,
+          "followers": 0,
+          "profile_url": "https://space.bilibili.com/g1"
+        },
+        "source_statuses": {
+          "profile": {
+            "status": "ok",
+            "count": 1,
+            "detail": ""
+          },
+          "followings": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "videos": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "dynamics": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "favorites": {
+            "status": "ok",
+            "count": 1,
+            "detail": "golden synthetic"
+          },
+          "bangumi": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "games": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "coins": {
+            "status": "unsupported",
+            "count": 0,
+            "detail": ""
+          },
+          "likes": {
+            "status": "unsupported",
+            "count": 0,
+            "detail": ""
+          }
+        },
+        "raw_item_count": 2,
+        "evidence_catalog": [
+          {
+            "id": "d9195a9baa0c4159",
+            "source": "favorite",
+            "source_label": "公开收藏",
+            "title": "《异环》实机演示：都市探索与角色演出",
+            "description": "关注城市空间、演出和开放世界体验。",
+            "creator_id": "creator-a1",
+            "creator_name": "演示UP主甲",
+            "folder_name": "演示收藏",
+            "tags": [
+              "异环",
+              "开放世界",
+              "实机演示"
+            ],
+            "platform_category": {
+              "id": 172,
+              "name": "手机游戏"
+            },
+            "published_at": "2026-07-10T00:00:00+00:00",
+            "url": "",
+            "bvid": ""
+          },
+          {
+            "id": "9bfe6faaa149db9f",
+            "source": "profile",
+            "source_label": "个人简介",
+            "title": "黄金观众甲",
+            "description": "关注独立游戏与制作流程。",
+            "creator_id": "",
+            "creator_name": "",
+            "folder_name": "",
+            "tags": [],
+            "platform_category": {},
+            "published_at": "",
+            "url": "https://space.bilibili.com/g1",
+            "bvid": ""
+          }
+        ]
+      },
+      {
+        "viewer": {
+          "id": "g2",
+          "name": "黄金观众乙",
+          "face": "",
+          "profile_url": "https://space.bilibili.com/g2",
+          "guard_level": 3,
+          "medal_level": 20,
+          "seed_source": "golden"
+        },
+        "profile": {
+          "uid": "g2",
+          "name": "黄金观众乙",
+          "face": "",
+          "sign": "关注独立游戏与制作流程。",
+          "official_title": "",
+          "level": 5,
+          "following": 0,
+          "followers": 0,
+          "profile_url": "https://space.bilibili.com/g2"
+        },
+        "source_statuses": {
+          "profile": {
+            "status": "ok",
+            "count": 1,
+            "detail": ""
+          },
+          "followings": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "videos": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "dynamics": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "favorites": {
+            "status": "ok",
+            "count": 1,
+            "detail": "golden synthetic"
+          },
+          "bangumi": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "games": {
+            "status": "empty",
+            "count": 0,
+            "detail": ""
+          },
+          "coins": {
+            "status": "unsupported",
+            "count": 0,
+            "detail": ""
+          },
+          "likes": {
+            "status": "unsupported",
+            "count": 0,
+            "detail": ""
+          }
+        },
+        "raw_item_count": 2,
+        "evidence_catalog": [
+          {
+            "id": "db49d36af554a507",
+            "source": "favorite",
+            "source_label": "公开收藏",
+            "title": "《异环》城市设计解析与《明日方舟》世界观讨论",
+            "description": "喜欢世界观、城市设计与剧情解析。",
+            "creator_id": "creator-b1",
+            "creator_name": "演示UP主乙",
+            "folder_name": "演示收藏",
+            "tags": [
+              "异环",
+              "明日方舟",
+              "剧情解析"
+            ],
+            "platform_category": {
+              "id": 172,
+              "name": "手机游戏"
+            },
+            "published_at": "2026-07-10T00:00:00+00:00",
+            "url": "",
+            "bvid": ""
+          },
+          {
+            "id": "7eb3a04afa172fb1",
+            "source": "profile",
+            "source_label": "个人简介",
+            "title": "黄金观众乙",
+            "description": "关注独立游戏与制作流程。",
+            "creator_id": "",
+            "creator_name": "",
+            "folder_name": "",
+            "tags": [],
+            "platform_category": {},
+            "published_at": "",
+            "url": "https://space.bilibili.com/g2",
+            "bvid": ""
+          }
+        ]
+      }
+    ]
+  },
+  "viewer_map": {
+    "g1": {
+      "viewer_id": "g1",
+      "profile_summary": "独立游戏偏好者",
+      "mentions": [
+        {
+          "mention_id": "m1"
+        }
+      ],
+      "entities": [
+        {
+          "local_id": "e1"
+        }
+      ]
+    }
+  },
+  "graph": {
+    "stats": {
+      "nodes": 3,
+      "edges": 2,
+      "episodes": 1,
+      "mentions": 2,
+      "entities": 1,
+      "interest_states": 1,
+      "communities": 1
+    },
+    "nodes": [
+      {
+        "id": "viewer:g1",
+        "type": "Viewer",
+        "name": "黄金观众甲",
+        "properties": {}
+      },
+      {
+        "id": "ent-x",
+        "type": "Entity",
+        "name": "异环",
+        "properties": {}
+      },
+      {
+        "id": "episode:g1:e1",
+        "type": "Episode",
+        "name": "x",
+        "properties": {
+          "viewer_id": "g1"
+        }
+      }
+    ],
+    "edges": [
+      {
+        "id": "s1",
+        "source": "viewer:g1",
+        "target": "ent-x",
+        "predicate": "INTERESTED_IN",
+        "confidence": 0.9,
+        "properties": {},
+        "evidence_ids": [
+          "m1"
+        ],
+        "run_id": "run-1",
+        "source_kind": "ai_state",
+        "valid_from": "t",
+        "valid_to": null
+      },
+      {
+        "id": "e1",
+        "source": "viewer:g1",
+        "target": "episode:g1:e1",
+        "predicate": "OBSERVED",
+        "confidence": 1.0,
+        "properties": {},
+        "evidence_ids": [],
+        "run_id": "run-1",
+        "source_kind": "platform_fact",
+        "valid_from": "t",
+        "valid_to": null
+      }
+    ],
+    "mentions": [
+      {
+        "mention_id": "m1",
+        "episode_id": "episode:g1:e1",
+        "text": "异环",
+        "entity_id": "ent-x",
+        "decision": "NEW_ENTITY",
+        "canonical_name": "异环",
+        "entity_type": "game"
+      }
+    ],
+    "communities": [
+      {
+        "community_id": "community:1",
+        "viewer_ids": [
+          "g1"
+        ],
+        "entity_ids": [
+          "ent-x"
+        ],
+        "entities": [
+          "异环"
+        ],
+        "member_count": 2
+      }
+    ],
+    "interest_states": [
+      {
+        "state_id": "s1",
+        "viewer_id": "g1",
+        "entity_id": "ent-x",
+        "canonical_name": "异环",
+        "entity_type": "game",
+        "status": "近期上升",
+        "preference": "关注具体内容",
+        "aspects": [
+          "都市探索"
+        ],
+        "rationale": "公开收藏出现该实体。",
+        "evidence_mention_ids": [
+          "m1"
+        ],
+        "confidence": 0.9,
+        "valid_from": "t",
+        "valid_to": null
+      }
+    ]
+  }
+}

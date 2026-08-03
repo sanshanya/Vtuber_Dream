@@ -190,13 +190,31 @@ pub fn evidence_to_episode(
 
 /// `build_viewer_episodes`：viewer 文件 → Episode 列表。
 pub fn build_viewer_episodes(viewer: &Value, max_evidence_per_viewer: usize) -> Vec<Episode> {
-    let uid = py_str(get_value(get_value(viewer, "viewer"), "id"));
+    // 便捷组合：raw → viewer_evidence → episodes_from_context。
+    // 等价 Python `build_viewer_episodes(viewer_context(raw, 无 catalog 的 baseline))`。
+    episodes_from_context(&serde_json::json!({
+        "viewer": get_value(viewer, "viewer"),
+        "collected_at": py_str(get_value(viewer, "collected_at")),
+        "evidence": viewer_evidence(viewer, max_evidence_per_viewer),
+    }))
+}
+
+/// Python `episodes.build_viewer_episodes(context)` 真平移：消费 context["evidence"]
+/// （不现算——上游 catalog 工程化裁剪必须被尊重；M4-A bundle 对账钉）。
+pub fn episodes_from_context(context: &Value) -> Vec<Episode> {
+    let uid = py_str(get_value(get_value(context, "viewer"), "id"));
     let collected_at = {
-        let text = py_str(get_value(viewer, "collected_at"));
+        let text = py_str(get_value(context, "collected_at"));
         if text.is_empty() { None } else { Some(text) }
     };
-    viewer_evidence(viewer, max_evidence_per_viewer)
-        .iter()
-        .map(|evidence| evidence_to_episode(&uid, evidence, collected_at.as_deref()))
-        .collect()
+    get_value(context, "evidence")
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter(|item| item.is_object())
+                .map(|evidence| evidence_to_episode(&uid, evidence, collected_at.as_deref()))
+                .collect()
+        })
+        .unwrap_or_default()
 }
