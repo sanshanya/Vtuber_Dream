@@ -155,6 +155,8 @@ pub struct Lead {
 #[serde(deny_unknown_fields)]
 pub struct ViewerPerceptionSubmission {
     pub viewer_id: String,
+    /// Python Text100000：schema 形状对齐（运行时硬拒在 validators 层 SUMMARY_MAX_CHARS）
+    #[schemars(length(max = 100_000))]
     pub profile_summary: String,
     #[serde(default)]
     pub mentions: Vec<MentionSpan>,
@@ -324,6 +326,8 @@ pub struct ContentCalendarItem {
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct AudienceSituationSubmission {
+    /// Python Text100000：schema 形状对齐（运行时硬拒在 validators 层 SUMMARY_MAX_CHARS）
+    #[schemars(length(max = 100_000))]
     pub executive_summary: String,
     #[serde(default)]
     pub audience_structure: Vec<String>,

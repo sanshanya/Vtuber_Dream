@@ -150,7 +150,8 @@ pub fn validate_span(
     let actual = char_slice(source, start as usize, end as usize);
     if actual != text {
         return Some(format!(
-            "span mismatch for {}:{}; expected exact substring {:?}, got {:?}",
+            // Python repr 形态（单引号；评审3-M3）
+            "span mismatch for {}:{}; expected exact substring '{}', got '{}'",
             episode.episode_id, field_path, actual, text
         ));
     }

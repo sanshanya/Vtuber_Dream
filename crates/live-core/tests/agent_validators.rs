@@ -760,3 +760,154 @@ fn audience_leads_validation() {
     let errors = check_audience(&sub);
     assert!(has(&errors, "leads[0] references unknown evidence: ['e9']"));
 }
+
+// ---------------------------------------------------------------------------
+// R5：上限硬拒 / 占位词实质 / Some("")arity / audience 循环黑盲补钉
+// ---------------------------------------------------------------------------
+
+#[test]
+fn summary_over_max_chars_rejected() {
+    let mut sub = valid_viewer();
+    sub.profile_summary = "长".repeat(100_001);
+    let errors = check_viewer(&sub);
+    assert!(has(&errors, "profile_summary exceeds max length 100000"));
+
+    let mut sub = valid_audience();
+    sub.executive_summary = "长".repeat(100_001);
+    let errors = check_audience(&sub);
+    assert!(has(&errors, "executive_summary exceeds max length 100000"));
+}
+
+/// 评审3-M2：占位词放进栏目串不再算"实质内容"
+#[test]
+fn placeholder_words_do_not_count_as_substantive() {
+    let mut sub = valid_audience();
+    sub.interest_graph = vec![];
+    sub.audience_structure = vec!["测试".to_string()];
+    let errors = check_audience(&sub);
+    assert!(has(
+        &errors,
+        "at least one audience section must be non-empty"
+    ));
+
+    let graph_exists = |id: &str| id == "entity:ent9";
+    let mut sub = valid_viewer();
+    sub.entities = vec![];
+    sub.interest_states = vec![];
+    sub.mentions[0].entity_ref = "entity:ent9".to_string();
+    sub.hypotheses = vec!["占位".to_string()];
+    let errors = validate_viewer_submission(
+        &sub,
+        VIEWER,
+        &episodes(),
+        &graph_exists,
+        &no_search_results(),
+    );
+    assert!(has(
+        &errors,
+        "viewer submission has empty entities and interest_states; provide hypotheses or cautions"
+    ));
+}
+
+/// 评审3-M1：Some("") 在 NEW_ENTITY/UNCERTAIN 臂不触发（Python truthiness parity）；
+/// SAME_AS 空串仍走 "without existing_entity_id"。
+#[test]
+fn empty_string_existing_id_parity() {
+    let mut sub = valid_viewer();
+    sub.entities[0].existing_entity_id = Some(String::new());
+    assert_eq!(check_viewer(&sub), Vec::<String>::new());
+
+    let mut sub = valid_viewer();
+    sub.entities[0].resolution = "SAME_AS".to_string();
+    sub.entities[0].existing_entity_id = Some(String::new());
+    assert!(has(
+        &check_viewer(&sub),
+        "entity e1 uses SAME_AS without existing_entity_id"
+    ));
+
+    let mut sub = valid_viewer();
+    sub.entities[0].resolution = "UNCERTAIN".to_string();
+    sub.entities[0].existing_entity_id = Some(String::new());
+    sub.interest_states = vec![];
+    sub.relations = vec![];
+    assert_eq!(check_viewer(&sub), Vec::<String>::new());
+}
+
+/// 评审5-M3：audience 的 situations / individual_highlights / content_calendar
+/// 三个循环此前零测试。
+#[test]
+fn audience_situations_highlights_calendar_unknowns() {
+    use live_core::models::{ContentCalendarItem, IndividualHighlight, SituationItem};
+
+    let mut sub = valid_audience();
+    sub.situations = vec![SituationItem {
+        title: "某态势".to_string(),
+        status: "上升".to_string(),
+        description: String::new(),
+        entity_ids: vec!["ent9".to_string()],
+        entities: vec![],
+        viewer_ids: vec!["v9".to_string()],
+        trigger_events: vec![],
+        evidence_mention_ids: vec!["m9".to_string()],
+        confidence: 0.5,
+        recommended_investigation: vec![],
+    }];
+    let errors = check_audience(&sub);
+    assert!(has(
+        &errors,
+        "situations[0] references unknown viewers: ['v9']"
+    ));
+    assert!(has(
+        &errors,
+        "situations[0] references unknown entities: ['ent9']"
+    ));
+    assert!(has(
+        &errors,
+        "situations[0] references unknown mentions: ['m9']"
+    ));
+
+    let mut sub = valid_audience();
+    sub.individual_highlights = vec![IndividualHighlight {
+        viewer_id: "v9".to_string(),
+        insight: "x".to_string(),
+        opportunity: String::new(),
+        evidence_mention_ids: vec!["m9".to_string()],
+    }];
+    let errors = check_audience(&sub);
+    assert!(has(
+        &errors,
+        "individual_highlights[0] references unknown viewers: ['v9']"
+    ));
+    assert!(has(
+        &errors,
+        "individual_highlights[0] references unknown mentions: ['m9']"
+    ));
+
+    // empty 证据必拒（required=true）
+    let mut sub = valid_audience();
+    sub.individual_highlights = vec![IndividualHighlight {
+        viewer_id: "v1".to_string(),
+        insight: "x".to_string(),
+        opportunity: String::new(),
+        evidence_mention_ids: vec![],
+    }];
+    let errors = check_audience(&sub);
+    assert!(has(
+        &errors,
+        "individual_highlights[0] must reference grounded mentions"
+    ));
+
+    let mut sub = valid_audience();
+    sub.content_calendar = vec![ContentCalendarItem {
+        session: "周六档".to_string(),
+        theme: "塞尔达".to_string(),
+        target_viewers: vec!["v9".to_string()],
+        goal: String::new(),
+        validation_signal: String::new(),
+    }];
+    let errors = check_audience(&sub);
+    assert!(has(
+        &errors,
+        "content_calendar[0] references unknown viewers: ['v9']"
+    ));
+}

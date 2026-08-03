@@ -16,6 +16,9 @@ use crate::models::{AudienceSituationSubmission, Lead, ViewerPerceptionSubmissio
 
 /// 修复 8：摘要去空白后低于此字符数即视为"不是一份真分析"（S0 实测短摘要曾被接受）。
 pub const SUMMARY_MIN_CHARS: usize = 16;
+/// 摘要上限（Python ai_models Text100000 = max_length=100_000 的 decode 层硬拒，
+/// 落进业务校验层；超限时 Python 在 pydantic 阶段就拒，此处文案为本仓自定）。
+pub const SUMMARY_MAX_CHARS: usize = 100_000;
 /// 修复 8：占位文本集合（去空白后完全相等即拒；S0 实测 "测试"/"summary" 曾被接受）。
 pub const PLACEHOLDER_SUMMARIES: [&str; 4] = ["测试", "test", "summary", "占位"];
 /// 修复 8：字符串栏目"有实质内容"判定 = 至少一条去空白后字符数 ≥ 2（S0 实测 ["a"] 曾被接受）。
@@ -60,9 +63,11 @@ fn char_len(text: &str) -> usize {
 
 /// 字符串列表是否存在"有实质内容"的一条（去空白后字符数 ≥ SECTION_SUBSTANTIVE_MIN_CHARS）。
 fn has_substantive(items: &[String]) -> bool {
-    items
-        .iter()
-        .any(|item| char_len(item.trim()) >= SECTION_SUBSTANTIVE_MIN_CHARS)
+    items.iter().any(|item| {
+        let stripped = item.trim();
+        char_len(stripped) >= SECTION_SUBSTANTIVE_MIN_CHARS
+            && !PLACEHOLDER_SUMMARIES.contains(&stripped)
+    })
 }
 
 fn check_summary(field: &str, summary: &str, errors: &mut Vec<String>) {
@@ -73,6 +78,9 @@ fn check_summary(field: &str, summary: &str, errors: &mut Vec<String>) {
     }
     if char_len(stripped) < SUMMARY_MIN_CHARS {
         errors.push(format!("{field} is too short to be a real analysis"));
+    }
+    if char_len(stripped) > SUMMARY_MAX_CHARS {
+        errors.push(format!("{field} exceeds max length {SUMMARY_MAX_CHARS}"));
     }
 }
 
@@ -240,14 +248,29 @@ pub fn validate_viewer_submission(
                     }
                 }
             },
-            "NEW_ENTITY" if entity.existing_entity_id.is_some() => errors.push(format!(
-                "entity {} cannot set existing_entity_id with NEW_ENTITY",
-                entity.local_id
-            )),
-            "UNCERTAIN" if entity.existing_entity_id.is_some() => errors.push(format!(
-                "entity {} cannot set existing_entity_id with UNCERTAIN",
-                entity.local_id
-            )),
+            // Python `and entity.existing_entity_id`（truthiness）：Some("") 不触发（评审3-M1）
+            "NEW_ENTITY"
+                if entity
+                    .existing_entity_id
+                    .as_deref()
+                    .is_some_and(|id| !id.is_empty()) =>
+            {
+                errors.push(format!(
+                    "entity {} cannot set existing_entity_id with NEW_ENTITY",
+                    entity.local_id
+                ))
+            }
+            "UNCERTAIN"
+                if entity
+                    .existing_entity_id
+                    .as_deref()
+                    .is_some_and(|id| !id.is_empty()) =>
+            {
+                errors.push(format!(
+                    "entity {} cannot set existing_entity_id with UNCERTAIN",
+                    entity.local_id
+                ))
+            }
             _ => {}
         }
         if entity.resolution == "NEW_ENTITY" && unknown.is_empty() {
