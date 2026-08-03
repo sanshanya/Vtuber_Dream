@@ -475,3 +475,115 @@ fn span_validation_accepts_exact_and_rejects_mismatch() {
     let no_field = validate_span(episode, "nope", "异环", 0, 2).unwrap();
     assert!(no_field.contains("has no field"), "{no_field}");
 }
+
+// ---------------------------------------------------------------------------
+// 12. M3 读面基元：references 按表分流存在性（未知 id 剔除）；
+//     episodes() 回读排序 + *_json 字段解析
+// ---------------------------------------------------------------------------
+
+#[test]
+fn references_split_by_table_and_drop_unknown_ids() {
+    let store = mem_store();
+    begin(&store, "run:ffffffffffffffffffffffffffffffff");
+    let viewer_json: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests-fixtures/demo/viewers/demo-1.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let episodes = build_viewer_episodes(&viewer_json, 1000);
+    apply_viewer_submission(
+        &store,
+        "run:ffffffffffffffffffffffffffffffff",
+        "演示观众A",
+        &episodes,
+        &demo1_like_submission("demo-1"),
+    )
+    .unwrap();
+    let mention_id: String = store
+        .conn
+        .query_row("SELECT mention_id FROM mentions", [], |row| row.get(0))
+        .unwrap();
+    let entity_id: String = store
+        .conn
+        .query_row("SELECT entity_id FROM entities LIMIT 1", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+
+    let references = live_core::graph::query::references(
+        &store,
+        std::slice::from_ref(&entity_id),
+        &["episode:demo-1:39581170fe829af2:e431120c067efe82".to_string()],
+        std::slice::from_ref(&mention_id),
+    )
+    .unwrap();
+    assert!(references["entities"].contains(&entity_id));
+    assert!(references["episodes"].contains("episode:demo-1:39581170fe829af2:e431120c067efe82"));
+    assert!(references["mentions"].contains(&mention_id));
+
+    let references = live_core::graph::query::references(
+        &store,
+        &["entity:game:missing".to_string()],
+        &["episode:v:e:missing".to_string()],
+        &["mention:v:missing".to_string()],
+    )
+    .unwrap();
+    assert!(references["entities"].is_empty(), "未知 entity id 被剔除");
+    assert!(references["episodes"].is_empty(), "未知 episode id 被剔除");
+    assert!(references["mentions"].is_empty(), "未知 mention id 被剔除");
+}
+
+#[test]
+fn episodes_readback_parses_json_fields_and_clamps_limit() {
+    let store = mem_store();
+    begin(&store, "run:ffffffffffffffffffffffffffffffff");
+    let viewer_json: Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests-fixtures/demo/viewers/demo-1.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let episodes = build_viewer_episodes(&viewer_json, 1000);
+    apply_viewer_submission(
+        &store,
+        "run:ffffffffffffffffffffffffffffffff",
+        "演示观众A",
+        &episodes,
+        &demo1_like_submission("demo-1"),
+    )
+    .unwrap();
+
+    let rows = live_core::graph::query::episodes(&store, "demo-1", None).unwrap();
+    assert_eq!(rows.len(), episodes.len());
+    for row in &rows {
+        // Python dict(row) + pop 语义：*_json 文本列被解析并改名为 fields/platform_facts
+        assert!(row.get("fields_json").is_none(), "fields_json 不应回传");
+        assert!(
+            row.get("fields").and_then(Value::as_array).is_some(),
+            "fields 必须是解析后的数组"
+        );
+        assert!(
+            row.get("platform_facts").is_some_and(Value::is_object),
+            "platform_facts 必须是解析后的对象"
+        );
+    }
+    let ids: std::collections::BTreeSet<&str> = rows
+        .iter()
+        .filter_map(|row| row.get("episode_id").and_then(Value::as_str))
+        .collect();
+    let expected: std::collections::BTreeSet<&str> = episodes
+        .iter()
+        .map(|episode| episode.episode_id.as_str())
+        .collect();
+    assert_eq!(ids, expected);
+
+    let limited = live_core::graph::query::episodes(&store, "demo-1", Some(1)).unwrap();
+    assert_eq!(limited.len(), 1, "limit 钳制后只回一行");
+    let empty = live_core::graph::query::episodes(&store, "ghost-viewer", None).unwrap();
+    assert!(empty.is_empty(), "未知 viewer 回空集");
+}
