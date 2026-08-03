@@ -17,22 +17,39 @@ enum Parse {
     Usage(String),
 }
 
+// r6 F-4：argparse 吞不下「长得就像已注册选项」的值（`--output -c` →
+// expected one argument + exit 2）。`-` 前缀一律拒：孤 `-` 与生僻负目录没有
+// 真实使用者，规则越简越 parity。
+fn looks_like_option(value: &str) -> bool {
+    value.starts_with('-')
+}
+
 fn parse(args: &[String]) -> Parse {
     let mut rest = args.iter();
+    // r6 F-1：Python argparse `subparsers required=True` → 裸调用 usage + exit 2。
     match rest.next().map(String::as_str) {
-        None | Some("-h") | Some("--help") => return Parse::Help,
+        None => return Parse::Usage("缺命令".to_string()),
+        Some("-h") | Some("--help") => return Parse::Help,
         Some("demo") => {}
         Some(other) => return Parse::Usage(format!("未知命令 {other}")),
     }
     let mut config = PathBuf::from("config.yaml");
     let mut output = None;
     while let Some(arg) = rest.next() {
+        // r6 F-2：argparse 子命令帮助是 exit 0，不是用法错误。
         match arg.as_str() {
+            "-h" | "--help" => return Parse::Help,
             "-c" | "--config" => match rest.next() {
+                Some(value) if looks_like_option(value) => {
+                    return Parse::Usage(format!("{arg} 缺路径（{value} 是选项）"));
+                }
                 Some(value) => config = PathBuf::from(value),
                 None => return Parse::Usage(format!("{arg} 缺路径")),
             },
             "--output" => match rest.next() {
+                Some(value) if looks_like_option(value) => {
+                    return Parse::Usage(format!("{arg} 缺目录（{value} 是选项）"));
+                }
                 Some(value) => output = Some(PathBuf::from(value)),
                 None => return Parse::Usage("--output 缺目录".to_string()),
             },
@@ -69,9 +86,10 @@ fn main() -> ExitCode {
                     );
                     ExitCode::SUCCESS
                 }
+                // r6 F-3：Python cli.py 广谱 except → stderr `error: {exc}` + return 2。
                 Err(error) => {
-                    eprintln!("demo 失败: {error}");
-                    ExitCode::FAILURE
+                    eprintln!("error: {error}");
+                    ExitCode::from(2)
                 }
             }
         }

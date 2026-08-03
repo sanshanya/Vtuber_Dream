@@ -120,3 +120,67 @@ fn usage_error_exit_code_2() {
     let output = run(&["demo", "--config"], &root);
     assert_eq!(output.status.code(), Some(2));
 }
+
+#[test]
+fn bare_invocation_matches_python_argparse_exit_2() {
+    // r6 F-1：Python argparse `subparsers required=True` → 裸调用打印 usage + exit 2。
+    let output = run(&[], &std::env::temp_dir());
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("用法"), "stderr={stderr}");
+}
+
+#[test]
+fn demo_help_matches_python_argparse_exit_0() {
+    // r6 F-2：argparse 子命令 -h/--help → 打印帮助 + exit 0。
+    for args in [&["demo", "-h"][..], &["demo", "--help"][..]] {
+        let output = run(args, &std::env::temp_dir());
+        assert_eq!(
+            output.status.code(),
+            Some(0),
+            "args={args:?} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(stdout.contains("demo"), "stdout={stdout}");
+    }
+}
+
+#[test]
+fn runtime_error_matches_python_prefix_and_exit_2() {
+    // r6 F-3：Python cli.py `except (BilibiliError, AgentRuntimeError, ConfigError,
+    // ValueError, OSError)` → stderr `error: {exc}` + return 2。
+    let root = std::env::temp_dir().join(format!("m4d-cli-err-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).unwrap();
+    let missing = root.join("缺.yaml");
+    let output = run(&["demo", "-c", missing.to_str().unwrap()], &root);
+    assert_eq!(
+        output.status.code(),
+        Some(2),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    let first = stderr.lines().next().unwrap_or_default();
+    assert!(first.starts_with("error: "), "stderr={stderr}");
+}
+
+#[test]
+fn flag_value_looking_like_option_is_rejected() {
+    // r6 F-4：argparse 见到已注册选项串即吞不下 → `argument -c/--config:
+    // expected one argument` + exit 2。孤 `-` 与生僻负目录无真实使用者，一并拒。
+    for args in [
+        &["demo", "--output", "-c"][..],
+        &["demo", "-c", "--output"][..],
+        &["demo", "--config", "--output", "x"][..],
+    ] {
+        let output = run(args, &std::env::temp_dir());
+        assert_eq!(
+            output.status.code(),
+            Some(2),
+            "args={args:?} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
