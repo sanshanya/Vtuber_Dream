@@ -1,0 +1,116 @@
+{
+  "status": "complete",
+  "input_hash": "synthetic-demo",
+  "viewer_input_hashes": {
+    "demo-1": "synthetic-demo",
+    "demo-2": "synthetic-demo",
+    "demo-3": "synthetic-demo"
+  },
+  "graph_run_id": "run:fec330f10bc04814beda1adf43d91668",
+  "candidate_input_hash": "synthetic-demo",
+  "model": "synthetic-demo",
+  "protocol": "terminal_tool_call",
+  "terminal_tool": "submit_peer_streamer_discovery",
+  "analysis": {
+    "status": "complete",
+    "streamer_uid": "demo-streamer",
+    "streamer": {
+      "uid": "demo-streamer",
+      "name": "演示当前主播"
+    },
+    "summary": "合成事实显示一个阶段可比的直接同类，适合学习内容承诺而非复制人格表达。",
+    "candidate_count": 1,
+    "verified_candidate_count": 1,
+    "formal_peer_count": 1,
+    "assessments": [
+      {
+        "candidate_id": "peer:bilibili:demo-peer-1",
+        "relation_type": "DIRECT_PEER",
+        "summary": "都以小规模核心观众陪伴和具体内容讨论为主要承诺。",
+        "comparable_dimensions": [
+          {
+            "dimension": "content_promise_overlap",
+            "similarity": "都在开播时给出明确主题，并通过讨论维持核心观众参与。",
+            "difference": "对方栏目节奏更固定，当前主播保留更多即兴空间。",
+            "evidence_refs": [
+              "peerfact:demo-peer-1:profile"
+            ]
+          }
+        ],
+        "audience_overlap_viewer_ids": [
+          "demo-1",
+          "demo-2"
+        ],
+        "episode_ids": [],
+        "mention_ids": [
+          "mention:demo-2:d24a5271a30d8731ba412bf2",
+          "mention:demo-1:6014e0304a0cd43a019bbebb"
+        ],
+        "search_result_ids": [],
+        "learnable_patterns": [
+          {
+            "pattern": "前三分钟说明本场内容承诺和互动节点",
+            "why_it_works": "让观众立即知道为什么留下以及何时参与。",
+            "evidence_refs": [
+              "peerfact:demo-peer-1:video:BV1peerDemo"
+            ]
+          }
+        ],
+        "do_not_copy": [
+          "不要复制对方固定话术和人格表达"
+        ],
+        "experiments": [
+          {
+            "hypothesis": "明确开场承诺能提升核心观众首段互动。",
+            "execution": "连续两场在前三分钟说明主题、流程和一次互动节点。",
+            "target_viewer_ids": [
+              "demo-1",
+              "demo-2"
+            ],
+            "observation_signals": [
+              "前三十分钟核心观众发言率",
+              "互动节点参与人数"
+            ],
+            "stop_conditions": [
+              "连续两场首段退出率上升"
+            ]
+          }
+        ],
+        "uncertainty": "合成Demo只有近期公开样本，需要后续直播反馈验证。",
+        "confidence": 0.84,
+        "candidate": {
+          "candidate_id": "peer:bilibili:demo-peer-1",
+          "uid": "demo-peer-1",
+          "name": "演示同类主播甲",
+          "profile_url": "https://space.bilibili.com/demo-peer-1",
+          "verified_streamer": true,
+          "overlap_viewer_ids": [
+            "demo-1",
+            "demo-2"
+          ],
+          "recall_reasons": [
+            "两名演示观众存在公开创作者事实"
+          ],
+          "evidence_catalog": [
+            {
+              "evidence_id": "peerfact:demo-peer-1:profile",
+              "kind": "profile",
+              "summary": "演示主播公开主页：重视栏目承诺与观众共创",
+              "url": "https://space.bilibili.com/demo-peer-1"
+            },
+            {
+              "evidence_id": "peerfact:demo-peer-1:video:BV1peerDemo",
+              "kind": "recent_video",
+              "summary": "演示公开回放：开场说明当场主题与互动节点",
+              "url": "https://www.bilibili.com/video/BV1peerDemo"
+            }
+          ]
+        }
+      }
+    ],
+    "overall_advice": [
+      "每周只选择一个可学习机制，连续两到三场验证后再保留。"
+    ],
+    "completed_at": "2026-07-12T08:00:00+00:00"
+  }
+}

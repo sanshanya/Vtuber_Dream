@@ -1,0 +1,13 @@
+# 核心文档不公开：仅保留在编者本地工作树，公开仓只发代码 + README
+/docs/
+/CONTEXT.md
+/AGENTS.md
+/target
+# 密钥与本地配置永不入库（合规边界 §15.2）
+config.yaml
+config.local.yaml
+*.local.yaml
+# web 构建产物由 CI/构建脚本产出
+web/node_modules
+web/dist
+.DS_Store

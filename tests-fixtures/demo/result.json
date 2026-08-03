@@ -1,0 +1,9 @@
+{
+  "status": "complete",
+  "synthetic_demo": true,
+  "output_dir": "C:\\Users\\sansm\\AppData\\Local\\Temp\\fx-demo-tljnafbu\\demo",
+  "report": "C:\\Users\\sansm\\AppData\\Local\\Temp\\fx-demo-tljnafbu\\demo\\site\\index.html",
+  "graph": {
+    "database": "C:\\Users\\sansm\\AppData\\Local\\Temp\\fx-demo-tljnafbu\\demo\\graph\\perception.sqlite3"
+  }
+}

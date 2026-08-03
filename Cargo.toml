@@ -1,0 +1,9 @@
+[workspace]
+resolver = "3"
+members = ["crates/live-core", "crates/live-server"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.89"
+license = "LicenseRef-Proprietary"
+repository = "https://github.com/sanshanya/Vtuber_Dream"

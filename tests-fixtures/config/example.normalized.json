@@ -1,0 +1,35 @@
+{
+  "project_name": "audience-pilot",
+  "bilibili": {
+    "room_id": "填写直播间ID",
+    "streamer_uid": "填写主播UID",
+    "additional_viewer_ids": []
+  },
+  "collection": {
+    "per_viewer_request_budget": 12,
+    "max_video_metadata_items": 120
+  },
+  "ai": {
+    "api": "chat_completions",
+    "base_url": "https://example.test/v1",
+    "model": "custom-reasoning-model",
+    "reasoning": {
+      "enabled": true,
+      "effort": "high",
+      "replay_content": true
+    },
+    "agent": {
+      "max_turns": 64,
+      "run_retries": 2
+    },
+    "max_output_tokens": 131072
+  },
+  "perception": {
+    "peer": {
+      "candidate_limit": 20,
+      "recent_videos": 8,
+      "recent_dynamics": 8,
+      "max_formal_peers": 8
+    }
+  }
+}

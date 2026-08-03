@@ -1,0 +1,13 @@
+{
+  "status": "complete",
+  "model": "synthetic-demo",
+  "protocol": "tool_call_only",
+  "situation_input_hash": "synthetic-demo",
+  "viewer_input_hashes": {
+    "demo-1": "synthetic-demo",
+    "demo-2": "synthetic-demo",
+    "demo-3": "synthetic-demo"
+  },
+  "graph_run_id": "run:fec330f10bc04814beda1adf43d91668",
+  "synthetic_demo": true
+}
