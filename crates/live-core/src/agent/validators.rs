@@ -24,7 +24,8 @@ pub const PLACEHOLDER_SUMMARIES: [&str; 4] = ["测试", "test", "summary", "占�
 /// 修复 8：字符串栏目"有实质内容"判定 = 至少一条去空白后字符数 ≥ 2（S0 实测 ["a"] 曾被接受）。
 pub const SECTION_SUBSTANTIVE_MIN_CHARS: usize = 2;
 /// leads.type 白名单（kickoff §M4.x 薄切提前到 M3：schema + 校验随终局协议进入）。
-pub const LEAD_TYPE_WHITELIST: [&str; 4] = ["search", "creator", "video", "room"];
+/// MXA-7/12：唯一真源在 leads.rs（annex 面与校验面共一张清单）。
+pub const LEAD_TYPE_WHITELIST: [&str; 4] = crate::leads::LEAD_TYPES;
 
 const ERROR_CAP: usize = 100;
 

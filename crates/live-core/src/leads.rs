@@ -29,6 +29,10 @@ pub const LATEST_CONSUMED_CAP: usize = 3;
 pub const RESOLUTION_NOTE_CAP: usize = 240;
 /// audience 侧账本行 viewer_id 占位（leads 来自整体态势终局提交）。
 pub const AUDIENCE_VIEWER_ID: &str = "audience";
+/// 四型白名单的唯一真源（validators.rs 的 LEAD_TYPE_WHITELIST 指认此处）。
+pub const LEAD_TYPES: [&str; 4] = ["search", "creator", "video", "room"];
+/// annex 摘要里 latest_consumed 的 locator 展示宽度（账本手编面可入长串）。
+pub const ANNEX_LOCATOR_CAP: usize = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -187,12 +191,21 @@ pub fn rewrite_ledger(output_dir: &Path, rows: &[LedgerRow]) -> std::io::Result<
 }
 
 /// kickoff 契约摘要段。`viewer=None` → 全局行；`Some(v)` → 前缀 `viewer=… own_pending=…`。
-/// by_type 只计未被 reject 的行（死账不喂回下轮），类型按名字排序序保证确定性。
+/// by_type 只计未被 reject 的行（死账不喂回下轮）。
+///
+/// MXA-12（r2-F4+r6-Q6 加固）：账本是人工编辑面——
+/// 1. by_type 键只走四型白名单，其余收拢进 `other`（手编毒行灌不进命题面）；
+/// 2. latest_consumed 的 locator 截 ANNEX_LOCATOR_CAP=80（文本维度有封顶）。
 pub fn summary_line(rows: &[LedgerRow], viewer: Option<&str>) -> String {
     let count = |status: LeadStatus| rows.iter().filter(|r| r.status == status).count();
     let mut by_type: std::collections::BTreeMap<&str, usize> = std::collections::BTreeMap::new();
     for row in rows.iter().filter(|r| r.status != LeadStatus::Rejected) {
-        *by_type.entry(row.lead_type.as_str()).or_insert(0) += 1;
+        let name = if LEAD_TYPES.contains(&row.lead_type.as_str()) {
+            row.lead_type.as_str()
+        } else {
+            "other"
+        };
+        *by_type.entry(name).or_insert(0) += 1;
     }
     let by_type = by_type
         .iter()
@@ -207,8 +220,9 @@ pub fn summary_line(rows: &[LedgerRow], viewer: Option<&str>) -> String {
         .take(LATEST_CONSUMED_CAP)
         .map(|r| {
             serde_json::json!({
-                "type": r.lead_type,
-                "locator": r.locator,
+                // 与 by_type 同一折叠：annex 文本面非白名单一律渲染 "other"
+                "type": if LEAD_TYPES.contains(&r.lead_type.as_str()) { r.lead_type.clone() } else { "other".to_string() },
+                "locator": r.locator.chars().take(ANNEX_LOCATOR_CAP).collect::<String>(),
                 "yield_count": r.yield_count,
             })
         })
@@ -492,5 +506,36 @@ mod tests {
             "{line}"
         );
         assert!(line.contains("yield_total=10"));
+    }
+
+    /// MXA-12（r2-F4/r6-Q6）：手编毒行进不了命题面——非白名单 type 收拢进
+    /// "other" 桶；长 locator 在 latest 里截断到上限。
+    #[test]
+    fn annex_folds_unknown_types_and_caps_locator() {
+        let dir = tmp_dir("annex");
+        record_leads(&dir, "u", "run:a", "t", &[lead("video", "BV1")]).unwrap();
+        let mut rows = read_ledger_guarded(&ledger_path(&dir)).unwrap();
+        rows[0].lead_type = "w;&#}%@注入".to_string();
+        rows[0].status = LeadStatus::Consumed;
+        rows[0].locator = "L".repeat(200);
+        rows[0].yield_count = 1;
+        let line = summary_line(&rows, None);
+        assert!(line.contains("by_type={other: 1}"), "{line}");
+        assert!(!line.contains("注入"), "{line}");
+        let displayed = &rows[0]
+            .locator
+            .chars()
+            .take(ANNEX_LOCATOR_CAP)
+            .collect::<String>();
+        assert!(line.contains(displayed), "{line}");
+        assert!(!line.contains(&"L".repeat(120)), "{line}");
+        assert_eq!(ANNEX_LOCATOR_CAP, 80);
+    }
+
+    /// 四型真源一致性钉：validators 的 LEAD_TYPE_WHITELIST 指认 leads::LEAD_TYPES
+    /// （MXA-7 登记合轴：类型闸声明单源化）。
+    #[test]
+    fn lead_types_single_source_pinned() {
+        assert_eq!(crate::agent::validators::LEAD_TYPE_WHITELIST, LEAD_TYPES);
     }
 }

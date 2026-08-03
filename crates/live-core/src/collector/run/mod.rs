@@ -20,11 +20,12 @@ use crate::episodes::now_iso;
 use crate::storage;
 
 pub(crate) mod enrich;
-pub mod leads;
+// MXA-9（r5-F1）：crate 内私有，与兄弟模块同纪律——外部消费者零（M5 CLI 需要时再开）。
+pub(crate) mod leads;
 pub(crate) mod room;
 pub(crate) mod viewer;
 
-pub use leads::{consume_approved_leads, fetch_lead_yield};
+use leads::{consume_approved_leads, fetch_lead_yield};
 
 pub(crate) use enrich::*;
 pub(crate) use room::*;
