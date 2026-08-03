@@ -134,6 +134,22 @@ pub struct ViewerAction {
     pub risk: String,
 }
 
+/// 采集线索（§M4.x 薄切，G1 提前出生：schema + 校验随 M3 终局协议进入；
+/// 程序侧账本/消费在 M4.x）。`type` 白名单与 locator 形态校验在 validators 层。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct Lead {
+    /// search | creator | video | room
+    #[serde(rename = "type")]
+    pub lead_type: String,
+    pub locator: String,
+    pub motivation: String,
+    pub expected_signal: String,
+    pub priority: String,
+    #[serde(default)]
+    pub evidence_ids: Vec<String>,
+}
+
 /// 观众级终局提交（`submit_viewer_perception` 的参数）。
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -162,6 +178,8 @@ pub struct ViewerPerceptionSubmission {
     pub enrichment_targets: Vec<String>,
     #[serde(default)]
     pub cautions: Vec<String>,
+    #[serde(default)]
+    pub leads: Vec<Lead>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
@@ -325,6 +343,20 @@ pub struct AudienceSituationSubmission {
     pub data_gaps: Vec<String>,
     #[serde(default)]
     pub safety_notes: Vec<String>,
+    #[serde(default)]
+    pub leads: Vec<Lead>,
+}
+
+/// agent-check 探针提交（Python ai_models.ProbeResult 契约：get_probe_seed /
+/// multiply_probe_seed / submit_probe_result 三工具的唯一终局）。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProbeResult {
+    pub a: i64,
+    pub b: i64,
+    pub total: i64,
+    #[serde(default)]
+    pub note: String,
 }
 
 #[cfg(test)]
@@ -402,5 +434,25 @@ mod tests {
         assert_eq!(confidence_word_score("中"), 0.5);
         assert_eq!(confidence_word_score("低"), 0.2);
         assert_eq!(confidence_word_score("未知词"), 0.2);
+    }
+
+    #[test]
+    fn probe_result_and_lead_models() {
+        // Python 契约：note 默认 ""（ai_models.py:259 行 family）
+        let probe: ProbeResult = serde_json::from_str(r#"{"a":7,"b":14,"total":21}"#).unwrap();
+        assert_eq!(probe.note, "");
+        // Lead 的 JSON 键是 "type"；leads 在两份终局提交上均默认空
+        let lead: Lead = serde_json::from_str(
+            r#"{"type":"search","locator":"某位 vtuber 切片","motivation":"m","expected_signal":"s","priority":"low"}"#,
+        )
+        .unwrap();
+        assert_eq!(lead.lead_type, "search");
+        assert!(lead.evidence_ids.is_empty());
+        let viewer: ViewerPerceptionSubmission =
+            serde_json::from_str(r#"{"viewer_id":"v","profile_summary":"x"}"#).unwrap();
+        assert!(viewer.leads.is_empty());
+        let audience: AudienceSituationSubmission =
+            serde_json::from_str(r#"{"executive_summary":"x"}"#).unwrap();
+        assert!(audience.leads.is_empty());
     }
 }

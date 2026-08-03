@@ -183,6 +183,7 @@ fn demo1_like_submission(viewer_id: &str) -> ViewerPerceptionSubmission {
         content_ideas: vec![],
         enrichment_targets: vec![],
         cautions: vec![],
+        leads: vec![],
     }
 }
 
