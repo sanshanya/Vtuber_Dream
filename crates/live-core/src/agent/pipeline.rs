@@ -412,6 +412,23 @@ fn progress_say(knobs: &PipelineKnobs<'_>, message: &str) {
     }
 }
 
+/// r3-F3：analysis 落盘剥「空 leads」——Python 模型 extra=forbid：键存在即拒；
+/// 空期双通（Rust serde 有 default 补齐、Python 无解码阻力）；非空 leads 是 M4.x
+/// 新能力，跨实现缓存复用本就有界（登记 design-Δ）。
+fn strip_empty_leads(mut analysis: Value) -> Value {
+    if analysis
+        .get("leads")
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty)
+    {
+        analysis
+            .as_object_mut()
+            .expect("analysis object")
+            .remove("leads");
+    }
+    analysis
+}
+
 /// D-4：缓存/runtime 载荷只落 Python 五键；tool_names 属进程内诊断。
 fn stats_json(stats: &RuntimeStats) -> Value {
     json!({
@@ -639,7 +656,8 @@ async fn run_one_viewer(
                     "terminal_tool": "submit_viewer_perception",
                     "elapsed_seconds": elapsed,
                     "runtime": runtime_payload,
-                    "analysis": payload,
+                    // r3-F3：空 leads 剥键（Python extra=forbid——键存在即拒）。
+                    "analysis": strip_empty_leads(payload.clone()),
                 }),
             );
             (
@@ -804,7 +822,7 @@ async fn run_audience_stage(
                     "terminal_tool": "submit_audience_situation",
                     "elapsed_seconds": elapsed,
                     "runtime": runtime_payload,
-                    "analysis": overall,
+                    "analysis": strip_empty_leads(overall.clone()),
                 }),
             )
             .map_err(PipelineError::Storage);

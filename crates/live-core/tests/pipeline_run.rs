@@ -372,6 +372,24 @@ async fn pipeline_green_path_and_fence_order() {
     let runtime = cache["runtime"].as_object().unwrap();
     assert_eq!(runtime.len(), 5, "D-4 五键 parity，实际：{runtime:?}");
     assert!(runtime.get("tool_names").is_none());
+    // r3-F3：空 leads 不落盘（Python extra=forbid——键存在即拒；空期双向复用）。
+    assert!(
+        cache["analysis"]
+            .as_object()
+            .unwrap()
+            .get("leads")
+            .is_none(),
+        "空 leads 必须剥键"
+    );
+    let situation = read(&tmp.path().join("ai/situation.json"));
+    assert!(
+        situation["analysis"]
+            .as_object()
+            .unwrap()
+            .get("leads")
+            .is_none(),
+        "audience 同剥"
+    );
     // 栅栏：mentions rowid 序 = viewer_ids 序（g1 慢后完成仍先应用）
     let store = open_store(tmp.path());
     let mut stmt = store
