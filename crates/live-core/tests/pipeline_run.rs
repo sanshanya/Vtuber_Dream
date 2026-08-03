@@ -676,3 +676,110 @@ fn audience_apply_idempotent() {
     );
     assert_eq!((n1, e1), (n2, e2));
 }
+
+// ---------------------------------------------------------------------------
+// 8. 评审 M-B：恢复重校验的 search 闭包 = 子实例磁盘回填注册表（非空集）
+//    剧本：绿跑 → 手工给两观众缓存的 action 挂 sr 引用 + research_cache.json 落该 sr
+//    → 重跑：只挂 audience mock；viewers 全复用（Empty 闭包时代的旧行为 = 必拒必重跑）。
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resume_reuses_cache_referencing_backfilled_search_result() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    mount_audience_ok(&server, &["g1", "g2"]).await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut PipelineKnobs::default(),
+    )
+    .await
+    .expect("first green run");
+
+    // 注入：缓存 action 引用一个「上运行发现并已归档」的 sr
+    const SR: &str = "0123456789abcdef";
+    for uid in ["g1", "g2"] {
+        let cache_path = tmp.path().join(format!("ai/perception/viewers/{uid}.json"));
+        let mut cache = read(&cache_path);
+        cache["analysis"]["conversation_openers"] = json!([{
+            "title": "复用检索证据的开场",
+            "detail": "引用上运行归档搜索结果",
+            "evidence_mention_ids": [],
+            "search_result_ids": [SR],
+            "observation_metrics": [],
+            "risk": ""
+        }]);
+        std::fs::write(&cache_path, serde_json::to_string_pretty(&cache).unwrap()).unwrap();
+    }
+    std::fs::write(
+        tmp.path().join("ai/research_cache.json"),
+        serde_json::to_string_pretty(&json!({
+            "searches": {"异环": [{
+                "result_id": SR,
+                "query": "异环",
+                "title": "异环官方账号",
+                "bvid": "BV1demo",
+                "url": "https://www.bilibili.com/video/BV1demo"
+            }]},
+            "videos": {}
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    // 重跑：situation.json 的 analysis 不引用 sr（仅观众侧引用）——audience 缓存也复用，
+    // 零 LLM 挂载；任何请求 404 只会让 run 直接失败。
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut PipelineKnobs::default(),
+    )
+    .await
+    .expect("恢复路径必须复用引用已归档 sr 的缓存");
+    let state = read(&tmp.path().join("ai/state.json"));
+    assert_eq!(state["status"], "complete");
+}
+
+// ---------------------------------------------------------------------------
+// 9. 评审 M-A：兜底伞 —— begin_run 前的结构性失败也写 failed 七键 state
+//    （Python except BaseException：graph_repo=None → 跳过 fail_run，仍写 state）
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn store_open_failure_umbrella_writes_failed_state() {
+    let (tmp, analysis) = setup_root().await;
+    // graph/ 被占位为普通文件 → Store::open 必败（Python parity：进 umbrella，run_id=None）。
+    std::fs::write(tmp.path().join("graph"), b"not a directory").unwrap();
+    let err = run_pipeline(
+        test_config(tmp.path(), "http://127.0.0.1:9", true),
+        &analysis,
+        false,
+        &mut PipelineKnobs::default(),
+    )
+    .await
+    .expect_err("must fail");
+    assert!(err.to_string().contains("store"), "err={err}");
+    let state = read(&tmp.path().join("ai/state.json"));
+    assert_eq!(state["status"], "failed");
+    assert_eq!(state["viewer_stage_status"], "incomplete");
+    assert!(state["graph_run_id"].is_null(), "run 未出生 → null");
+    assert_eq!(state["viewer_input_hashes"].as_object().unwrap().len(), 2);
+    assert!(state["error"].as_str().unwrap().contains("store"));
+}

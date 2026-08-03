@@ -504,17 +504,32 @@ async fn run_one_viewer(
         && let Ok(submission) =
             serde_json::from_value::<ViewerPerceptionSubmission>(cached["analysis"].clone())
     {
-        let child_store = {
+        let revalidated = {
             let graph_file_ref = graph_file.clone();
             let uid_ref = uid.clone();
             let episodes_ref = episodes.clone();
+            let config_ref = config.clone();
+            let origin_ref = origin.clone();
             tokio::task::spawn_blocking(move || {
                 let store = Store::open(&graph_file_ref).map_err(|err| err.to_string())?;
                 let entity_exists =
                     |candidate: &str| store.entity_exists(candidate).unwrap_or(false);
-                // Python：当前运行共享注册表；子实例起点 = 同磁盘视图（等价闭包）。
+                // r2-F3/r3-F2（评审双坐实）：Python 传共享 research 的注册表，其 ctor 从
+                // research_cache.json 回填——闭包必须是「子实例磁盘视图」（含上运行归档 +
+                // 本运行已落盘发现），不是空集。
+                let client = new_client(
+                    &config_ref,
+                    origin_ref.as_ref().map(|(a, l)| (a.as_str(), l.as_str())),
+                )
+                .map_err(|err| err.to_string())?;
+                let research = ResearchService::new(
+                    &config_ref.output_dir,
+                    client,
+                    config_ref.ai.search_results_per_query,
+                )
+                .with_persistence(false);
                 let search_ids: std::collections::HashSet<String> =
-                    std::collections::HashSet::new();
+                    research.search_results.keys().cloned().collect();
                 Ok::<Vec<String>, String>(validate_viewer_submission(
                     &submission,
                     &uid_ref,
@@ -526,7 +541,7 @@ async fn run_one_viewer(
             .await
             .expect("spawn join")
         };
-        if let Ok(errors) = child_store
+        if let Ok(errors) = revalidated
             && errors.is_empty()
         {
             return (uid, ViewerStage::Reused(cached["analysis"].clone()));
@@ -818,29 +833,44 @@ fn utc_now() -> String {
         .to_string()
 }
 
-/// Python except BaseException 段：fail_run(aborted=false) + state failed。
+/// Python except BaseException 段（兜底伞）：fail_run + failed/interrupted 七键 state。
+/// run_id=None 时跳过 fail_run（Python：graph_repo=None 不落 fail 行，state 照写）。
 fn fail_run_and_state(
     config: &Config,
     state_path: &Path,
     viewer_input_hashes: &Map<String, Value>,
-    store: &Store,
-    run_id: &str,
-    error: &dyn std::fmt::Display,
+    run_id: Option<&str>,
+    error: &str,
     viewer_stage_complete: bool,
+    interrupted: bool,
 ) {
-    let _ = store.fail_run(run_id, &error.to_string(), false);
+    if let Some(run_id) = run_id
+        && let Ok(store) = Store::open(&graph_file(&config.output_dir))
+    {
+        // aborted=非 Exception 型：Rust 一切 Err 皆「Exception 等价」→ false；
+        // 唯一 true 的来源是 ctrl-c（KeyboardInterrupt 同型物，D-3）。
+        let _ = store.fail_run(run_id, error, interrupted);
+    }
     let _ = write_state(
         state_path,
         json!({
-            "status": "failed",
+            "status": if interrupted { "interrupted" } else { "failed" },
             "viewer_stage_status": if viewer_stage_complete { "complete" } else { "incomplete" },
             "updated_at": utc_now(),
             "model": config.ai.model,
-            "error": error.to_string(),
+            "error": error,
             "viewer_input_hashes": viewer_input_hashes,
             "graph_run_id": run_id,
         }),
     );
+}
+
+/// 兜底伞状态便签：inner 逐段点亮，outer 在任意 Err 上完成 Python except 段的收场。
+#[derive(Default)]
+struct UmbrellaNote {
+    run_id: Option<String>,
+    viewer_stage_complete: bool,
+    viewer_input_hashes: Map<String, Value>,
 }
 
 /// 主体（Python `run_async`）。ctrl-c → aborted=true 收尾（D-3）。
@@ -854,28 +884,64 @@ pub async fn run_pipeline(
         AgentRuntime::from_ai_config(&config.ai)
             .map_err(|err| PipelineError::Message(err.to_string()))?,
     );
-    let inner = run_pipeline_inner(&config, analysis, force, knobs, &runtime);
+    // Python 次序：research(master) 在 begin_graph_run 之前构造；其失败走裸传播（不 umbrella）。
+    // 含 blocking client → 构造与处置都走 spawn_blocking（D-2）。
+    let master = {
+        let (root, cfg, origin) = (
+            config.output_dir.clone(),
+            config.clone(),
+            knobs.bilibili_origin.clone(),
+        );
+        tokio::task::spawn_blocking(move || {
+            let client = new_client(&cfg, origin.as_ref().map(|(a, l)| (a.as_str(), l.as_str())))
+                .map_err(|err| err.to_string())?;
+            Ok::<ResearchService, String>(ResearchService::new(
+                &root,
+                client,
+                cfg.ai.search_results_per_query,
+            ))
+        })
+        .await
+        .expect("spawn join")
+        .map_err(PipelineError::Message)?
+    };
+    let inner = run_pipeline_inner(&config, analysis, force, knobs, &runtime, master);
     tokio::select! {
-        result = inner => result,
+        (result, master) = inner => {
+            tokio::task::spawn_blocking(move || drop(master))
+                .await
+                .expect("spawn join");
+            result
+        }
         _ = tokio::signal::ctrl_c() => {
+            // M-D（评审）：interrupted 也写满七键；error = Python str(KeyboardInterrupt()) → 空串。
             let state_path = config.output_dir.join("ai").join("state.json");
-            if let Ok(Some(existing)) = storage::read_json(&state_path)
-                && let Some(run_id) = existing.get("graph_run_id").and_then(Value::as_str)
-            {
-                if let Ok(store) = Store::open(&graph_file(&config.output_dir)) {
-                    let _ = store.fail_run(run_id, "KeyboardInterrupt", true);
-                }
-                let _ = write_state(
-                    &state_path,
-                    json!({
-                        "status": "interrupted",
-                        "updated_at": utc_now(),
-                        "model": config.ai.model,
-                        "error": "KeyboardInterrupt",
-                        "graph_run_id": run_id,
-                    }),
-                );
-            }
+            let existing = storage::read_json(&state_path).ok().flatten();
+            let viewer_stage_complete =
+                existing.as_ref().and_then(|s| s.get("status")).and_then(Value::as_str)
+                    == Some("viewer_complete");
+            let viewer_input_hashes = existing
+                .as_ref()
+                .and_then(|s| s.get("viewer_input_hashes"))
+                .and_then(Value::as_object)
+                .cloned()
+                .unwrap_or_default();
+            let run_id = existing
+                .as_ref()
+                .and_then(|s| s.get("graph_run_id"))
+                .and_then(Value::as_str)
+                .map(str::to_string);
+            fail_run_and_state(
+                &config,
+                &state_path,
+                &viewer_input_hashes,
+                run_id.as_deref(),
+                "",
+                viewer_stage_complete,
+                true,
+            );
+            // 注意：被丢弃的 inner future 内含 master（blocking client）——M3 钉死的红线
+            // 是「构造」而非「drop」，此处非显式 spawn_blocking 处置属已知边界。
             Err(PipelineError::Message("KeyboardInterrupt".to_string()))
         }
     }
@@ -887,11 +953,17 @@ async fn run_pipeline_inner(
     force: bool,
     knobs: &mut PipelineKnobs<'_>,
     runtime: &Arc<AgentRuntime>,
-) -> Result<Value, PipelineError> {
+    master: ResearchService,
+) -> (Result<Value, PipelineError>, ResearchService) {
     let root = config.output_dir.clone();
     let ai_root = root.join("ai");
     let viewer_cache_dir = ai_root.join("perception").join("viewers");
-    std::fs::create_dir_all(&viewer_cache_dir).map_err(|err| err.to_string())?;
+    let state_path = ai_root.join("state.json");
+
+    // ── Python try 之前的面（prep 段裸传播：不 umbrella、不写 state）──
+    if let Err(err) = std::fs::create_dir_all(&viewer_cache_dir).map_err(|err| err.to_string()) {
+        return (Err(PipelineError::Message(err)), master);
+    }
     if force {
         if let Ok(entries) = std::fs::read_dir(&viewer_cache_dir) {
             for entry in entries.flatten() {
@@ -902,15 +974,17 @@ async fn run_pipeline_inner(
         }
         let _ = std::fs::remove_file(ai_root.join("research_cache.json"));
     }
-    let state_path = ai_root.join("state.json");
-    let raw_viewers: Map<String, Value> = load_viewers(&root)
-        .map_err(PipelineError::Storage)?
-        .into_iter()
-        .filter_map(|viewer| {
-            let id = viewer["viewer"]["id"].as_str()?.to_string();
-            Some((id, viewer))
-        })
-        .collect();
+    let raw_viewers: Map<String, Value> = match load_viewers(&root).map_err(PipelineError::Storage)
+    {
+        Ok(result) => result
+            .into_iter()
+            .filter_map(|viewer| {
+                let id = viewer["viewer"]["id"].as_str()?.to_string();
+                Some((id, viewer))
+            })
+            .collect(),
+        Err(err) => return (Err(err), master),
+    };
     let baseline_profiles: Vec<Value> = analysis
         .get("viewer_profiles")
         .and_then(Value::as_array)
@@ -946,12 +1020,41 @@ async fn run_pipeline_inner(
         .iter()
         .map(|(uid, bundle)| (uid.clone(), json!(bundle.input_hash.clone())))
         .collect();
+    // ── try 段（Python except BaseException 的承保域）──
+    let mut note = UmbrellaNote {
+        run_id: None,
+        viewer_stage_complete: false,
+        viewer_input_hashes: viewer_input_hashes.clone(),
+    };
+    let mut master = Some(master);
+    macro_rules! bail {
+        ($err:expr) => {{
+            let err: PipelineError = $err;
+            fail_run_and_state(
+                config,
+                &state_path,
+                &note.viewer_input_hashes,
+                note.run_id.as_deref(),
+                &err.to_string(),
+                note.viewer_stage_complete,
+                false,
+            );
+            return (Err(err), master.take().expect("master 归还"));
+        }};
+    }
     let run_started_at = utc_now();
     let graph_file = graph_file(&root);
-    let store = Store::open(&graph_file)?;
-    let run_id = store.begin_run(&config.ai.model)?;
+    let store = match Store::open(&graph_file) {
+        Ok(store) => store,
+        Err(err) => bail!(PipelineError::Store(err)),
+    };
+    let run_id = match store.begin_run(&config.ai.model) {
+        Ok(run_id) => run_id,
+        Err(err) => bail!(PipelineError::Store(err)),
+    };
+    note.run_id = Some(run_id.clone());
     progress_say(knobs, "[GRAPH] 写入Episode、Mention、Entity和兴趣状态");
-    write_state(
+    match write_state(
         &state_path,
         json!({
             "status": "running",
@@ -961,23 +1064,11 @@ async fn run_pipeline_inner(
             "viewer_input_hashes": viewer_input_hashes,
             "graph_run_id": run_id,
         }),
-    )?;
-    // master research（扇出前构造；absorb 归宿；含 blocking client → 全程 spawn_blocking 处置）。
-    let mut master = {
-        let (root_c, cfg, origin) = (root.clone(), config.clone(), knobs.bilibili_origin.clone());
-        tokio::task::spawn_blocking(move || {
-            let client = new_client(&cfg, origin.as_ref().map(|(a, l)| (a.as_str(), l.as_str())))
-                .map_err(|err| err.to_string())?;
-            Ok::<ResearchService, String>(ResearchService::new(
-                &root_c,
-                client,
-                cfg.ai.search_results_per_query,
-            ))
-        })
-        .await
-        .expect("spawn join")
-        .map_err(PipelineError::Message)?
-    };
+    ) {
+        Ok(()) => {}
+        Err(err) => bail!(err),
+    }
+    // master 由 run_pipeline 传入（Python 次序：research 先于 begin_graph_run）。
     // 并发扇出 + 有序应用栅栏
     let semaphore = Arc::new(Semaphore::new(INVESTIGATE_CONCURRENCY));
     let mut set: tokio::task::JoinSet<(String, ViewerStage)> = tokio::task::JoinSet::new();
@@ -1037,7 +1128,10 @@ async fn run_pipeline_inner(
         };
         let analysis = match stage {
             ViewerStage::Ok(out) => {
-                master.absorb_from(&out.child);
+                master
+                    .as_mut()
+                    .expect("master 在场")
+                    .absorb_from(&out.child);
                 let child = out.child;
                 tokio::task::spawn_blocking(move || drop(child))
                     .await
@@ -1106,23 +1200,11 @@ async fn run_pipeline_inner(
         }
     }
     if viewer_submissions.is_empty() {
-        fail_run_and_state(
-            config,
-            &state_path,
-            &viewer_input_hashes,
-            &store,
-            &run_id,
-            &"all viewer Perception or graph applies failed",
-            false,
-        );
-        tokio::task::spawn_blocking(move || drop(master))
-            .await
-            .expect("spawn join");
-        return Err(PipelineError::Message(
+        bail!(PipelineError::Message(
             "all viewer Perception or graph applies failed".to_string(),
         ));
     }
-    let graph_context = project(
+    let graph_context = match project(
         &store,
         &ProjectOptions {
             include_episodes: false,
@@ -1133,7 +1215,10 @@ async fn run_pipeline_inner(
             minimum_community_size: config.perception.minimum_community_size,
             ..ProjectOptions::default()
         },
-    )?;
+    ) {
+        Ok(context) => context,
+        Err(err) => bail!(PipelineError::Store(err)),
+    };
     let viewer_runtime: Vec<Value> = viewer_submissions
         .keys()
         .filter_map(|uid| {
@@ -1145,7 +1230,7 @@ async fn run_pipeline_inner(
         })
         .collect();
     let viewer_count = viewer_submissions.len() as i64;
-    write_state(
+    match write_state(
         &state_path,
         json!({
             "status": "viewer_complete",
@@ -1158,35 +1243,27 @@ async fn run_pipeline_inner(
             "viewer_input_hashes": viewer_input_hashes,
             "graph_run_id": run_id,
         }),
-    )?;
-    let (audience, master) = run_audience_stage(
+    ) {
+        Ok(()) => {}
+        Err(err) => bail!(err),
+    }
+    // viewer 阶段收口标记：兜底伞 interrupted/failed 文案的 viewer_stage_status 数据源。
+    note.viewer_stage_complete = true;
+    let (audience, research) = run_audience_stage(
         analysis,
         &viewer_submissions,
         &graph_context,
-        master,
+        master.take().expect("master 在场"),
         config,
         runtime,
         knobs,
         force,
     )
     .await;
+    master = Some(research);
     let (overall, overall_runtime) = match audience {
         Ok(pair) => pair,
-        Err(err) => {
-            fail_run_and_state(
-                config,
-                &state_path,
-                &viewer_input_hashes,
-                &store,
-                &run_id,
-                &err,
-                true,
-            );
-            tokio::task::spawn_blocking(move || drop(master))
-                .await
-                .expect("spawn join");
-            return Err(err);
-        }
+        Err(err) => bail!(err),
     };
     // 回读 situation.json 的 input_hash（Python：丢了即 AgentRuntimeError）。
     let situation_input_hash = storage::read_json(&ai_root.join("situation.json"))
@@ -1201,44 +1278,22 @@ async fn run_pipeline_inner(
         })
         .unwrap_or_default();
     if situation_input_hash.is_empty() {
-        let err =
-            PipelineError::Message("completed Situation is missing its input hash".to_string());
-        fail_run_and_state(
-            config,
-            &state_path,
-            &viewer_input_hashes,
-            &store,
-            &run_id,
-            &err,
-            true,
-        );
-        tokio::task::spawn_blocking(move || drop(master))
-            .await
-            .expect("spawn join");
-        return Err(err);
+        bail!(PipelineError::Message(
+            "completed Situation is missing its input hash".to_string(),
+        ));
     }
     if let Some(audience_submission) =
         serde_json::from_value::<AudienceSituationSubmission>(overall.clone()).ok()
         && let Err(err) = build::apply_audience_submission(&store, &run_id, &audience_submission)
     {
-        let wrapped = PipelineError::Store(err);
-        fail_run_and_state(
-            config,
-            &state_path,
-            &viewer_input_hashes,
-            &store,
-            &run_id,
-            &wrapped,
-            true,
-        );
-        tokio::task::spawn_blocking(move || drop(master))
-            .await
-            .expect("spawn join");
-        return Err(wrapped);
+        bail!(PipelineError::Store(err));
     }
-    store.complete_run(&run_id)?;
+    match store.complete_run(&run_id) {
+        Ok(()) => {}
+        Err(err) => bail!(PipelineError::Store(err)),
+    }
     let usage = aggregate_runtime_usage(&viewer_runtime, &overall_runtime);
-    write_state(
+    match write_state(
         &state_path,
         json!({
             "status": "complete",
@@ -1251,7 +1306,11 @@ async fn run_pipeline_inner(
             // D-1（design-Δ）：token 成本一等公民入 state.json。
             "usage": usage,
         }),
-    )?;
+    ) {
+        Ok(()) => {}
+        Err(err) => bail!(err),
+    }
+    let search_result_count = master.as_ref().expect("master 归还").search_results.len() as i64;
     let final_result = json!({
         "status": "complete",
         "runtime": "openai-agents",
@@ -1261,12 +1320,9 @@ async fn run_pipeline_inner(
         "content_opportunity_count": overall["content_opportunities"]
             .as_array()
             .map_or(0, Vec::len) as i64,
-        "search_result_count": master.search_results.len() as i64,
+        "search_result_count": search_result_count,
         "graph": {"database": graph_file.display().to_string()},
         "usage": usage,
     });
-    tokio::task::spawn_blocking(move || drop(master))
-        .await
-        .expect("spawn join");
-    Ok(final_result)
+    (Ok(final_result), master.take().expect("master 归还"))
 }
