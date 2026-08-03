@@ -281,6 +281,22 @@ pub fn node_ref(
     None
 }
 
+/// 证据引用解析：AI 引用的 mention 必须存在于本次提交映射中。
+/// 未知引用 = 协议违规，显式报错（不静默丢弃，§6 校验规则）。
+fn resolve_evidence(
+    refs: &[String],
+    mention_id_map: &std::collections::HashMap<String, String>,
+) -> Result<Vec<String>> {
+    refs.iter()
+        .map(|item| {
+            mention_id_map
+                .get(item)
+                .cloned()
+                .ok_or_else(|| StoreError::Repo(format!("unresolvable evidence mention: {item}")))
+        })
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // 观众提交应用
 // ---------------------------------------------------------------------------
@@ -350,11 +366,7 @@ fn apply_viewer_inner(
     let mut resolution_by_local: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
     for proposal in &output.entities {
-        let evidence: Vec<String> = proposal
-            .evidence_mention_ids
-            .iter()
-            .filter_map(|item| mention_id_map.get(item).cloned())
-            .collect();
+        let evidence = resolve_evidence(&proposal.evidence_mention_ids, &mention_id_map)?;
         let (resolved, decision) = store.resolve_entity(proposal, run_id, viewer_id, &evidence)?;
         local_entities.insert(proposal.local_id.clone(), resolved);
         resolution_by_local.insert(proposal.local_id.clone(), decision);
@@ -379,11 +391,7 @@ fn apply_viewer_inner(
         if !store.entity_exists(&source)? {
             continue;
         }
-        let evidence: Vec<String> = proposal
-            .evidence_mention_ids
-            .iter()
-            .filter_map(|item| mention_id_map.get(item).cloned())
-            .collect();
+        let evidence = resolve_evidence(&proposal.evidence_mention_ids, &mention_id_map)?;
         for parent_ref in &proposal.parent_entity_refs {
             let parent = node_ref(parent_ref, &local_entities, viewer_id)
                 .ok_or_else(|| StoreError::Repo(format!("unresolvable node ref: {parent_ref}")))?;
@@ -415,11 +423,7 @@ fn apply_viewer_inner(
         } else {
             relation.predicate.as_str()
         };
-        let evidence: Vec<String> = relation
-            .evidence_mention_ids
-            .iter()
-            .filter_map(|item| mention_id_map.get(item).cloned())
-            .collect();
+        let evidence = resolve_evidence(&relation.evidence_mention_ids, &mention_id_map)?;
         store.upsert_edge(
             &subject,
             predicate,
@@ -466,6 +470,11 @@ fn apply_interest_states(
         let target = node_ref(&state.entity_ref, local_entities, viewer_id).ok_or_else(|| {
             StoreError::Repo(format!("unresolvable node ref: {}", state.entity_ref))
         })?;
+        if kept_targets.contains(&target) {
+            return Err(StoreError::Repo(format!(
+                "duplicate interest_state target: {target}"
+            )));
+        }
         kept_targets.push(target.clone());
         let props = serde_json::json!({
             "status": state.status,
@@ -481,11 +490,7 @@ fn apply_interest_states(
         {
             store.close_edge(&edge.edge_id, run_id, &store.now())?;
         }
-        let evidence: Vec<String> = state
-            .evidence_mention_ids
-            .iter()
-            .filter_map(|item| mention_id_map.get(item).cloned())
-            .collect();
+        let evidence = resolve_evidence(&state.evidence_mention_ids, mention_id_map)?;
         store.upsert_edge(
             &viewer_node,
             "INTERESTED_IN",

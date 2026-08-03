@@ -90,6 +90,9 @@ fn parse_json_field(map: &mut Map<String, Value>, column: &str) {
 // search_entities（移植 repo.search_entities）
 // ---------------------------------------------------------------------------
 
+/// Python parity：search_entities 结果上限（图谱查询全局上限 GRAPH_QUERY_LIMIT 的另一口径）。
+const SEARCH_ENTITIES_LIMIT: i64 = 100;
+
 pub fn search_entities(
     store: &Store,
     query: &str,
@@ -100,7 +103,7 @@ pub fn search_entities(
     if needle.is_empty() {
         return Ok(Vec::new());
     }
-    let bounded = limit.clamp(1, GRAPH_QUERY_LIMIT);
+    let bounded = limit.clamp(1, SEARCH_ENTITIES_LIMIT);
     let like = format!("%{needle}%");
     let rows = select_all(
         store,

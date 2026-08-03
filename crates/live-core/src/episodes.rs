@@ -301,7 +301,8 @@ fn parse_time(value: &Value) -> f64 {
     }
     let normalized = text.replace('Z', "+00:00");
     match chrono::DateTime::parse_from_rfc3339(&normalized) {
-        Ok(moment) => moment.timestamp() as f64,
+        // Python datetime.timestamp() 保留小数秒；用 millis 保留亚秒精度。
+        Ok(moment) => moment.timestamp_millis() as f64 / 1000.0,
         // Python fromisoformat 接受"YYYY-MM-DD HH:MM:SS"等更多形态；
         // 当前语料均为 RFC3339，分歧点注释在案（known-divergence）。
         Err(_) => 0.0,
@@ -387,21 +388,19 @@ pub fn viewer_evidence(viewer: &Value, max_evidence_per_viewer: usize) -> Vec<Va
             if !raw.is_object() {
                 continue;
             }
-            let source_type = {
-                let declared = py_str(get_value(raw, "source"));
-                if declared.is_empty() {
-                    source_name.trim_end_matches('s').to_string()
-                } else {
-                    declared
-                }
+            // Python parity: _evidence_id 哈希使用原始 raw.source / raw.title，
+            // 回退值仅用于展示字段，不得进入哈希槽位。
+            let raw_source = py_str(get_value(raw, "source"));
+            let raw_title = py_str(get_value(raw, "title"));
+            let source_type = if raw_source.is_empty() {
+                source_name.trim_end_matches('s').to_string()
+            } else {
+                raw_source.clone()
             };
-            let title_raw = {
-                let title = py_str(get_value(raw, "title"));
-                if title.is_empty() {
-                    py_str(get_value(raw, "creator_name"))
-                } else {
-                    title
-                }
+            let title_raw = if raw_title.is_empty() {
+                py_str(get_value(raw, "creator_name"))
+            } else {
+                raw_title.clone()
             };
             let category = match get_value(raw, "platform_category") {
                 Value::Object(map) => Value::Object(map.clone()),
@@ -412,10 +411,10 @@ pub fn viewer_evidence(viewer: &Value, max_evidence_per_viewer: usize) -> Vec<Va
                 "id".to_string(),
                 Value::String(evidence_id(
                     &uid,
-                    &source_type,
+                    &raw_source,
                     &py_str(get_value(raw, "id")),
                     &py_str(get_value(raw, "bvid")),
-                    &title_raw,
+                    &raw_title,
                     &py_str(get_value(raw, "url")),
                 )),
             );
@@ -653,15 +652,21 @@ pub fn evidence_to_episode(
         Value::String(py_str(get_value(evidence, "source_label"))),
     );
 
-    let source = {
-        let raw = py_str(get_value(evidence, "source"));
-        if raw.is_empty() {
-            "unknown".to_string()
-        } else {
-            raw
-        }
+    let raw_source = py_str(get_value(evidence, "source"));
+    // Python parity：source 回退为 "unknown"，event_type 独立回退为 "observation"。
+    let source = if raw_source.is_empty() {
+        "unknown".to_string()
+    } else {
+        raw_source.clone()
     };
-    let event_type = format!("public_{source}");
+    let event_type = format!(
+        "public_{}",
+        if raw_source.is_empty() {
+            "observation"
+        } else {
+            raw_source.as_str()
+        }
+    );
     let published_at = py_str(get_value(evidence, "published_at"));
     let title = source_text(get_value(evidence, "title"), 4_000);
     let url = source_text(get_value(evidence, "url"), 4_000);

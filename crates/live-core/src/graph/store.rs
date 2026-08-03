@@ -3,8 +3,10 @@
 //! schema v6（设计文档 §8.1）相对 v5 的**显式升级**：
 //! 1. 真实外键（edges→nodes、edges.run_id→graph_runs、mentions→episodes、
 //!    entity_aliases→entities）；
-//! 2. edges 增加 `viewer_id` 列（从 properties JSON 提升，纯索引用途；
-//!    properties_json 原样保留，保证仓库字节兼容）；
+//! 2. edges 增加 `viewer_id` 列：ai_semantic 边严格等于 properties.viewer_id
+//!    （v5 json_extract 语义的列化；缺失则为空，确保 close_missing 行为与 v5
+//!    逐边一致），其他 source_kind 从 source 的 `viewer:` 前缀派生供索引查询；
+//!    properties_json 原样保留不摘除，保证仓库字节兼容黄金样本；
 //! 3. TARGETS/ABOUT 等 action 边必带 confidence（见 build.rs）；
 //! 4. user_version=6，旧库沿用"删除重跑"政策，不做迁移。
 //!
@@ -507,8 +509,10 @@ impl Store {
                 24,
             )
         );
-        // viewer_id 列：ai_semantic 取 owner，否则 viewer: 前缀派生（纯索引用途）。
-        let viewer_column = if !owner_id.is_empty() {
+        // viewer_id 列口径（v5 json_extract 等价）：ai_semantic 严格等于
+        // properties.viewer_id（缺省为空——v5 中 json_extract 返回 NULL，不参与
+        // close_missing 匹配）；其他 source_kind 从 viewer: 前缀派生，供索引查询。
+        let viewer_column = if source_kind == "ai_semantic" {
             owner_id
         } else {
             source_id
