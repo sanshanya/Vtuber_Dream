@@ -65,6 +65,7 @@ async fn search_clamps_cache_hit_zero_request_and_snapshots() {
     Mock::given(method("GET"))
         .and(path("/x/web-interface/nav"))
         .respond_with(nav_stub())
+        .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -183,6 +184,7 @@ async fn search_tool_error_surface_returns_error_dict() {
     Mock::given(method("GET"))
         .and(path("/x/web-interface/nav"))
         .respond_with(nav_stub())
+        .expect(1)
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -365,6 +367,8 @@ fn viewer_analysis_found_not_found_and_episode_attachment() {
 
     let bare = (tool.handler)(&mut ctx, &json!({"viewer_id": "177"}));
     assert_eq!(bare["profile_summary"], "舰长甲");
+    // 原味钉：调用后原存档不得被附加 episodes 污染（Python test_partial_ai_reporting:574 同型）
+    assert!(ctx.viewer_analyses["177"].get("episodes").is_none());
     assert!(
         bare.get("episodes").is_none(),
         "默认不附带 episodes: {bare}"

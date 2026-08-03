@@ -2,13 +2,18 @@
 //! 普通单元测试依赖（AGENTS.md §8 真实端点条款）。
 //!
 //! 剧本 = Python agent-check 同型：probe 三工具（seed→multiply→terminal submit）。
-//! 断言：终局接受 a=7/b=14/total=21；reasoning 开启时第二个请求体里出现
-//! reasoning_content 回放（字段级确认，kickoff ①）。
+//! 断言面：终局接受 a=7/b=14/total=21。reasoning 回放的请求体字段级钉在 wiremock
+//! 剧本侧（agent_runtime/agent_golden）；真实网关无法捕获请求体，此处的确认方式是
+//! 「reasoning 开启 + replay 开启 + 多轮通关」端到端达成（kickoff ①的实战面）。
 
 use live_core::agent::probe::{ProbeContext, probe_spec};
 use live_core::agent::runtime::{AgentRuntime, AttemptPlan, Trace, run_toolcall_agent};
 use live_core::config::{AgentRuntimeConfig, AiConfig, ReasoningConfig};
 use live_core::models::ProbeResult;
+
+/// smoke 预算秒数（ji opt-in 任务不烧满 CI 默认超时；timeout_seconds=900 是单项 HTTP，
+/// attempts×turns 组合下病理上限远超任何 job 容忍，测试体自加 deadline）。
+const SMOKE_BUDGET_SECONDS: u64 = 600;
 
 fn ai_config(api_key: &str) -> AiConfig {
     AiConfig {
@@ -48,7 +53,7 @@ async fn deepseek_probe_smoke_opt_in() {
     let mut ctx = ProbeContext::new(7);
     let tmp = tempfile::tempdir().unwrap();
     let mut trace = Trace::new(Some(tmp.path().join("trace.jsonl")));
-    let outcome = run_toolcall_agent::<ProbeContext, ProbeResult>(
+    let run = run_toolcall_agent::<ProbeContext, ProbeResult>(
         &runtime,
         &mut spec,
         AttemptPlan {
@@ -60,9 +65,11 @@ async fn deepseek_probe_smoke_opt_in() {
         },
         &mut ctx,
         &mut trace,
-    )
-    .await
-    .expect("deepseek probe accepted");
+    );
+    let outcome = tokio::time::timeout(std::time::Duration::from_secs(SMOKE_BUDGET_SECONDS), run)
+        .await
+        .expect("smoke 超出预算秒数")
+        .expect("deepseek probe accepted");
     assert_eq!(outcome.final_output, "accepted");
     assert_eq!(outcome.submission.a, 7);
     assert_eq!(outcome.submission.b, 14);

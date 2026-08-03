@@ -12,106 +12,14 @@ use live_core::episodes::{Episode, EpisodeField};
 use live_core::graph::store::Store;
 use live_core::models::{AudienceSituationSubmission, ViewerPerceptionSubmission};
 use serde_json::{Value, json};
-use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
+use wiremock::MockServer;
 
 // ---------------------------------------------------------------------------
 // wiremock 剧本基建（与 agent_runtime.rs 同型；BodyPred 按回合 gate 请求体）
 // ---------------------------------------------------------------------------
 
-struct BodyPred<F>(F)
-where
-    F: Fn(&Value) -> bool + Send + Sync;
-
-impl<F> Match for BodyPred<F>
-where
-    F: Fn(&Value) -> bool + Send + Sync,
-{
-    fn matches(&self, request: &Request) -> bool {
-        match serde_json::from_slice::<Value>(&request.body) {
-            Ok(body) => (self.0)(&body),
-            Err(_) => false,
-        }
-    }
-}
-
-fn assistant_tool_call(id: &str, name: &str, args: Value, reasoning: Option<&str>) -> Value {
-    json!({
-        "id": format!("chatcmpl-{id}"),
-        "object": "chat.completion",
-        "created": 1_700_000_000,
-        "model": "custom-reasoning-model",
-        "choices": [{
-            "index": 0,
-            "message": {
-                "role": "assistant",
-                "content": null,
-                "reasoning_content": reasoning,
-                "tool_calls": [{
-                    "id": id,
-                    "type": "function",
-                    "function": {"name": name, "arguments": args.to_string()},
-                }],
-            },
-            "finish_reason": "tool_calls",
-        }],
-        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
-    })
-}
-
-async fn mount_turn(
-    server: &MockServer,
-    predicate: impl Fn(&Value) -> bool + Send + Sync + 'static,
-    response: Value,
-) {
-    Mock::given(wiremock::matchers::method("POST"))
-        .and(wiremock::matchers::path("/chat/completions"))
-        .and(BodyPred(predicate))
-        .respond_with(ResponseTemplate::new(200).set_body_json(response))
-        .expect(1)
-        .mount(server)
-        .await;
-}
-
-/// reasoning 归属钉（评审5-m2）：有 reasoning 的 assistant 消息必须紧跟自己 tool_calls 的结果。
-fn reasoning_attribution() -> impl Fn(&Value) -> bool + Send + Sync {
-    |body: &Value| {
-        body["messages"].as_array().is_some_and(|msgs| {
-            msgs.iter().enumerate().all(|(index, message)| {
-                if message["role"].as_str() != Some("assistant")
-                    || message["reasoning_content"].is_null()
-                {
-                    return true;
-                }
-                let id = message["tool_calls"][0]["id"].as_str();
-                id.is_some()
-                    && msgs.get(index + 1).is_some_and(|tool| {
-                        tool["role"].as_str() == Some("tool") && tool["tool_call_id"].as_str() == id
-                    })
-            })
-        })
-    }
-}
-
-/// parallel_tool_calls=false 的 wire 钉（评审5-m1；剧本计数 messages_len(2k) 的隐性前提）。
-fn parallel_calls_disabled() -> impl Fn(&Value) -> bool + Send + Sync {
-    |body: &Value| body["parallel_tool_calls"] == serde_json::Value::Bool(false)
-}
-
-fn replayed_reasoning(expect: &str) -> impl Fn(&Value) -> bool + Send + Sync + 'static {
-    let expect = expect.to_string();
-    move |body: &Value| {
-        body["messages"].as_array().is_some_and(|msgs| {
-            msgs.iter().any(|m| {
-                m["role"].as_str() == Some("assistant")
-                    && m["reasoning_content"].as_str() == Some(expect.as_str())
-            })
-        })
-    }
-}
-
-fn messages_len(n: usize) -> impl Fn(&Value) -> bool + Send + Sync + 'static {
-    move |body: &Value| body["messages"].as_array().is_some_and(|m| m.len() == n)
-}
+mod common;
+use common::*;
 
 // ---------------------------------------------------------------------------
 // 数据基建（与 agent_tools.rs 同型）
@@ -312,13 +220,16 @@ async fn golden_viewer_reject_then_accept() {
         }
     };
 
+    // 评审5-M2：断言前先取数再 spawn_drop——闭窗 blocking client 的 async unwind-drop。
+    let slot_value = ctx.slot.value.clone();
+    let slot_errors = ctx.slot.validation_errors.clone();
+    spawn_drop(ctx).await;
     assert_eq!(outcome.final_output, "accepted");
     assert_eq!(outcome.submission.viewer_id, "v1");
     assert_eq!(outcome.submission.entities.len(), 1);
     assert_eq!(outcome.submission.interest_states.len(), 1);
-    assert!(ctx.slot.value.is_some());
-    assert!(ctx.slot.validation_errors.is_empty());
-    let accepted = ctx.slot.value.clone().unwrap();
+    let accepted = slot_value.expect("终局接受必落槽");
+    assert!(slot_errors.is_empty());
     assert_eq!(accepted["entities"][0]["resolution"], json!("NEW_ENTITY"));
 
     drop(trace);
@@ -336,8 +247,6 @@ async fn golden_viewer_reject_then_accept() {
     // reasoning 内容永不入 trace（红线 R5）
     assert!(!trace_text.contains("先查实体候选"), "{trace_text}");
     assert!(!trace_text.contains("整理后提交初稿"), "{trace_text}");
-
-    spawn_drop(ctx).await;
 }
 
 /// ② audience：工具按需核验 → 一次提交接受。
@@ -474,9 +383,11 @@ async fn golden_audience_happy_path() {
         }
     };
 
+    let slot_value = ctx.slot.value.clone();
+    spawn_drop(ctx).await;
     assert_eq!(outcome.final_output, "accepted");
     assert_eq!(outcome.submission.interest_graph.len(), 1);
-    let accepted = ctx.slot.value.clone().unwrap();
+    let accepted = slot_value.expect("终局接受必落槽");
     assert_eq!(accepted["interest_graph"][0]["entity_id"], json!("ent1"));
     drop(trace);
     let trace_text = std::fs::read_to_string(&trace_path).unwrap();
@@ -485,8 +396,6 @@ async fn golden_audience_happy_path() {
         "{trace_text}"
     );
     assert!(!trace_text.contains("核验单人"), "{trace_text}");
-
-    spawn_drop(ctx).await;
 }
 
 /// 组装 parity：指令拼接 / 用户前缀 / 紧凑 JSON 与 Python `_json` 同形。
@@ -578,4 +487,13 @@ fn terminal_fatal_channel_on_store_failure() {
     // 槽位不污染：既有 value/errors 原样保留（Python validation_errors 不覆写语义）
     assert_eq!(ctx.slot.value, Some(json!({"legacy": "kept"})));
     assert_eq!(ctx.slot.validation_errors, vec!["kept".to_string()]);
+}
+
+/// graph m4：Send 界是 M4 并发装配的编译期钉。
+#[test]
+fn agent_tools_are_send_for_m4_concurrency() {
+    fn assert_send<T: Send>() {}
+    assert_send::<live_core::agent::runtime::AgentTool<ViewerAgentCtx>>();
+    assert_send::<live_core::agent::runtime::AgentTool<AudienceAgentCtx>>();
+    assert_send::<live_core::agent::runtime::AgentTool<live_core::agent::probe::ProbeContext>>();
 }

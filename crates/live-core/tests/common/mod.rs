@@ -1,0 +1,135 @@
+//! integration-test 共享剧本基建（评审5-n2：两份复制的漂移源收口）。
+//! agent_runtime.rs / agent_golden.rs 通过 `mod common;` 共用。
+
+#![allow(dead_code)]
+
+use serde_json::Value;
+use wiremock::{Match, Mock, MockServer, Request, ResponseTemplate};
+
+/// 请求体谓词匹配器（wiremock 同 path 叠 mock = 最早挂载优先，靠本谓词按回合 gate）。
+pub struct BodyPred<F>(pub F)
+where
+    F: Fn(&Value) -> bool + Send + Sync;
+
+impl<F> Match for BodyPred<F>
+where
+    F: Fn(&Value) -> bool + Send + Sync,
+{
+    fn matches(&self, request: &Request) -> bool {
+        match serde_json::from_slice::<Value>(&request.body) {
+            Ok(body) => (self.0)(&body),
+            Err(_) => false,
+        }
+    }
+}
+
+pub fn messages_len(n: usize) -> impl Fn(&Value) -> bool + Send + Sync + 'static {
+    move |body: &Value| body["messages"].as_array().is_some_and(|m| m.len() == n)
+}
+
+pub fn replayed_reasoning(expect: &str) -> impl Fn(&Value) -> bool + Send + Sync + 'static {
+    let expect = expect.to_string();
+    move |body: &Value| {
+        body["messages"].as_array().is_some_and(|msgs| {
+            msgs.iter().any(|m| {
+                m["role"].as_str() == Some("assistant")
+                    && m["reasoning_content"].as_str() == Some(expect.as_str())
+            })
+        })
+    }
+}
+
+/// 断言 assistant 历史消息中**全都不含** reasoning_content 键（剥离开关验证）。
+pub fn no_reasoning_replayed() -> impl Fn(&Value) -> bool + Send + Sync {
+    |body: &Value| {
+        body["messages"].as_array().is_some_and(|msgs| {
+            let assistants: Vec<&Value> = msgs
+                .iter()
+                .filter(|m| m["role"].as_str() == Some("assistant"))
+                .collect();
+            !assistants.is_empty()
+                && assistants
+                    .iter()
+                    .all(|m| m.get("reasoning_content").is_none())
+        })
+    }
+}
+
+/// reasoning 归属钉：有 reasoning 的 assistant 消息必须紧跟自己 tool_calls 的结果。
+pub fn reasoning_attribution() -> impl Fn(&Value) -> bool + Send + Sync {
+    |body: &Value| {
+        body["messages"].as_array().is_some_and(|msgs| {
+            msgs.iter().enumerate().all(|(index, message)| {
+                if message["role"].as_str() != Some("assistant")
+                    || message["reasoning_content"].is_null()
+                {
+                    return true;
+                }
+                let id = message["tool_calls"][0]["id"].as_str();
+                id.is_some()
+                    && msgs.get(index + 1).is_some_and(|tool| {
+                        tool["role"].as_str() == Some("tool") && tool["tool_call_id"].as_str() == id
+                    })
+            })
+        })
+    }
+}
+
+/// parallel_tool_calls=false 的 wire 钉（剧本计数 messages_len(2k) 的隐性前提）。
+pub fn parallel_calls_disabled() -> impl Fn(&Value) -> bool + Send + Sync {
+    |body: &Value| body["parallel_tool_calls"] == Value::Bool(false)
+}
+
+pub fn assistant_tool_call(id: &str, name: &str, args: Value, reasoning: Option<&str>) -> Value {
+    serde_json::json!({
+        "id": format!("chatcmpl-{id}"),
+        "object": "chat.completion",
+        "created": 1_700_000_000,
+        "model": "custom-reasoning-model",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": null,
+                "reasoning_content": reasoning,
+                "tool_calls": [{
+                    "id": id,
+                    "type": "function",
+                    "function": {"name": name, "arguments": args.to_string()},
+                }],
+            },
+            "finish_reason": "tool_calls",
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    })
+}
+
+pub fn assistant_text(text: &str) -> Value {
+    serde_json::json!({
+        "id": "chatcmpl-text",
+        "object": "chat.completion",
+        "created": 1_700_000_000,
+        "model": "custom-reasoning-model",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": text},
+            "finish_reason": "stop",
+        }],
+        "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+    })
+}
+
+/// 挂一个恰好被请求 1 次的回合 mock。
+pub async fn mount_turn(
+    server: &MockServer,
+    predicate: impl Fn(&Value) -> bool + Send + Sync + 'static,
+    response: Value,
+) {
+    Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .and(BodyPred(predicate))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .expect(1)
+        .mount(server)
+        .await;
+}

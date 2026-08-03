@@ -242,7 +242,9 @@ impl Trace {
 // Agent 规格、工具、终局槽位
 // ---------------------------------------------------------------------------
 
-pub type ToolHandler<C> = Box<dyn FnMut(&mut C, &Value) -> Value>;
+/// Send 界是 M4 pipeline 并发跑多个 viewer agent 的前置（review graph m4）。
+/// 闭包捕获均为 String 或无捕获，天然 Send；无此界则 run future 整体为非 Send。
+pub type ToolHandler<C> = Box<dyn FnMut(&mut C, &Value) -> Value + Send>;
 
 pub struct AgentTool<C> {
     pub name: String,
@@ -301,7 +303,7 @@ pub fn make_terminal_tool<C, S, V>(name: &str, description: &str, validator: V) 
 where
     C: RunCtx,
     S: for<'de> Deserialize<'de> + Serialize + schemars::JsonSchema + 'static,
-    V: Fn(&mut C, &S) -> TerminalOutcome + 'static,
+    V: Fn(&mut C, &S) -> TerminalOutcome + Send + 'static,
 {
     let schema = schemars::schema_for!(TerminalArgs<S>);
     AgentTool {
