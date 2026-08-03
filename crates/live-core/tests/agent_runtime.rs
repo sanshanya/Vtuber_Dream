@@ -496,6 +496,36 @@ async fn http_429_then_200_recovers_within_inner_retry() {
     assert_eq!(counter.load(Ordering::SeqCst), 2);
 }
 
+/// r1-M4：429 + 裸文本 body → 错误解析为 JSONDeserialize 形态 → 非瞬时 → 单次即败。
+/// 钉的是**现行**语义：状态码驱动的内层恢复只在 body 是 OpenAI 错误 JSON 时成立
+/// （对照 `http_429_then_200_recovers_within_inner_retry`）。与 Python httpx 状态码
+/// 驱动相左是已登记的偏差单（r1-M4，非 M4 引入），本钉防静默漂移。
+#[tokio::test(flavor = "multi_thread")]
+async fn http_429_bare_text_body_is_not_retried() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(ResponseTemplate::new(429).set_body_string("rate limit hit"))
+        .expect(1) // JSONDeserialize 非瞬时族 → 无内层重试
+        .mount(&server)
+        .await;
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let err = run_toolcall_agent::<ProbeContext, ProbeResult>(
+        &runtime,
+        &mut spec,
+        plan("开始", 4),
+        &mut ctx,
+        &mut trace,
+    )
+    .await
+    .expect_err("429 裸文本 body 按现行语义不可恢复");
+    let text = err.to_string();
+    assert!(text.contains("chat transport"), "{text}");
+    assert!(text.contains("1 attempts"), "{text}");
+}
+
 /// 协议 m5：forced 期间 dispatch 收窄——非终局名得 SDK 文本 not found 而后终局可成。
 #[tokio::test(flavor = "multi_thread")]
 async fn forced_dispatch_rejects_non_terminal_with_python_text() {

@@ -150,7 +150,7 @@ pub struct ResearchService {
     pub client: BilibiliClient,
     per_query_cap: i64,
     /// M4-C 多观众并发：子实例跳过 research_cache.json 落盘（写归宿 = master 在
-    /// viewer_ids 序 join 点 absorb_from+save；kickoff 补遗 D-11）。
+    /// viewer_ids 序 join 点 absorb_from——save 内嵌其中；kickoff 补遗 D-11）。
     persist: bool,
 }
 
@@ -219,11 +219,9 @@ impl ResearchService {
         self.save();
     }
 
-    /// pipeline 尽头显式持久化（尊重 persist 闸）。
-    pub fn save_now(&self) {
-        self.save();
-    }
-
+    /// 持久化时点 = 每次 record_search 与每次 absorb_from（r2-F7：曾宣称的
+    /// 「pipeline 尽头显式持久化/零调用方 save_now」注释漂移已删；崩溃窗口内
+    /// research_cache.json 滞后由修复7快照兜底，为书面化的现状语义）。
     fn save(&self) {
         if !self.persist {
             return;

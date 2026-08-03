@@ -521,3 +521,44 @@ async fn force_rerun_scoped_annex_and_ledger_deduped() {
         "{forced_g2}"
     );
 }
+
+/// r2-F8 钉：checkpoint 通道可失败——Err 必须吞掉记 progress，不打断本观众队列。
+#[tokio::test(flavor = "multi_thread")]
+async fn checkpoint_error_rings_progress_and_never_breaks_runs() {
+    use std::sync::{Arc, Mutex};
+    let (server, tmp, analysis) = setup().await;
+    mount_all(&server, tmp.path(), 1).await;
+    let messages: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(vec![]));
+    let sink = messages.clone();
+    let progress = move |msg: &str| sink.lock().unwrap().push(msg.to_string());
+    let mut checkpoint = || Err::<(), String>("报告刷新演示态失败".to_string());
+    let mut knobs = PipelineKnobs {
+        progress: Some(&progress),
+        checkpoint: Some(&mut checkpoint),
+        ..PipelineKnobs::default()
+    };
+    let result = run_pipeline(
+        test_config(tmp.path(), &server.uri()),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("checkpoint Err 不中断管线（r2-F8）");
+    assert_eq!(result["status"], "complete");
+    let captured = messages.lock().unwrap();
+    let rings: Vec<&String> = captured
+        .iter()
+        .filter(|m| m.contains("checkpoint 失败"))
+        .collect();
+    assert_eq!(
+        rings.len(),
+        2,
+        "双观众各一次 checkpoint 应用点 → 两声铃：{rings:?}"
+    );
+    assert!(
+        rings[0].contains("报告刷新演示态失败"),
+        "铃必须带登记错误文案：{}",
+        rings[0]
+    );
+}

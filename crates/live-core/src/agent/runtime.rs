@@ -7,7 +7,10 @@
 //!   `tool_choice` 具名强制重跑，forced max_turns 钳 [`FORCED_TURNS_MIN..=FORCED_TURNS_CAP`]；
 //!   两轮仍无 accepted → attempt 失败（`NoTerminal`）计入线性退避重试；
 //! - 重试：共 `retries+1` 次 attempt，线性退避 `backoff_seconds * attempt`；HTTP 层瞬时错
-//!   （timeout/connect/本轮发送失败）只在 `chat()` 内层 ≤[`HTTP_EXTRA_ATTEMPTS`] 次压住；
+//!   （timeout/connect/本轮发送失败/408/409/429/5xx）只在 `chat()` 内层 ≤[`HTTP_EXTRA_ATTEMPTS`]
+//!   次压住——429/5xx 形态恢复前提：body 是 OpenAI 错误 JSON；裸文本 body 解析为
+//!   JSONDeserialize 形态属非瞬时，单次即败（钉见 agent_runtime.rs）——与 Python
+//!   httpx 状态码驱动的差异已入偏差单（r1-M4）；
 //! - reasoning_content：BYO 消息结构体全程往返（回放上送）。`replay_reasoning=false` 时
 //!   落历史前剥离；**永不写入 trace**；
 //! - Trace：JSONL 元数据（time/event/agent/token 三元组/tool 名+tool_call_id/result_chars
@@ -401,6 +404,8 @@ impl AgentRuntime {
         // parity 红线：重试主权唯一属于 chat() 内层（HTTP_EXTRA_ATTEMPTS）。
         // 0.41.3 默认 ReqwestExecutor 内嵌 OpenAIRetryLayer(max_retries=3)——
         // 必须显式换成纯传输 ReqwestService，否则瞬时错请求数 ×4（M4-C 实测 12/agent）。
+        // r1-N1：with_http_service 只换 executor、不换 request_client——请求仍由内部
+        // 默认 client 构造；超时等行为唯一由本 service client 在 execute 阶段决定。
         Ok(Self::build(
             async_openai::Client::with_config(config)
                 .with_http_service(async_openai::middleware::ReqwestService::new(http)),
@@ -424,10 +429,15 @@ impl AgentRuntime {
             .with_api_base(base_url)
             .with_api_key("test");
         // 同 from_ai_config：禁默认 executor 隐藏重试层（见该处注释）。
+        // r1-M5：裸 client 必须有超时护栏——否则「挂起 server」剧本永不返回，
+        // 失真地挂死测试本体；30s 与现存 wiremock delay 剧本（毫秒级）相容。
+        let http = reqwest13::Client::builder()
+            .timeout(Duration::from_secs(30))
+            .build()
+            .expect("for_test client build");
         Self::build(
-            async_openai::Client::with_config(config).with_http_service(
-                async_openai::middleware::ReqwestService::new(reqwest13::Client::new()),
-            ),
+            async_openai::Client::with_config(config)
+                .with_http_service(async_openai::middleware::ReqwestService::new(http)),
             model,
             max_tokens,
             reasoning_enabled,

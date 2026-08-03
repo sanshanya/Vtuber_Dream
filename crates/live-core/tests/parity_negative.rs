@@ -588,3 +588,69 @@ fn episodes_readback_parses_json_fields_and_clamps_limit() {
     let empty = live_core::graph::query::episodes(&store, "ghost-viewer", None).unwrap();
     assert!(empty.is_empty(), "未知 viewer 回空集");
 }
+
+/// r5-FIND-1 记录测试（已知分叉，防误改）：应用层 upsert 保证活跃 (u,v) 唯一，
+/// project()/detect_communities 复刻 Python 时依赖此前提而不自行去重。
+/// 手工 SQL 注入重复活跃 INTERESTED_IN 边（正常路径不可造）时：
+/// - project 导出的 edges 保留两行（不做 networkx add_edge 式折叠）；
+/// - detect_communities 对同一 pair 的权重累加后照常合并（Python 则只取最后权重）。
+/// - detect_communities 对同一 pair 的权重累加后照常合并（Python 则只取最后权重）。
+///
+/// 若未来实现改为「最后权重胜出」以拉近 parity，本测试必须同步改写。
+#[test]
+fn duplicate_active_edges_no_folding_documented() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = Store::open(&tmp.path().join("g.sqlite3")).expect("store opens");
+    store
+        .conn
+        .execute(
+            "INSERT INTO graph_runs(run_id, started_at) VALUES('run-1','2026-08-01T00:00:00')",
+            [],
+        )
+        .unwrap();
+    for (id, t) in [("viewer:v1", "Viewer"), ("entity:e1", "Entity")] {
+        store
+            .conn
+            .execute(
+                "INSERT INTO nodes(node_id,node_type,name,source_kind,first_seen_at,last_seen_at) \
+                 VALUES(?,?,?, 'ai_semantic','t','t')",
+                rusqlite::params![id, t, id],
+            )
+            .unwrap();
+    }
+    for (edge_id, confidence) in [("edge-1", 0.9), ("edge-2", 0.1)] {
+        store
+            .conn
+            .execute(
+                "INSERT INTO edges(edge_id,source_id,predicate,target_id,source_kind,confidence,\
+                 valid_from,first_seen_at,last_seen_at,run_id) \
+                 VALUES(?, 'viewer:v1','INTERESTED_IN','entity:e1','ai_semantic',?,'t','t','t','run-1')",
+                rusqlite::params![edge_id, confidence],
+            )
+            .unwrap();
+    }
+    let graph = live_core::graph::project::project(
+        &store,
+        &live_core::graph::project::ProjectOptions {
+            include_episodes: false,
+            include_interest_states: true,
+            include_situation_actions: false,
+            ..Default::default()
+        },
+    )
+    .expect("project builds");
+    let pairs: Vec<(&str, &str)> = graph["edges"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|e| e["predicate"] == "INTERESTED_IN")
+        .map(|e| (e["source"].as_str().unwrap(), e["target"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![("viewer:v1", "entity:e1"), ("viewer:v1", "entity:e1")],
+        "project 导出面不折叠重复活跃边（r5-FIND-1 登记）"
+    );
+    // 权重累加（0.9+0.1=1.0）下仍然正常合并为单社区——分叉点在聚合数值而非崩溃。
+    assert_eq!(graph["communities"].as_array().unwrap().len(), 1);
+}

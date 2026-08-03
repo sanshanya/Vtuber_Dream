@@ -400,7 +400,8 @@ pub struct PipelineKnobs<'a> {
     /// Python progress callback。
     pub progress: Option<&'a dyn Fn(&str)>,
     /// 每观众应用完成后的报告刷新（Python checkpoint=；M5 报告层真实接线）。
-    pub checkpoint: Option<&'a mut dyn FnMut()>,
+    /// r2-F8：通道可失败——Err 不穿透（Python 吞异常记 progress 同型）。
+    pub checkpoint: Option<&'a mut dyn FnMut() -> Result<(), String>>,
     /// 测试接缝：graph_failed 分支的确定性复现（默认 build::apply_viewer_submission）。
     pub apply_viewer: Option<&'a mut ApplyViewerFn<'a>>,
     /// 测试接缝：Bilibili 回放根地址（默认官方端点；调查工具发起网络时才消费）。
@@ -1243,7 +1244,10 @@ async fn run_pipeline_inner(
             progress_say(knobs, &format!("[LEADS] 观众 {uid} 账本写入失败：{err}"));
         }
         if let Some(checkpoint) = knobs.checkpoint.as_deref_mut() {
-            checkpoint();
+            // r2-F8：报告刷新失败必须与 Python 同型——吞掉记 progress，不打断管线。
+            if let Err(err) = checkpoint() {
+                progress_say(knobs, &format!("[AI] 观众 {uid} checkpoint 失败：{err}"));
+            }
         }
     }
     if viewer_submissions.is_empty() {

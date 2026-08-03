@@ -274,3 +274,94 @@ fn project_three_arms_situation_visibility() {
     assert_eq!(nodes_of(&built), ["ent-1", "sit-old", "viewer:v1"]);
     assert_eq!(edges_of(&built), ["e-state"]);
 }
+
+// ---------------------------------------------------------------------------
+// r5-FIND-6：community_id「先编号后过滤」跳号钉——networkx enumerate 在 continue
+// 之前发号；若误改为过滤后连续重排，本针必须红。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn communities_prefilter_numbering_gap_pinned() {
+    let node = |id: &str, t: &str| serde_json::json!({"id": id, "type": t, "name": id});
+    let interest = |u: &str, v: &str| {
+        serde_json::json!({
+            "source": u, "target": v, "predicate": "INTERESTED_IN", "confidence": 0.9
+        })
+    };
+    // 社区 A：viewer:v1 + 4 entity（尺寸 5，viewers=1 < 2）→ 编号 community:1 后被滤。
+    // 社区 B：viewer:v2/v3 + entity:e9（尺寸 3，viewers=2）→ 以原编号 community:2 留存。
+    let nodes = vec![
+        node("viewer:v1", "Viewer"),
+        node("entity:e1", "Entity"),
+        node("entity:e2", "Entity"),
+        node("entity:e3", "Entity"),
+        node("entity:e4", "Entity"),
+        node("viewer:v2", "Viewer"),
+        node("viewer:v3", "Viewer"),
+        node("entity:e9", "Entity"),
+    ];
+    let edges = vec![
+        interest("viewer:v1", "entity:e1"),
+        interest("viewer:v1", "entity:e2"),
+        interest("viewer:v1", "entity:e3"),
+        interest("viewer:v1", "entity:e4"),
+        interest("viewer:v2", "entity:e9"),
+        interest("viewer:v3", "entity:e9"),
+    ];
+    let communities = detect_communities(&nodes, &edges, 2);
+    assert_eq!(communities.len(), 1, "{communities:?}");
+    assert_eq!(
+        communities[0]["community_id"], "community:2",
+        "community:1 被 minimum_size 滤掉后编号缺口必须保留：{communities:?}"
+    );
+    assert_eq!(
+        communities[0]["viewer_ids"],
+        serde_json::json!(["v2", "v3"])
+    );
+    assert_eq!(
+        communities[0]["entity_ids"],
+        serde_json::json!(["entity:e9"])
+    );
+    assert_eq!(communities[0]["member_count"], 3);
+}
+
+// ---------------------------------------------------------------------------
+// r5-FIND-7：LIMIT 实际截断四类产出 + stats 联动 + 下钳 max(1) 钉
+// ---------------------------------------------------------------------------
+
+#[test]
+fn project_limit_truncates_all_sections_and_clamps_to_one() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = store_from_dump(tmp.path());
+    let args = load(&m4b().join("demo_project_args.json"));
+    let options = ProjectOptions {
+        include_episodes: false,
+        include_interest_states: true,
+        include_situation_actions: false,
+        current_run_id: args["current_run_id"].as_str().map(str::to_string),
+        limit: Some(2),
+        minimum_community_size: args["minimum_community_size"].as_i64().unwrap(),
+        ..ProjectOptions::default()
+    };
+    let graph = project(&store, &options).expect("project builds");
+    for section in ["nodes", "edges", "mentions", "interest_states"] {
+        assert_eq!(
+            graph[section].as_array().map(Vec::len),
+            Some(2),
+            "{section} 应被 limit=2 实际截断（联动 detect_communities 仅见截断输入）"
+        );
+    }
+    // stats.nodes/edges 取截断后列表长度（与库内真实计数分离的设计面）。
+    assert_eq!(graph["stats"]["nodes"], 2);
+    assert_eq!(graph["stats"]["edges"], 2);
+
+    // 下钳 max(1)：limit=0/负值不设下限会吞出全表，必须钳到 1。
+    let zero = ProjectOptions {
+        limit: Some(0),
+        ..options
+    };
+    let graph = project(&store, &zero).expect("project builds");
+    assert_eq!(graph["nodes"].as_array().map(Vec::len), Some(1));
+    assert_eq!(graph["edges"].as_array().map(Vec::len), Some(1));
+    assert_eq!(graph["mentions"].as_array().map(Vec::len), Some(1));
+}
