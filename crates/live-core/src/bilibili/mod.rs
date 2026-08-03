@@ -28,6 +28,8 @@ pub const BANGUMI_PAGE_CAP: i64 = 30;
 pub const HOT_SEARCHES_LIMIT_CAP: i64 = 50;
 pub const REPLIES_PAGE_CAP: i64 = 20;
 pub const RECORD_LIST_PAGE_CAP: i64 = 20;
+/// 搜索接口单页条数（Python `min(limit, 20)`，search/type 单页上限）。
+pub const SEARCH_VIDEOS_PAGE_SIZE: i64 = 20;
 
 /// Python HIDDEN_CODES：触发隐藏风控的 code 集合（collector 据此记 status="hidden"）。
 pub const HIDDEN_CODES: [i64; 4] = [22115, 53013, -403, 10005];

@@ -491,3 +491,86 @@ async fn videos_paginates_until_limit_or_short_page() {
     assert_eq!(rows.len(), 40, "videos 翻页到 limit 不截断");
     assert_eq!(rows[39]["bvid"], "BV39");
 }
+
+// ---------------------------------------------------------------------------
+// search_videos 复出负例（E 批次删除时约定：复出与消费者同生并带 wiremock 负例；
+// M3-B ResearchService 是该端点的首个消费者）
+// ---------------------------------------------------------------------------
+
+fn nav_stub() -> ResponseTemplate {
+    ResponseTemplate::new(200).set_body_json(json!({"code": 0, "data": {"wbi_img": {
+        "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+        "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6f01bf08b70ac45.png"
+    }}}))
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_videos_empty_keyword_makes_no_request() {
+    let server = MockServer::start().await;
+    // 不挂任何 mock：任何请求都会 404 → 早退证明零请求（Python: not keyword.strip() → []）。
+    let rows = call(server, |client| {
+        client.search_videos("   ", 10, "totalrank")
+    })
+    .await
+    .expect("empty keyword must short-circuit");
+    assert!(rows.is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_videos_api_error_surfaces_as_typed_error() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/nav"))
+        .respond_with(nav_stub())
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/wbi/search/type"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": -412, "message": "请求被拦截"})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let result = call(server, |client| {
+        client.search_videos("异环", 5, "totalrank")
+    })
+    .await;
+    assert!(
+        matches!(result, Err(BilibiliError::Api { code: -412, .. })),
+        "风控 code 必须归类 Api 错误: {result:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn search_videos_filters_junk_and_truncates_to_limit() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/nav"))
+        .respond_with(nav_stub())
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/wbi/search/type"))
+        .and(query_param("page_size", "2"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {"result": [
+                {"bvid": "BV1", "title": "a"},
+                "junk",
+                {"bvid": "BV2", "title": "b"},
+                {"bvid": "BV3", "title": "c"}
+            ]}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let rows = call(server, |client| client.search_videos("异环", 2, "pubdate"))
+        .await
+        .expect("search");
+    // 先滤非 dict（junk 不参与条数判定）再截断到 limit=2。
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0]["bvid"], "BV1");
+    assert_eq!(rows[1]["bvid"], "BV2");
+}

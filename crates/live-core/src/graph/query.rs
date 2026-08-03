@@ -207,3 +207,187 @@ pub fn episodes(store: &Store, viewer_id: &str, limit: Option<i64>) -> Result<Ve
     }
     Ok(result)
 }
+
+// ---------------------------------------------------------------------------
+// query（移植 repo.query——M1 删除时注明"M3 报告层/工具真实调用时复出"，
+// M3-B query_graph 工具出生，聚合视图随之复出；逐行对齐 Python graph.py:689）
+// ---------------------------------------------------------------------------
+
+fn rename_key(map: &mut Map<String, Value>, from: &str, to: &str) {
+    if let Some(value) = map.remove(from) {
+        map.insert(to.to_string(), value);
+    }
+}
+
+/// 聚合检索：nodes + 关联活跃 edges + 边证据 mentions。
+/// situation_run_id 存在时：Situation/Action 节点仅当它们在该运行中有活跃出边才可见。
+pub fn query(
+    store: &Store,
+    needle: &str,
+    node_types: &[String],
+    predicates: &[String],
+    limit: i64,
+    situation_run_id: Option<&str>,
+) -> Result<Value> {
+    let bounded = limit.clamp(1, GRAPH_QUERY_LIMIT);
+    let needle = needle.trim();
+
+    // ---- nodes ----
+    let mut node_where: Vec<String> = Vec::new();
+    let mut node_params: Vec<Sql> = Vec::new();
+    match situation_run_id {
+        Some(run_id) => {
+            node_where.push(
+                "(n.node_type NOT IN ('Situation','Action') OR EXISTS (\
+                    SELECT 1 FROM edges e \
+                    WHERE e.source_id=n.node_id AND e.valid_to IS NULL AND e.run_id=?))"
+                    .to_string(),
+            );
+            node_params.push(run_id.to_string().into());
+        }
+        None => node_where.push("n.node_type NOT IN ('Situation','Action')".to_string()),
+    }
+    let types: Vec<&str> = node_types
+        .iter()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|t| !t.is_empty())
+        .collect();
+    if !types.is_empty() {
+        node_where.push(format!(
+            "n.node_type IN ({})",
+            vec!["?"; types.len()].join(",")
+        ));
+        for t in &types {
+            node_params.push(t.to_string().into());
+        }
+    }
+    if !needle.is_empty() {
+        node_where
+            .push("(n.node_id LIKE ? OR n.name LIKE ? OR n.properties_json LIKE ?)".to_string());
+        let like = format!("%{needle}%");
+        node_params.extend([like.clone().into(), like.clone().into(), like.into()]);
+    }
+    let node_sql = format!(
+        "SELECT * FROM nodes n WHERE {} ORDER BY n.node_type,n.name",
+        node_where.join(" AND ")
+    );
+    let node_rows = fetch_all(store, &node_sql, node_params, Some(bounded))?;
+    let mut nodes: Vec<Value> = Vec::new();
+    let mut node_ids: Vec<String> = Vec::new();
+    for mut row in node_rows {
+        parse_json_field(&mut row, "properties_json");
+        rename_key(&mut row, "node_id", "id");
+        rename_key(&mut row, "node_type", "type");
+        if let Some(Value::String(id)) = row.get("id") {
+            node_ids.push(id.clone());
+        }
+        nodes.push(Value::Object(row));
+    }
+
+    // ---- edges ----
+    let mut edge_where: Vec<String> = vec!["e.valid_to IS NULL".to_string()];
+    let mut edge_params: Vec<Sql> = Vec::new();
+    match situation_run_id {
+        Some(run_id) => {
+            edge_where.push(
+                "NOT EXISTS (\
+                    SELECT 1 FROM nodes n \
+                    WHERE n.node_id IN (e.source_id,e.target_id) \
+                      AND n.node_type IN ('Situation','Action') \
+                      AND e.run_id<>?)"
+                    .to_string(),
+            );
+            edge_params.push(run_id.to_string().into());
+        }
+        None => edge_where.push(
+            "NOT EXISTS (\
+                SELECT 1 FROM nodes n \
+                WHERE n.node_id IN (e.source_id,e.target_id) \
+                  AND n.node_type IN ('Situation','Action'))"
+                .to_string(),
+        ),
+    }
+    let predicate_values: Vec<&str> = predicates
+        .iter()
+        .map(String::as_str)
+        .map(str::trim)
+        .filter(|p| !p.is_empty())
+        .collect();
+    if !predicate_values.is_empty() {
+        edge_where.push(format!(
+            "e.predicate IN ({})",
+            vec!["?"; predicate_values.len()].join(",")
+        ));
+        for p in &predicate_values {
+            edge_params.push(p.to_string().into());
+        }
+    }
+    let mut matches: Vec<String> = Vec::new();
+    if !needle.is_empty() {
+        matches.push("(e.predicate LIKE ? OR e.properties_json LIKE ?)".to_string());
+        let like = format!("%{needle}%");
+        edge_params.extend([like.clone().into(), like.into()]);
+    }
+    if !node_ids.is_empty() {
+        let placeholders = vec!["?"; node_ids.len()].join(",");
+        matches.push(format!(
+            "(e.source_id IN ({placeholders}) OR e.target_id IN ({placeholders}))"
+        ));
+        for id in &node_ids {
+            edge_params.push(id.clone().into());
+        }
+        for id in &node_ids {
+            edge_params.push(id.clone().into());
+        }
+    }
+    if !matches.is_empty() {
+        edge_where.push(format!("({})", matches.join(" OR ")));
+    }
+    let edge_sql = format!(
+        "SELECT * FROM edges e WHERE {} ORDER BY e.predicate,e.source_id,e.target_id",
+        edge_where.join(" AND ")
+    );
+    let edge_rows = fetch_all(store, &edge_sql, edge_params, Some(bounded))?;
+    let mut edges: Vec<Value> = Vec::new();
+    let mut evidence_ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    for mut row in edge_rows {
+        parse_json_field(&mut row, "properties_json");
+        parse_json_field(&mut row, "evidence_json");
+        rename_key(&mut row, "edge_id", "id");
+        rename_key(&mut row, "source_id", "source");
+        rename_key(&mut row, "target_id", "target");
+        rename_key(&mut row, "evidence", "evidence_ids");
+        if let Some(Value::Array(ids)) = row.get("evidence_ids") {
+            for id in ids.iter().filter_map(Value::as_str) {
+                if !id.is_empty() {
+                    evidence_ids.insert(id.to_string());
+                }
+            }
+        }
+        edges.push(Value::Object(row));
+    }
+
+    // ---- mentions（边证据回填，排序去重后截断到 bounded；Python sorted(set)[:limit]）----
+    let evidence_ids: Vec<String> = evidence_ids.into_iter().take(bounded as usize).collect();
+    let mut mentions: Vec<Value> = Vec::new();
+    if !evidence_ids.is_empty() {
+        let placeholders = vec!["?"; evidence_ids.len()].join(",");
+        let sql = format!("SELECT * FROM mentions WHERE mention_id IN ({placeholders})");
+        let rows = fetch_all(
+            store,
+            &sql,
+            evidence_ids.iter().cloned().map(Into::into).collect(),
+            Some(bounded),
+        )?;
+        for row in rows {
+            mentions.push(Value::Object(row));
+        }
+    }
+
+    Ok(serde_json::json!({
+        "nodes": nodes,
+        "edges": edges,
+        "mentions": mentions,
+    }))
+}

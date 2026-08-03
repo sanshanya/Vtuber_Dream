@@ -4,8 +4,8 @@ use serde_json::Value;
 
 use super::{
     BANGUMI_PAGE_CAP, BilibiliClient, BilibiliError, FAVORITE_ITEMS_PAGE_CAP, FOLLOWINGS_PAGE_CAP,
-    HOT_SEARCHES_LIMIT_CAP, RECORD_LIST_PAGE_CAP, REPLIES_PAGE_CAP, VIDEOS_PAGE_CAP, pick, py_int,
-    py_truth, take_items,
+    HOT_SEARCHES_LIMIT_CAP, RECORD_LIST_PAGE_CAP, REPLIES_PAGE_CAP, SEARCH_VIDEOS_PAGE_SIZE,
+    VIDEOS_PAGE_CAP, pick, py_int, py_truth, take_items,
 };
 
 impl BilibiliClient {
@@ -265,6 +265,39 @@ impl BilibiliClient {
         )?;
         let trending = data.get("trending").cloned().unwrap_or(Value::Null);
         Ok(take_items(trending.get("list"), limit))
+    }
+
+    /// 关键词搜索视频（wbi 签名）。E 批次删除时约定"复出时与消费者同生并带 wiremock
+    /// 负例"——M3 ResearchService 出生，端点复出（Python bilibili.py:436）。
+    pub fn search_videos(
+        &mut self,
+        keyword: &str,
+        limit: i64,
+        order: &str,
+    ) -> Result<Vec<Value>, BilibiliError> {
+        let keyword = keyword.trim();
+        if keyword.is_empty() || limit <= 0 {
+            return Ok(Vec::new());
+        }
+        let data = self.request(
+            &self.api_base.clone(),
+            "/x/web-interface/wbi/search/type",
+            &[
+                ("search_type".to_string(), Some("video".to_string())),
+                ("keyword".to_string(), Some(keyword.to_string())),
+                ("order".to_string(), Some(order.to_string())),
+                ("page".to_string(), Some("1".to_string())),
+                (
+                    "page_size".to_string(),
+                    Some(limit.min(SEARCH_VIDEOS_PAGE_SIZE).to_string()),
+                ),
+            ],
+            true,
+            Some(&format!(
+                "https://search.bilibili.com/all?keyword={keyword}"
+            )),
+        )?;
+        Ok(take_items(data.get("result"), limit))
     }
 
     pub fn video_detail(&mut self, bvid: &str) -> Result<Value, BilibiliError> {
