@@ -84,6 +84,7 @@ fn fixture() -> Fixture {
         registry: live_server::registry::Registry::new(),
         demo: true,
         data_root: Some(data_root),
+        bilibili_hosts: None,
     });
     Fixture { _tmp: tmp, app }
 }
@@ -245,6 +246,7 @@ async fn graph_endpoints_404_when_graph_absent() {
         registry: live_server::registry::Registry::new(),
         demo: false,
         data_root: None,
+        bilibili_hosts: None,
     });
     let (status, _body) = get(&app, "/api/rooms/983/graph").await;
     assert_eq!(status, 404);

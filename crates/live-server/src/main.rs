@@ -207,6 +207,8 @@ fn serve_command(config: PathBuf, port: u16, demo: bool, demo_root: Option<PathB
         web_root: PathBuf::from("web/dist"),
         demo,
         data_root: demo_root,
+        // 生产恒走官方端点；测试面由 AppState 同名 seam 注入 wiremock 根。
+        bilibili_hosts: None,
     }) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {

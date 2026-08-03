@@ -22,6 +22,8 @@ pub const DEFAULT_PORT: u16 = 3781;
 pub const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
 /// D9：PUT 单值长度上限。
 pub const MAX_PUT_VALUE_CHARS: usize = 4096;
+/// D9：POST runs 的 viewer_uid 长度上限（B 站 uid 为数字串，32 已富余）。
+pub const MAX_VIEWER_UID_CHARS: usize = 32;
 /// D6：允许的写入键白名单（(顶层段, 键)）——此后扩展需要同名加键 + 测试。
 pub const WRITABLE_CONFIG_KEYS: [(&str, &str); 4] = [
     ("bilibili", "cookie"),
@@ -40,6 +42,8 @@ pub struct AppState {
     pub demo: bool,
     /// D5：数据呈现根覆盖 —— run --demo 让它指向 _demo，serve 常态 = None → 从 config 每请求读取。
     pub data_root: Option<PathBuf>,
+    /// 测试接缝：POST runs → spawn 的 Bilibili 根地址注入（生产 None → 官方端点）。
+    pub bilibili_hosts: Option<(String, String)>,
 }
 
 /// 统一错误包装记类型：状态码 + {"error": 文案}（D3 形态）。
@@ -296,12 +300,98 @@ async fn config_put(
 }
 
 // ---------------------------------------------------------------------------
-// runs 面（B3 补剧本；B1 仅打点位：demo 快照 + 不存在）
+// runs 面（B3）：POST 触发 + registry 轮询 + demo 静态快照
 // ---------------------------------------------------------------------------
 
-async fn runs_post() -> AppFail {
-    // B3 补 spawn 通道；B1：demo 模式之外一律报名。
-    fail(StatusCode::NOT_IMPLEMENTED, "run 触发通道在 M5-B3 接线")
+/// D3/D9：POST /api/runs {kind, force?, viewer_uid?} → 202 {run_id}。
+///
+/// 校验口径（kickoff B3b 冻结）：kind ∈ {full, viewer}；kind=viewer 必须给出
+/// viewer_uid 且与 force 互斥（force 是全量清理语义，D7）；kind=full 与 viewer_uid
+/// 互斥；非布尔 force / 超长 uid / 非对象体一律 422。
+async fn runs_post(
+    State(state): State<AppState>,
+    Json(body): Json<Value>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    let object = body.as_object().ok_or_else(|| {
+        fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "run 触发体必须是 JSON 对象",
+        )
+    })?;
+    let kind = object
+        .get("kind")
+        .and_then(Value::as_str)
+        .filter(|kind| crate::registry::RUN_KINDS.contains(kind))
+        .ok_or_else(|| {
+            fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "kind 必须是 full 或 viewer",
+            )
+        })?;
+    let force = match object.get("force") {
+        None | Some(Value::Null) => false,
+        Some(Value::Bool(value)) => *value,
+        _ => {
+            return Err(fail(StatusCode::UNPROCESSABLE_ENTITY, "force 必须是布尔"));
+        }
+    };
+    let viewer_uid = match object.get("viewer_uid") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(uid)) if !uid.trim().is_empty() => {
+            if uid.trim().chars().count() > MAX_VIEWER_UID_CHARS {
+                return Err(fail(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    &format!("viewer_uid 超出长度上限 {MAX_VIEWER_UID_CHARS}"),
+                ));
+            }
+            Some(uid.trim().to_string())
+        }
+        _ => {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "viewer_uid 必须是非空字符串",
+            ));
+        }
+    };
+    let viewer_uid = match (kind, viewer_uid) {
+        ("viewer", None) => {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "kind=viewer 必须给出 viewer_uid",
+            ));
+        }
+        ("viewer", Some(_)) if force => {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "kind=viewer 不接受 force（force 是全量清理语义）",
+            ));
+        }
+        ("full", Some(_)) => {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "kind=full 不接受 viewer_uid",
+            ));
+        }
+        (_, viewer_uid) => viewer_uid,
+    };
+    let record = if state.demo {
+        // G3 裁决：demo 模式返回已完成静态快照——合成、无网络、幂等（重复 POST
+        // 返回同一 run_id；红线：合成不得伪装真实请求足迹）。
+        state.registry.demo_snapshot(json!({
+            "detail": "demo 模式：返回静态快照，不触发真实运行",
+        }))
+    } else {
+        Registry::spawn_run(
+            &state.registry,
+            load_config(&state)?,
+            kind,
+            viewer_uid,
+            force,
+            state.bilibili_hosts.clone(),
+        )
+    };
+    let run_id = record.lock().expect("record poisoned").run_id.clone();
+    Ok((StatusCode::ACCEPTED, Json(json!({"run_id": run_id}))))
 }
 
 async fn run_get(State(state): State<AppState>, Path(id): Path<String>) -> AppResult<Json<Value>> {
@@ -538,6 +628,8 @@ pub struct StartOptions {
     pub demo: bool,
     /// demo（_demo 根）态数据呈现覆盖（D5）。
     pub data_root: Option<PathBuf>,
+    /// 测试接缝：POST runs → Bilibili 根地址注入（生产 None；见 AppState 同名字段）。
+    pub bilibili_hosts: Option<(String, String)>,
 }
 
 /// 服务位于 127.0.0.1（M5 范围：不做鉴权/多用户——绑定地址即条款）。
@@ -553,6 +645,7 @@ pub fn serve(options: StartOptions) -> Result<(), String> {
             registry: Registry::new(),
             demo: options.demo,
             data_root: options.data_root,
+            bilibili_hosts: options.bilibili_hosts,
         };
         let addr = SocketAddr::from(([127, 0, 0, 1], options.port));
         let listener = tokio::net::TcpListener::bind(addr)
