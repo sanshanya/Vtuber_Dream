@@ -1,0 +1,488 @@
+//! Agent 终局提交的数据模型（移植 Python `ai_models.py`）。
+//!
+//! 单点定义：serde 解析 + schemars 工具参数 schema 都从这里派生（设计文档 M1：
+//! models.rs 是工具参数的唯一事实源）。Python 的 Text200 等长度约束在
+//! `agent/validators.rs`（M3）统一校验；本文件只承载结构 + 默认值 + extra=forbid。
+
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+fn default_half() -> f64 {
+    0.5
+}
+fn default_origin() -> String {
+    "explicit".to_string()
+}
+fn default_resolution() -> String {
+    "NEW_ENTITY".to_string()
+}
+fn default_status_unknown() -> String {
+    "无法判断".to_string()
+}
+fn default_confidence_word() -> String {
+    "低".to_string()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct MentionSpan {
+    /// 本次提交内唯一ID，例如 m1
+    pub mention_id: String,
+    pub episode_id: String,
+    /// Episode中的字段路径，例如 title、description、tags[0]
+    pub field_path: String,
+    /// 原文中精确出现的文本
+    pub text: String,
+    pub start: i64,
+    pub end: i64,
+    /// 开放式Mention类型，例如作品名、游戏名、角色名、创作者、技术、事件
+    pub mention_type: String,
+    #[serde(default = "default_origin")]
+    pub origin: String,
+    pub proposed_entity_name: String,
+    pub proposed_entity_type: String,
+    /// 该Mention直接指向的 entity:<local_id> 或已存在 entity_id
+    pub entity_ref: String,
+    #[serde(default = "default_half")]
+    pub confidence: f64,
+}
+
+impl MentionSpan {
+    /// Python model_validator：end 必须大于 start。
+    pub fn validate_offsets(&self) -> Result<(), String> {
+        if self.end <= self.start {
+            return Err("end must be greater than start".to_string());
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct EntityProposal {
+    /// 本次提交内唯一实体引用，例如 e1
+    pub local_id: String,
+    pub canonical_name: String,
+    /// 开放式实体类型，不受固定分类表限制
+    pub entity_type: String,
+    #[serde(default)]
+    pub aliases: Vec<String>,
+    #[serde(default)]
+    pub description: String,
+    /// 调用 search_entity_candidates 确认后可指向已有实体；不确定时留空
+    #[serde(default)]
+    pub existing_entity_id: Option<String>,
+    #[serde(default = "default_resolution")]
+    pub resolution: String,
+    #[serde(default)]
+    pub evidence_mention_ids: Vec<String>,
+    /// 可引用本次实体 local_id 或已有 entity_id；允许多父关系
+    #[serde(default)]
+    pub parent_entity_refs: Vec<String>,
+    #[serde(default = "default_half")]
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RelationProposal {
+    /// viewer:self、输入中的精确 episode_id、entity:<local_id> 或已有 entity_id
+    pub subject_ref: String,
+    /// 简洁关系，例如 ABOUT、FOCUSES_ON、RELATED_TO、INSTANCE_OF
+    pub predicate: String,
+    pub object_ref: String,
+    #[serde(default)]
+    pub interpretation: String,
+    #[serde(default)]
+    pub evidence_mention_ids: Vec<String>,
+    #[serde(default = "default_half")]
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct InterestStateProposal {
+    /// entity:<local_id> 或已有 entity_id
+    pub entity_ref: String,
+    #[serde(default = "default_status_unknown")]
+    pub status: String,
+    #[serde(default)]
+    pub preference: String,
+    #[serde(default)]
+    pub aspects: Vec<String>,
+    #[serde(default)]
+    pub rationale: String,
+    #[serde(default)]
+    pub evidence_mention_ids: Vec<String>,
+    #[serde(default = "default_half")]
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ViewerAction {
+    pub title: String,
+    #[serde(default)]
+    pub detail: String,
+    #[serde(default)]
+    pub evidence_mention_ids: Vec<String>,
+    #[serde(default)]
+    pub search_result_ids: Vec<String>,
+    #[serde(default)]
+    pub observation_metrics: Vec<String>,
+    #[serde(default)]
+    pub risk: String,
+}
+
+/// 观众级终局提交（`submit_viewer_perception` 的参数）。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ViewerPerceptionSubmission {
+    pub viewer_id: String,
+    pub profile_summary: String,
+    #[serde(default)]
+    pub mentions: Vec<MentionSpan>,
+    #[serde(default)]
+    pub entities: Vec<EntityProposal>,
+    #[serde(default)]
+    pub relations: Vec<RelationProposal>,
+    #[serde(default)]
+    pub interest_states: Vec<InterestStateProposal>,
+    #[serde(default)]
+    pub content_preferences: Vec<String>,
+    #[serde(default)]
+    pub recent_changes: Vec<String>,
+    #[serde(default)]
+    pub hypotheses: Vec<String>,
+    #[serde(default)]
+    pub conversation_openers: Vec<ViewerAction>,
+    #[serde(default)]
+    pub content_ideas: Vec<ViewerAction>,
+    #[serde(default)]
+    pub enrichment_targets: Vec<String>,
+    #[serde(default)]
+    pub cautions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct GraphInterestItem {
+    #[serde(default)]
+    pub entity_id: String,
+    pub entity: String,
+    pub entity_type: String,
+    #[serde(default)]
+    pub parent_entities: Vec<String>,
+    #[serde(default)]
+    pub angles: Vec<String>,
+    #[serde(default)]
+    pub viewer_ids: Vec<String>,
+    #[serde(default = "default_status_unknown")]
+    pub status: String,
+    #[serde(default = "default_half")]
+    pub confidence: f64,
+    #[serde(default)]
+    pub evidence_summary: String,
+    #[serde(default)]
+    pub evidence_mention_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AudienceCommunity {
+    pub name: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub viewer_ids: Vec<String>,
+    #[serde(default)]
+    pub entity_ids: Vec<String>,
+    #[serde(default)]
+    pub entities: Vec<String>,
+    #[serde(default)]
+    pub shared_angles: Vec<String>,
+    #[serde(default)]
+    pub evidence_mention_ids: Vec<String>,
+    #[serde(default = "default_half")]
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct SituationItem {
+    pub title: String,
+    /// 上升、稳定、新出现、衰退、待验证等
+    pub status: String,
+    #[serde(default)]
+    pub description: String,
+    #[serde(default)]
+    pub entity_ids: Vec<String>,
+    #[serde(default)]
+    pub entities: Vec<String>,
+    #[serde(default)]
+    pub viewer_ids: Vec<String>,
+    #[serde(default)]
+    pub trigger_events: Vec<String>,
+    #[serde(default)]
+    pub evidence_mention_ids: Vec<String>,
+    #[serde(default = "default_half")]
+    pub confidence: f64,
+    #[serde(default)]
+    pub recommended_investigation: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContentOpportunity {
+    pub title: String,
+    #[serde(default)]
+    pub entity_id: String,
+    #[serde(default)]
+    pub entity: String,
+    #[serde(default)]
+    pub why_now: String,
+    #[serde(default)]
+    pub why_fit: String,
+    #[serde(default)]
+    pub audience_ids: Vec<String>,
+    #[serde(default)]
+    pub format: String,
+    #[serde(default)]
+    pub run_of_show: Vec<String>,
+    #[serde(default)]
+    pub talking_points: Vec<String>,
+    #[serde(default)]
+    pub evidence_mention_ids: Vec<String>,
+    #[serde(default)]
+    pub search_result_ids: Vec<String>,
+    /// ConfidenceWord：高/中/低
+    #[serde(default = "default_confidence_word")]
+    pub confidence: String,
+    #[serde(default)]
+    pub observation_metrics: Vec<String>,
+    #[serde(default)]
+    pub caveats: Vec<String>,
+}
+
+/// ConfidenceWord → 数值（设计文档 §8.1：TARGETS/ABOUT 等 action 边必带 confidence）。
+/// 口径：中=0.5 与全库默认中性感一致；高=1.0；低=0.2 显著低于默认线。
+pub const CONFIDENCE_WORD_HIGH: f64 = 1.0;
+pub const CONFIDENCE_WORD_MEDIUM: f64 = 0.5;
+pub const CONFIDENCE_WORD_LOW: f64 = 0.2;
+
+pub fn confidence_word_score(word: &str) -> f64 {
+    match word {
+        "高" => CONFIDENCE_WORD_HIGH,
+        "中" => CONFIDENCE_WORD_MEDIUM,
+        _ => CONFIDENCE_WORD_LOW,
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IndividualHighlight {
+    pub viewer_id: String,
+    pub insight: String,
+    #[serde(default)]
+    pub opportunity: String,
+    #[serde(default)]
+    pub evidence_mention_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ContentCalendarItem {
+    pub session: String,
+    pub theme: String,
+    #[serde(default)]
+    pub target_viewers: Vec<String>,
+    #[serde(default)]
+    pub goal: String,
+    #[serde(default)]
+    pub validation_signal: String,
+}
+
+/// 整体态势终局提交（`submit_audience_situation` 的参数）。
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AudienceSituationSubmission {
+    pub executive_summary: String,
+    #[serde(default)]
+    pub audience_structure: Vec<String>,
+    #[serde(default)]
+    pub interest_graph: Vec<GraphInterestItem>,
+    #[serde(default)]
+    pub communities: Vec<AudienceCommunity>,
+    #[serde(default)]
+    pub situations: Vec<SituationItem>,
+    #[serde(default)]
+    pub content_opportunities: Vec<ContentOpportunity>,
+    #[serde(default)]
+    pub individual_highlights: Vec<IndividualHighlight>,
+    #[serde(default)]
+    pub content_calendar: Vec<ContentCalendarItem>,
+    #[serde(default)]
+    pub data_gaps: Vec<String>,
+    #[serde(default)]
+    pub safety_notes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PeerComparableDimension {
+    pub dimension: String,
+    pub similarity: String,
+    pub difference: String,
+    #[serde(default)]
+    pub evidence_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PeerLearnablePattern {
+    pub pattern: String,
+    pub why_it_works: String,
+    #[serde(default)]
+    pub evidence_refs: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PeerExperiment {
+    pub hypothesis: String,
+    pub execution: String,
+    #[serde(default)]
+    pub target_viewer_ids: Vec<String>,
+    #[serde(default)]
+    pub observation_signals: Vec<String>,
+    #[serde(default)]
+    pub stop_conditions: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PeerStreamerAssessment {
+    pub candidate_id: String,
+    /// DIRECT_PEER / ADJACENT_PEER / ASPIRATIONAL_REFERENCE / COLLABORATION_FIT / REJECTED
+    pub relation_type: String,
+    pub summary: String,
+    #[serde(default)]
+    pub comparable_dimensions: Vec<PeerComparableDimension>,
+    #[serde(default)]
+    pub audience_overlap_viewer_ids: Vec<String>,
+    #[serde(default)]
+    pub episode_ids: Vec<String>,
+    #[serde(default)]
+    pub mention_ids: Vec<String>,
+    #[serde(default)]
+    pub search_result_ids: Vec<String>,
+    #[serde(default)]
+    pub learnable_patterns: Vec<PeerLearnablePattern>,
+    #[serde(default)]
+    pub do_not_copy: Vec<String>,
+    #[serde(default)]
+    pub experiments: Vec<PeerExperiment>,
+    #[serde(default)]
+    pub uncertainty: String,
+    #[serde(default = "default_half")]
+    pub confidence: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct PeerDiscoverySubmission {
+    pub streamer_uid: String,
+    pub summary: String,
+    #[serde(default)]
+    pub assessments: Vec<PeerStreamerAssessment>,
+    #[serde(default)]
+    pub overall_advice: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ProbeResult {
+    pub a: i64,
+    pub b: i64,
+    pub total: i64,
+    #[serde(default)]
+    pub note: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_fixture_viewer_submission() {
+        let raw = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests-fixtures/demo/ai/perception/viewers/demo-1.json"),
+        )
+        .unwrap();
+        let wrapper: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let submission: ViewerPerceptionSubmission =
+            serde_json::from_value(wrapper["analysis"].clone()).unwrap();
+        assert_eq!(submission.viewer_id, "demo-1");
+        assert_eq!(submission.mentions.len(), 2);
+        assert_eq!(submission.entities.len(), 2);
+        assert_eq!(submission.interest_states.len(), 2);
+        assert_eq!(submission.mentions[0].confidence, 0.96);
+        assert!(submission.mentions[0].validate_offsets().is_ok());
+        assert_eq!(submission.entities[0].resolution, "NEW_ENTITY");
+    }
+
+    #[test]
+    fn parses_fixture_audience_submission() {
+        let raw = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests-fixtures/demo/ai/situation.json"),
+        )
+        .unwrap();
+        let wrapper: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        let submission: AudienceSituationSubmission =
+            serde_json::from_value(wrapper["analysis"].clone()).unwrap();
+        assert_eq!(submission.situations.len(), 1);
+        assert_eq!(submission.content_opportunities.len(), 1);
+        assert_eq!(submission.content_opportunities[0].confidence, "高");
+        assert_eq!(
+            confidence_word_score(&submission.content_opportunities[0].confidence),
+            CONFIDENCE_WORD_HIGH
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_fields() {
+        let raw = r#"{"viewer_id":"v","profile_summary":"x","bogus":1}"#;
+        assert!(serde_json::from_str::<ViewerPerceptionSubmission>(raw).is_err());
+    }
+
+    #[test]
+    fn offset_validator() {
+        let mut span = MentionSpan {
+            mention_id: "m1".into(),
+            episode_id: "e".into(),
+            field_path: "title".into(),
+            text: "x".into(),
+            start: 3,
+            end: 3,
+            mention_type: "t".into(),
+            origin: "explicit".into(),
+            proposed_entity_name: "n".into(),
+            proposed_entity_type: "t".into(),
+            entity_ref: "entity:e1".into(),
+            confidence: 0.5,
+        };
+        assert!(span.validate_offsets().is_err());
+        span.end = 4;
+        assert!(span.validate_offsets().is_ok());
+    }
+
+    #[test]
+    fn word_score_mapping() {
+        assert_eq!(confidence_word_score("高"), 1.0);
+        assert_eq!(confidence_word_score("中"), 0.5);
+        assert_eq!(confidence_word_score("低"), 0.2);
+        assert_eq!(confidence_word_score("未知词"), 0.2);
+    }
+}
