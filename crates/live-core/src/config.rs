@@ -701,6 +701,24 @@ report:
         );
     }
 
+    /// MXA-11（r8/r4）：M4.x budget 键拒负（r4 G-1：与其他 collection 键同族校验，补钉）。
+    #[test]
+    fn lead_fetch_budget_per_run_rejects_negative() {
+        let bad = EXAMPLE_YAML.replace(
+            "max_video_metadata_items: 120",
+            "max_video_metadata_items: 120\n  lead_fetch_budget_per_run: -1",
+        );
+        let file = write_temp(&bad);
+        let err = load_config(file.path()).unwrap_err();
+        assert!(
+            err.to_string().contains("lead_fetch_budget_per_run"),
+            "{err}"
+        );
+        // 缺省 = 0＝休眠（M4.x 默认人工审批文化）
+        let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
+        assert_eq!(ok.collection.lead_fetch_budget_per_run, 0);
+    }
+
     #[test]
     fn ai_issues_flag_endpoint_form() {
         let file = write_temp(EXAMPLE_YAML);

@@ -97,8 +97,10 @@ pub fn consume_approved_leads(
                 consumed += 1;
             }
             Err(err) => {
-                // 至多重 240 字符的留痕（账本行可被人工浏览；不打爆单行）。
-                row.resolution_note = err.chars().take(240).collect();
+                row.resolution_note = err
+                    .chars()
+                    .take(crate::leads::RESOLUTION_NOTE_CAP)
+                    .collect();
             }
         }
         dirty = true;
@@ -198,7 +200,11 @@ mod tests {
         assert_eq!(n, 0);
         let back = read_ledger(&leads::ledger_path(&dir));
         assert_eq!(back[0].status, LeadStatus::Approved);
-        assert_eq!(back[0].resolution_note.chars().count(), 240, "留痕截断");
+        assert_eq!(
+            back[0].resolution_note.chars().count(),
+            crate::leads::RESOLUTION_NOTE_CAP,
+            "留痕截断"
+        );
     }
 
     /// room/手编坏类型 → deferred 不烧预算。

@@ -21,8 +21,12 @@ use crate::models::Lead;
 pub const LEDGER_FILE_NAME: &str = "leads.jsonl";
 /// `dedupe_key` recipe 域前缀（`_hash` 第一槽）。
 pub const DEDUPE_KEY_PREFIX: &str = "m4x-lead";
+/// `dedupe_key` 截断长度（`_hash` 第二参；与 evidence_id/episode_id 全产线同宽）。
+pub const DEDUPE_KEY_LEN: usize = 16;
 /// 摘要段 latest_consumed 最多回放的消费行数（kickoff 契约）。
 pub const LATEST_CONSUMED_CAP: usize = 3;
+/// 消费留痕 `resolution_note` 的长度上限（账本行可人工浏览，不打爆单行）。
+pub const RESOLUTION_NOTE_CAP: usize = 240;
 /// audience 侧账本行 viewer_id 占位（leads 来自整体态势终局提交）。
 pub const AUDIENCE_VIEWER_ID: &str = "audience";
 
@@ -64,7 +68,7 @@ pub fn dedupe_key(lead: &Lead) -> String {
             lead.lead_type.clone(),
             lead.locator.clone(),
         ],
-        16,
+        DEDUPE_KEY_LEN,
     )
 }
 
@@ -266,9 +270,12 @@ mod tests {
                     "video".to_string(),
                     "BV1aa411c7mD".to_string()
                 ],
-                16
+                DEDUPE_KEY_LEN
             )
         );
+        // 自参防漂移：截断宽度的独立字面钉
+        assert_eq!(DEDUPE_KEY_LEN, 16);
+        assert_eq!(dedupe_key(&row).len(), 16);
         // (type, locator) 是身份：motivation/evidence 不入键
         let mut same = row.clone();
         same.motivation = "另一措辞".to_string();
@@ -304,6 +311,76 @@ mod tests {
         .unwrap();
         assert_eq!(plus, 1);
         assert_eq!(read_ledger(&ledger_path(&dir)).len(), 3);
+    }
+
+    /// MXA-5（r4 G-2 禁倒退负边）：同键行无论处于 Approved/Consumed/Rejected，record
+    /// 都跳行 —— 幂等身份先于状态，绝不靠「回到 pending」复制行。
+    #[test]
+    fn record_skips_existing_keys_at_any_state() {
+        let dir = tmp_dir("nostate");
+        let leads = vec![lead("video", "BV1"), lead("search", "异环 实机")];
+        record_leads(&dir, "u", "run:a", "t", &leads).unwrap();
+        for (index, status) in [
+            LeadStatus::Approved,
+            LeadStatus::Consumed,
+            LeadStatus::Rejected,
+            LeadStatus::Deferred,
+        ]
+        .iter()
+        .enumerate()
+        {
+            let mut rows = read_ledger_guarded(&ledger_path(&dir)).unwrap();
+            rows[0].status = *status;
+            rewrite_ledger(&dir, &rows).unwrap();
+            let appended = record_leads(&dir, "u", "run:b", "t2", &leads).unwrap();
+            assert_eq!(appended, 0, "第 {index} 状态 {status:?} 回下 dedupe 跳行");
+            assert_eq!(read_ledger(&ledger_path(&dir)).len(), 2);
+            // 状态不被回写清洗（账本是人审工作队列，record 无权改动状态机）
+            assert_eq!(
+                read_ledger_guarded(&ledger_path(&dir)).unwrap()[0].status,
+                *status
+            );
+        }
+    }
+
+    /// MXA-11（r5-F6）：JSONL 行字段序 = 冻结契约书写序（serde 声明序隐式
+    /// 保证过域，不做断言则一次字段重排即静默违约——账本被线下工具消费）。
+    #[test]
+    fn ledger_row_field_order_pinned() {
+        let row = pending_row(&lead("video", "BV1"), "u", "run:a", "t");
+        let line = serde_json::to_string(&row).unwrap();
+        let keys = [
+            "dedupe_key",
+            "\"type\"",
+            "locator",
+            "motivation",
+            "expected_signal",
+            "priority",
+            "evidence_ids",
+            "viewer_id",
+            "first_seen_run_id",
+            "created_at",
+            "status",
+            "yield_count",
+            "resolution_note",
+        ];
+        let positions: Vec<usize> = keys
+            .iter()
+            .map(|key| line.find(key).unwrap_or_else(|| panic!("缺键 {key}")))
+            .collect();
+        for window in positions.windows(2) {
+            assert!(window[0] < window[1], "字段序漂移：{line}");
+        }
+    }
+
+    /// MXA-11（r1）：空账本摘要形态钉——零账本状态下 pipeline annex 依赖此形态。
+    #[test]
+    fn empty_ledger_summary_pinned() {
+        assert_eq!(
+            summary_line(&[], None),
+            "[lead_ledger] pending=0 approved=0 consumed=0 rejected=0 deferred=0 \
+             by_type={} yield_total=0 latest_consumed=[]"
+        );
     }
 
     #[test]
