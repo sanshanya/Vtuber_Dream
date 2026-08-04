@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
-use common::{BodyPred, assistant_tool_call, messages_len, mount_turn};
+use common::{BodyPred, assistant_bill, assistant_tool_call, messages_len, mount_turn};
 use live_core::agent::pipeline::{PipelineKnobs, run_pipeline, viewer_input_bundle};
 use live_core::config::{
     AgentRuntimeConfig, AiConfig, BilibiliConfig, CollectionConfig, Config, PeerDiscoveryConfig,
@@ -98,6 +98,7 @@ fn test_config(root: &Path, uri: &str, resume: bool) -> Config {
                 local_trace: false,
                 run_retries: 0,
                 retry_backoff_seconds: 0.0,
+                viewer_token_budget: 200_000,
             },
             search_results_per_query: 20,
             rules: vec!["取向优先新内容与互动攻略".into()],
@@ -606,6 +607,54 @@ async fn pipeline_single_viewer_failure_continues() {
     assert_eq!(result["viewer_failures"], 1);
     let cache = read(&tmp.path().join("ai/perception/viewers/g1.json"));
     assert_eq!(cache["status"], "failed");
+}
+
+// ---------------------------------------------------------------------------
+// 3b. r1-F1：单 viewer token 预算熔断 → viewer_failure("token_budget")，其余照常
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_viewer_token_budget_trips_viewer_failure() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (_e1, e2) = episode_ids(tmp.path());
+    // g1 第一回合即 claim 5000 tokens（预算 100）→ 熔断；不重试（expect 1）。
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(BodyPred(name_gate("黄金观众甲")))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(assistant_bill("预算烧穿的无效草稿", 5000)),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+    mount_audience_ok(&server, &["g2"]).await;
+
+    let mut config = test_config(tmp.path(), &server.uri(), true);
+    config.ai.agent.viewer_token_budget = 100;
+    let mut knobs = PipelineKnobs::default();
+    let result = run_pipeline(config, &analysis, false, &mut knobs)
+        .await
+        .expect("预算熔断不得炸整轮");
+    assert_eq!(result["viewer_count"], 1);
+    assert_eq!(result["viewer_failures"], 1);
+    let cache = read(&tmp.path().join("ai/perception/viewers/g1.json"));
+    assert_eq!(cache["status"], "failed");
+    assert!(
+        cache["error"]
+            .as_str()
+            .is_some_and(|s| s.contains("token_budget")),
+        "g1 缓存 error 必须含错误类别: {cache}"
+    );
 }
 
 // ---------------------------------------------------------------------------

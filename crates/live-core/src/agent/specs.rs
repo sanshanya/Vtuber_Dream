@@ -18,6 +18,10 @@ use super::tools::{
 };
 use super::validators::{validate_audience_submission, validate_viewer_submission};
 
+/// 工具规格版本串（R1-4）：工具 name/description/参数 schema 变更时同步递增，
+/// 与 prompts::PROMPTS_VERSION 一同写入 trace 的 run_start（协议红线：变更可审计）。
+pub const TOOL_SPECS_VERSION: &str = "2026-08-04.v1";
+
 // ---------------------------------------------------------------------------
 // 终局工具厂 + Agent 装配（M3-D；Python submit_* + pipeline.py 组装逐字）
 // ---------------------------------------------------------------------------

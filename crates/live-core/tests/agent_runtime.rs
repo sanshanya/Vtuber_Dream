@@ -29,6 +29,7 @@ fn plan<'a>(prompt: &'a str, max_turns: usize) -> AttemptPlan<'a> {
         max_turns,
         retries: 0,
         backoff_seconds: 0.0,
+        token_budget: None,
     }
 }
 
@@ -336,6 +337,105 @@ async fn max_turns_exceeded_fails_attempt() {
     .await
     .expect_err("超过 max_turns 必须失败");
     assert!(err.to_string().contains("max turns"), "{err}");
+}
+
+// ---------------------------------------------------------------------------
+// r1-F1：单 agent token 预算熔断——触顶即时终止，走既有 Fatal/失败通道
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn token_budget_exceeded_terminates_immediately() {
+    let server = MockServer::start().await;
+    // 每回合 claim 5000 total_tokens；预算 100 → 第一回合即熔断。
+    Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(assistant_bill("只是闲聊预算烧穿", 5000)),
+        )
+        .mount(&server)
+        .await;
+
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let err = run_toolcall_agent::<_, ProbeResult>(
+        &runtime,
+        &mut spec,
+        AttemptPlan {
+            label: "agent-check",
+            prompt: "开始",
+            max_turns: 8,
+            retries: 2, // 熔断不可重试：即便配置 retries 也必须一次终止
+            backoff_seconds: 0.0,
+            token_budget: Some(100),
+        },
+        &mut ctx,
+        &mut trace,
+    )
+    .await
+    .expect_err("超预算必须触顶终止");
+    let text = err.to_string();
+    assert!(text.contains("token_budget"), "{text}");
+    // 只产生 1 次 LLM 请求：无重试、无 forced 续跑
+    let requests = server.received_requests().await.expect("captured");
+    assert_eq!(requests.len(), 1, "{requests:?}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn default_budget_keeps_accepting_flows() {
+    let server = MockServer::start().await;
+    mount_turn(
+        &server,
+        messages_len(2),
+        assistant_tool_call("call-1", "get_probe_seed", json!({}), Some("取种子")),
+    )
+    .await;
+    mount_turn(
+        &server,
+        |body: &Value| messages_len(4)(body),
+        assistant_tool_call(
+            "call-2",
+            "multiply_probe_seed",
+            json!({"seed": 7, "factor": 2}),
+            Some("乘二"),
+        ),
+    )
+    .await;
+    mount_turn(
+        &server,
+        |body: &Value| messages_len(6)(body),
+        assistant_tool_call(
+            "call-3",
+            "submit_probe_result",
+            json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+            None,
+        ),
+    )
+    .await;
+
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> = run_toolcall_agent(
+        &runtime,
+        &mut spec,
+        AttemptPlan {
+            label: "agent-check",
+            prompt: "开始",
+            max_turns: 8,
+            retries: 0,
+            backoff_seconds: 0.0,
+            token_budget: Some(200_000),
+        },
+        &mut ctx,
+        &mut trace,
+    )
+    .await
+    .expect("默认预算 200k 下照常接受");
+    assert_eq!(outcome.submission.total, 21);
+    assert_eq!(trace.stats.total_tokens, 45);
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -679,6 +779,7 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
             local_trace: false,
             run_retries: 0,
             retry_backoff_seconds: 0.0,
+            viewer_token_budget: 200_000,
         },
         search_results_per_query: 5,
         rules: vec![],

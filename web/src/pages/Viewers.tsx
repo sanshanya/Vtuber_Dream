@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { api, type ViewerRow } from "../api";
+import { activeRunIdFrom, api, type ViewerRow } from "../api";
 import { AiStaleBadge } from "../components/AiStaleBadge";
 import { KindRunButton } from "../components/KindRunButton";
 import { useRunTracker } from "../components/RunTracker";
@@ -14,6 +14,8 @@ import { fmtTime } from "../format";
 export function EmptyPoolHint(props: {
   uid: string;
   pending: boolean;
+  /** 单飞互斥契约：有在飞 run 时禁触发钮（文本框照旧可输入）。 */
+  runActive: boolean;
   onUidChange: (uid: string) => void;
   onSubmit: () => void;
 }) {
@@ -31,7 +33,10 @@ export function EmptyPoolHint(props: {
           value={props.uid}
           onChange={(event) => props.onUidChange(event.target.value)}
         />
-        <button disabled={props.pending || props.uid.trim() === ""} onClick={props.onSubmit}>
+        <button
+          disabled={props.pending || props.uid.trim() === "" || props.runActive}
+          onClick={props.onSubmit}
+        >
           {props.pending ? "已提交…" : "单查该观众"}
         </button>
       </div>
@@ -44,11 +49,13 @@ export function Viewers({ roomId }: { roomId: string }) {
   const tracker = useRunTracker();
   const [singleUid, setSingleUid] = useState("");
   const [singleError, setSingleError] = useState<string | null>(null);
+  const [followedRun, setFollowedRun] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [submittedRun, setSubmittedRun] = useState<string | null>(null);
 
   async function submitSingle() {
     setSingleError(null);
+    setFollowedRun(null);
     setPending(true);
     try {
       const { run_id } = await api.startRun({ kind: "viewer", viewer_uid: singleUid.trim() });
@@ -57,7 +64,16 @@ export function Viewers({ roomId }: { roomId: string }) {
       // 兑现「完成后列表自动刷新」。
       tracker.track(run_id);
     } catch (error) {
-      setSingleError(String(error instanceof Error ? error.message : error));
+      const text = String(error instanceof Error ? error.message : error);
+      // R3-F1：viewer 属单飞互斥契约——409 错文在飞 id 转 RunTracker 跟随
+      //（与 KindRunButton 同构），不裸报错。
+      const active = activeRunIdFrom(text);
+      if (active) {
+        tracker.track(active);
+        setFollowedRun(active);
+      } else {
+        setSingleError(text);
+      }
     } finally {
       setPending(false);
     }
@@ -93,6 +109,7 @@ export function Viewers({ roomId }: { roomId: string }) {
         <EmptyPoolHint
           uid={singleUid}
           pending={pending}
+          runActive={tracker.active}
           onUidChange={setSingleUid}
           onSubmit={() => void submitSingle()}
         />
@@ -100,6 +117,11 @@ export function Viewers({ roomId }: { roomId: string }) {
         <ViewerTable rows={rows} />
       )}
       {singleError && <div className="notice">单查提交被拒：{singleError}</div>}
+      {followedRun && (
+        <p className="muted small">
+          已有进行中的 run（{followedRun.slice(0, 8)}…）——页头徽标转为跟随其进度。
+        </p>
+      )}
       {submittedRun && (
         <p className="muted small">
           已触发单查 run：<code>{submittedRun}</code>

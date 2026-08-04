@@ -7,14 +7,14 @@ use std::path::Path;
 use live_core::agent::tools::{
     AudienceAgentCtx, ResearchService, ViewerAgentCtx, get_bilibili_video_tool,
     get_viewer_analysis_tool, known_search_result_ids, query_graph_tool,
-    search_bilibili_videos_tool, search_entity_candidates_tool,
+    search_bilibili_videos_tool, search_entity_candidates_tool, verify_videos_tool,
 };
 use live_core::bilibili::BilibiliClient;
 use live_core::episodes::{Episode, EpisodeField};
 use live_core::graph::query;
 use live_core::graph::store::Store;
-use serde_json::json;
-use wiremock::matchers::{method, path};
+use serde_json::{Value, json};
+use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn nav_stub() -> ResponseTemplate {
@@ -565,4 +565,169 @@ fn references_requires_node_mirror_for_entities() {
         ["ent-ok"],
         "孤儿实体行不得过 references: {entities:?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// R1-2 verify_videos 批原语（与 get_bilibili_video 同详情端点族；Python 无此工具）
+// ---------------------------------------------------------------------------
+
+/// 批内：2 个存在 + 1 个缺失 → 3 条紧凑行；缺失只占一行 error（类别+短原因），
+/// 单条失败不杀伤批次；随后同一 bvid 单查走缓存（零新请求，mocks expect(1)）。
+#[tokio::test(flavor = "multi_thread")]
+async fn verify_videos_batch_compact_lines_and_single_failure_isolated() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/view"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {"aid": 80431001, "title": "异环核验片", "desc": "简介",
+                     "tid": 4, "tname": "游戏", "duration": 612, "pubdate": 1_700_000_000,
+                     "owner": {"mid": 42, "name": "up主甲"},
+                     "stat": {"view": 900}}
+        })))
+        .expect(2) // 仅 BV-ok1 + BV-ok2 命中通用 200（BV-missing 有专属 404）
+        .mount(&server)
+        .await;
+    // BV-missing 专属 404：通用 view mock 只按 path 匹配，缺这条 bvid 也会 200。
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/view"))
+        .and(query_param("bvid", "BV-missing"))
+        .respond_with(ResponseTemplate::new(404))
+        .with_priority(1)
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/x/tag/archive/tags"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": [{"tag_name": "异环"}]})),
+        )
+        .expect(2) // 仅两个真实 bvid 抓 tags（missing 在 detail 段即 404 停住）
+        .mount(&server)
+        .await;
+    let origin = server.uri();
+    let out = tokio::task::spawn_blocking(move || {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctx = ViewerAgentCtx {
+            viewer_data: json!({}),
+            episodes: Default::default(),
+            research: ResearchService::new(tmp.path(), mock_client_origin(&origin), 20),
+            store: fixture_store(),
+            slot: Default::default(),
+        };
+        let mut tool = verify_videos_tool::<ViewerAgentCtx>();
+        // BV-ok1 / BV-ok2 命中 mock；BV-missing 无 view mock → 404 → 单条 error。
+        let batch = (tool.handler)(
+            &mut ctx,
+            &json!({"bvids": ["  BV-ok1  ", "BV-ok2", "BV-missing"]}),
+        );
+        // 同一 bvid 重跑 → 缓存命中（无新请求）。
+        let _again = (tool.handler)(&mut ctx, &json!({"bvids": ["BV-ok1"]}));
+        batch
+    })
+    .await
+    .expect("blocking task");
+
+    assert_eq!(out["count"], 3, "{out}");
+    let results = out["results"].as_array().unwrap();
+    let ok: Vec<&Value> = results.iter().filter(|r| r["status"] == "ok").collect();
+    assert_eq!(ok.len(), 2, "{out}");
+    // 紧凑行：status class/title/duration/aid（bvid 首尾去 trim）。
+    assert_eq!(ok[0]["bvid"], "BV-ok1");
+    assert_eq!(ok[0]["status"], "ok");
+    assert_eq!(ok[0]["title"], "异环核验片");
+    assert_eq!(ok[0]["duration"], 612);
+    assert_eq!(ok[0]["aid"], 80431001);
+    // 失败行：只有 bvid + error（类别+短原因），无 status 冒泡。
+    let err_line = results.iter().find(|r| r.get("error").is_some()).unwrap();
+    assert_eq!(err_line["bvid"], "BV-missing");
+    assert_eq!(err_line.get("status"), None);
+    let err_text = err_line["error"].as_str().unwrap();
+    assert!(
+        err_text.contains("/x/web-interface/view"),
+        "类别=端点: {err_text}"
+    );
+    assert!(err_text.contains("404"), "短原因: {err_text}");
+    // 重跑同 bvid 零新请求：view 恰 3、tags 恰 2（缓存短路被 expect 锁死即验）。
+    let calls = server.received_requests().await.expect("captured");
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|r| r.url.path() == "/x/web-interface/view")
+            .count(),
+        3
+    );
+    assert_eq!(
+        calls
+            .iter()
+            .filter(|r| r.url.path() == "/x/tag/archive/tags")
+            .count(),
+        2
+    );
+}
+
+/// >10 个 bvid → 整批拒绝，带可读 error；第 11 个不触网。
+#[tokio::test(flavor = "multi_thread")]
+async fn verify_videos_rejects_batches_over_max_items() {
+    let server = MockServer::start().await;
+    let origin = server.uri();
+    let out = tokio::task::spawn_blocking(move || {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctx = ViewerAgentCtx {
+            viewer_data: json!({}),
+            episodes: Default::default(),
+            research: ResearchService::new(tmp.path(), mock_client_origin(&origin), 20),
+            store: fixture_store(),
+            slot: Default::default(),
+        };
+        let mut tool = verify_videos_tool::<ViewerAgentCtx>();
+        let bvids: Vec<String> = (1..=11).map(|i| format!("BV{i:0>3}")).collect();
+        (tool.handler)(&mut ctx, &json!({"bvids": bvids}))
+    })
+    .await
+    .expect("blocking task");
+    assert_eq!(out["count"], 0, "{out}");
+    assert!(out["error"].as_str().unwrap().contains("上限"), "{out}");
+    assert_eq!(out["results"], json!([]));
+    // 整批拒绝 → 零网络请求。
+    let calls = server.received_requests().await.expect("captured");
+    assert!(calls.is_empty(), "超限拒绝不得触网: {calls:?}");
+}
+
+/// 空批/空 bvid：空批 count=0 无 error；空串 bvid 单条 `error: empty`（零请求）。
+#[tokio::test(flavor = "multi_thread")]
+async fn verify_videos_empty_and_blank_lines_are_local() {
+    let server = MockServer::start().await;
+    let origin = server.uri();
+    let out = tokio::task::spawn_blocking(move || {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut ctx = ViewerAgentCtx {
+            viewer_data: json!({}),
+            episodes: Default::default(),
+            research: ResearchService::new(tmp.path(), mock_client_origin(&origin), 20),
+            store: fixture_store(),
+            slot: Default::default(),
+        };
+        let mut tool = verify_videos_tool::<ViewerAgentCtx>();
+        let empty_batch = (tool.handler)(&mut ctx, &json!({"bvids": []}));
+        let blank_line = (tool.handler)(&mut ctx, &json!({"bvids": ["   "]}));
+        (empty_batch, blank_line)
+    })
+    .await
+    .expect("blocking task");
+    let (empty_batch, blank_line) = out;
+    assert_eq!(empty_batch["count"], 0, "{empty_batch}");
+    assert_eq!(empty_batch["results"], json!([]));
+    assert!(
+        empty_batch.get("error").is_none(),
+        "空批不得有 error: {empty_batch}"
+    );
+    assert_eq!(blank_line["count"], 1, "{blank_line}");
+    assert_eq!(
+        blank_line["results"][0]["error"].as_str().unwrap(),
+        "bvid: empty"
+    );
+    let calls = server.received_requests().await.expect("captured");
+    assert!(calls.is_empty(), "空 bvid 不得触网: {calls:?}");
 }

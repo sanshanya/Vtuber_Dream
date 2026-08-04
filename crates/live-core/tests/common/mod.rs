@@ -119,6 +119,17 @@ pub fn assistant_text(text: &str) -> Value {
     })
 }
 
+/// 自定义计费响应（r1-F1 token 熔断剧本：单回合 burn 穿预算的 usage）。
+pub fn assistant_bill(text: &str, total_tokens: i64) -> Value {
+    let mut value = assistant_text(text);
+    value["usage"] = serde_json::json!({
+        "prompt_tokens": total_tokens / 2,
+        "completion_tokens": total_tokens - total_tokens / 2,
+        "total_tokens": total_tokens,
+    });
+    value
+}
+
 /// 挂一个恰好被请求 1 次的回合 mock。
 pub async fn mount_turn(
     server: &MockServer,

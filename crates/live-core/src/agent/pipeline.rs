@@ -749,6 +749,8 @@ async fn run_one_viewer(
             max_turns: config.ai.agent.max_turns as usize,
             retries: config.ai.agent.run_retries as usize,
             backoff_seconds: config.ai.agent.retry_backoff_seconds,
+            // r1-F1：单 viewer token 预算熔断（累计 total_tokens 超限 → viewer_failure）。
+            token_budget: Some(config.ai.agent.viewer_token_budget),
         },
         &mut ctx,
         &mut trace,
@@ -940,6 +942,8 @@ async fn run_audience_stage(
             max_turns: config.ai.agent.max_turns as usize,
             retries: config.ai.agent.run_retries as usize,
             backoff_seconds: config.ai.agent.retry_backoff_seconds,
+            // r1-F1 熔断只属 viewer 面；audience 单 agent 不设 budget。
+            token_budget: None,
         },
         &mut ctx,
         &mut trace,

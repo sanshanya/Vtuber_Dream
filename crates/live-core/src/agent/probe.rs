@@ -137,6 +137,7 @@ pub async fn run_agent_check_async(config: &Config) -> Result<Value, AgentRuntim
             max_turns: 8.max(config.ai.agent.max_turns) as usize,
             retries: config.ai.agent.run_retries.max(0) as usize,
             backoff_seconds: config.ai.agent.retry_backoff_seconds,
+            token_budget: None,
         },
         &mut ctx,
         &mut trace,

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { api } from "../api";
+import { activeRunIdFrom, api } from "../api";
 import { useRunTracker } from "./RunTracker";
 
 /**
@@ -21,7 +21,16 @@ export function SingleViewerRunButton({ vid, label }: { vid: string; label?: str
       setSubmitted(run_id);
       tracker.track(run_id);
     } catch (thrown) {
-      setError(String(thrown instanceof Error ? thrown.message : thrown));
+      const text = String(thrown instanceof Error ? thrown.message : thrown);
+      // R3-F1：viewer 属单飞互斥契约——409 错文在飞 id 转 RunTracker 跟随
+      //（与 KindRunButton 同构）：入口翻转成跟随态，不裸报错。
+      const active = activeRunIdFrom(text);
+      if (active) {
+        tracker.track(active);
+        setSubmitted(active);
+      } else {
+        setError(text);
+      }
     } finally {
       setPending(false);
     }
@@ -29,7 +38,7 @@ export function SingleViewerRunButton({ vid, label }: { vid: string; label?: str
 
   return (
     <span className="run-trigger" data-testid={`single-run-${vid}`}>
-      <button disabled={pending || submitted !== null} onClick={() => void trigger()}>
+      <button disabled={pending || tracker.active || submitted !== null} onClick={() => void trigger()}>
         {submitted !== null ? "已提交（进度见页头徽标）" : (label ?? "触发该观众单查")}
       </button>
       {error && <span className="badge danger">{error}</span>}

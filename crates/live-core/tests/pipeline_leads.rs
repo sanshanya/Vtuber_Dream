@@ -99,6 +99,7 @@ fn test_config(root: &Path, uri: &str) -> Config {
                 local_trace: false,
                 run_retries: 0,
                 retry_backoff_seconds: 0.0,
+                viewer_token_budget: 200_000,
             },
             search_results_per_query: 20,
             rules: vec!["取向优先新内容与互动攻略".into()],

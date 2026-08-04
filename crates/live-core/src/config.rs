@@ -81,6 +81,9 @@ pub struct AgentRuntimeConfig {
     pub local_trace: bool,
     pub run_retries: i64,
     pub retry_backoff_seconds: f64,
+    /// r1-F1 单观众 token 预算熔断：默认 200_000（u32 域，非负），该 viewer agent
+    /// 每轮 LLM 请求后核对累计 total_tokens，超限即触顶终止并记 viewer_failure。
+    pub viewer_token_budget: u32,
 }
 
 pub const ALLOWED_APIS: [&str; 2] = ["chat_completions", "responses"];
@@ -399,6 +402,8 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 local_trace: boolean(runtime, "local_trace", true)?,
                 run_retries: integer(runtime, "run_retries", 0, Some(2))?,
                 retry_backoff_seconds: number(runtime, "retry_backoff_seconds", 0.0, Some(3.0))?,
+                viewer_token_budget: integer(runtime, "viewer_token_budget", 0, Some(200_000))?
+                    .clamp(0, u32::MAX as i64) as u32,
             },
             search_results_per_query: integer(ai, "search_results_per_query", 1, Some(20))?,
             rules,
@@ -572,6 +577,10 @@ pub fn normalized_json(config: &Config) -> Value {
         "run_retries".to_string(),
         Value::from(config.ai.agent.run_retries),
     );
+    agent.insert(
+        "viewer_token_budget".to_string(),
+        Value::from(config.ai.agent.viewer_token_budget),
+    );
     ai.insert("agent".to_string(), Value::Object(agent));
     ai.insert(
         "max_output_tokens".to_string(),
@@ -737,5 +746,26 @@ report:
         config.bilibili.cookie = "DedeUserID=1".to_string();
         let issues = collection_issues(&config);
         assert!(issues.iter().any(|issue| issue.contains("SESSDATA")));
+    }
+
+    /// r1-F1：`ai.agent.viewer_token_budget` 默认 200_000；可用键覆写；拒绝负值。
+    #[test]
+    fn viewer_token_budget_default_override_and_reject_negative() {
+        let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
+        assert_eq!(ok.ai.agent.viewer_token_budget, 200_000);
+
+        let overridden = EXAMPLE_YAML.replace(
+            "    run_retries: 2",
+            "    run_retries: 2\n    viewer_token_budget: 8000",
+        );
+        let ok2 = load_config(write_temp(&overridden).path()).unwrap();
+        assert_eq!(ok2.ai.agent.viewer_token_budget, 8000);
+
+        let bad = EXAMPLE_YAML.replace(
+            "    run_retries: 2",
+            "    run_retries: 2\n    viewer_token_budget: -5",
+        );
+        let err = load_config(write_temp(&bad).path()).unwrap_err();
+        assert!(err.to_string().contains("viewer_token_budget"), "{err}");
     }
 }

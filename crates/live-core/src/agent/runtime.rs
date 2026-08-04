@@ -187,6 +187,10 @@ pub enum AgentRuntimeError {
         attempts: usize,
         reason: String,
     },
+    /// r1-F1 单 agent token 熔断：累计 total_tokens 超过 budget 后触顶终止。
+    /// 前缀 `token_budget` 即失败分类（viewer_failure 缓存 error 面落盘）。
+    #[error("token_budget {budget} exceeded: cumulative total_tokens {used}")]
+    TokenBudget { budget: u32, used: i64 },
     #[error("config: {0}")]
     Config(String),
 }
@@ -554,6 +558,7 @@ impl AgentRuntime {
             history,
             ctx,
             max_turns,
+            token_budget,
             trace,
         } = args;
         let mut turns = 0usize;
@@ -577,6 +582,16 @@ impl AgentRuntime {
             trace.stats.input_tokens += usage.prompt_tokens;
             trace.stats.output_tokens += usage.completion_tokens;
             trace.stats.total_tokens += usage.total_tokens;
+            // r1-F1 熔断点：每轮 LLM 请求后核对累计 total_tokens，超预算即触顶终止。
+            // 顺既有 Fatal 通道（不发新错误类）；run_toolcall_agent 对 TokenBudget 特判不重试。
+            if let Some(budget) = token_budget
+                && trace.stats.total_tokens > budget as i64
+            {
+                return Err(RoundEnd::Fatal(AgentRuntimeError::TokenBudget {
+                    budget,
+                    used: trace.stats.total_tokens,
+                }));
+            }
             trace.write(
                 "llm_end",
                 json!({
@@ -676,6 +691,8 @@ struct RoundArgs<'a, C: RunCtx> {
     history: &'a mut Vec<OaiMessage>,
     ctx: &'a mut C,
     max_turns: usize,
+    /// r1-F1：None=不设预算；Some(budget)=累计 total_tokens 超限即熔断。
+    token_budget: Option<u32>,
     trace: &'a mut Trace,
 }
 
@@ -699,6 +716,8 @@ pub struct AttemptPlan<'a> {
     pub max_turns: usize,
     pub retries: usize,
     pub backoff_seconds: f64,
+    /// r1-F1：None=不设预算；Some(budget)=该 agent 累计 total_tokens 超限即熔断终止。
+    pub token_budget: Option<u32>,
 }
 
 #[derive(Debug)]
@@ -735,7 +754,7 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
             OaiMessage::system(spec.instructions.clone()),
             OaiMessage::user(plan.prompt.to_string()),
         ];
-        let main_end = runtime
+        let main = runtime
             .run_rounds(RoundArgs {
                 agent_name: &spec.name,
                 tools: &mut spec.tools,
@@ -744,12 +763,17 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
                 history: &mut history,
                 ctx,
                 max_turns: plan.max_turns,
+                token_budget: plan.token_budget,
                 trace,
             })
             .await;
-        let attempt_error = match main_end {
+        let attempt_error = match main {
             Ok(()) => None,
-            Err(RoundEnd::Fatal(err)) => Some(err.to_string()),
+            // r1-F1：熔断是终局地——不是可重试的瞬时/协议失败；立即原样抛出。
+            Err(RoundEnd::Fatal(err)) => match err {
+                AgentRuntimeError::TokenBudget { .. } => return Err(err),
+                other => Some(other.to_string()),
+            },
             Err(RoundEnd::PlainTextEnd(draft)) => {
                 // 具名强制重提交（Python runtime.py:191-224 逐字）：
                 // ① forced agent 的 instructions **替换** system 首条（主 instructions 丢弃）；
@@ -777,12 +801,17 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
                         history: &mut history,
                         ctx,
                         max_turns: forced_turns,
+                        token_budget: plan.token_budget,
                         trace,
                     })
                     .await;
                 match forced_end {
                     Ok(()) => None,
-                    Err(RoundEnd::Fatal(err)) => Some(err.to_string()),
+                    // r1-F1：forced 续跑同样受预算约束，触顶即抛（不重试）。
+                    Err(RoundEnd::Fatal(err)) => match err {
+                        AgentRuntimeError::TokenBudget { .. } => return Err(err),
+                        other => Some(other.to_string()),
+                    },
                     Err(RoundEnd::PlainTextEnd(_)) => {
                         let errors = ctx.slot().validation_errors.clone();
                         Some(

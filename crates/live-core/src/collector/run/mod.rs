@@ -120,8 +120,10 @@ pub fn collect_with_client(
     // 险口 #1：单查（SingleViewer）不清场不归档——只覆写目标 uid 的
     // viewers/<uid>.json；其余舰长事实、site、shared 全原样。其余模式
     // （StreamerOnly/Guards）保持原清场+归档行为一字不差。
-    // 用引用判断以免改动 `mode` 的所有权流（其随后 move 进 collect_inner）。
-    if !matches!(&mode, CollectMode::SingleViewer(_)) {
+    // 用引用判断以免改动 `mode` 的所有权流；R2 起同时把这 bool 复用于
+    // F1 的 /success/failure collection 收口与 F3 的线索消费闸。
+    let single_viewer = matches!(&mode, CollectMode::SingleViewer(_));
+    if !single_viewer {
         if config.perception.preserve_raw_snapshots
             && let Some(archived) =
                 storage::archive_current_snapshot(&root).map_err(CollectError::Storage)?
@@ -132,22 +134,34 @@ pub fn collect_with_client(
     }
     let started_at = now_iso();
     let started = Instant::now();
-    storage::write_json(
-        &root.join("collection.json"),
-        &json!({"status": "running", "started_at": started_at}),
-    )
-    .map_err(CollectError::Storage)?;
+    // 险口 #2（R2-F1）：单查不预写 "running" 态——中途失败/被杀不得把上一轮
+    // collection.json（哪怕是 complete）覆写掉；单查的 collection 只在本轮成功
+    // 收敛时落盘，失败即保持原字节或保持没有。其余模式保持原 running 预写。
+    if !single_viewer {
+        storage::write_json(
+            &root.join("collection.json"),
+            &json!({"status": "running", "started_at": started_at}),
+        )
+        .map_err(CollectError::Storage)?;
+    }
 
     match collect_inner(&mut client, config, &mode, emit, &started_at, started) {
         Ok(mut summary) => {
             // M4.x kickoff D5/D6：尾段消费账本（预算 0 秒返=默认休眠；消费失败
             // 不杀 collection（薄切 fail-open 亲属的对应面）。
-            let consumed = consume_approved_leads(
-                &root,
-                config.collection.lead_fetch_budget_per_run,
-                &mut |row| fetch_lead_yield(&mut client, row),
-                emit,
-            );
+            // R2-F3：单查（SingleViewer）不消费已批准线索——线索消费是把当前
+            // 账本已批准行整体烧尽的 batch 动作，单查是 single-point 增量检查，
+            // 不该动账本（lead_fetch_budget_per_run > 0 也不放行）。
+            let consumed = if single_viewer {
+                0
+            } else {
+                consume_approved_leads(
+                    &root,
+                    config.collection.lead_fetch_budget_per_run,
+                    &mut |row| fetch_lead_yield(&mut client, row),
+                    emit,
+                )
+            };
             if consumed > 0 {
                 emit(&format!("[LEADS] 本轮消费 {consumed} 条已批准线索"));
                 // M4.x-T1 冻结：三态 schema = {缺席, 正整数}；零消费不面世，
@@ -157,6 +171,22 @@ pub fn collect_with_client(
             // MXA-2（r3-F1）：request_count 在 collect_inner 内冻结——消费请求真实
             // 发生，写盘前刷新不漏报（否则传染 baseline 的 collection_request_count）。
             summary["request_count"] = json!(client.request_count());
+            if single_viewer {
+                // R2-F1 成功收口：单查写 collection.json 但口径诚实——status 固定
+                // complete；viewer_count = 盘面 viewers/*.json 实际文件数（含未动手
+                // 他人），不再落成 seed=1 的空壳骗过项目概览；guard_count 读取既有
+                // summary 值（冷启动读不到置 0）；request_count/elapsed_seconds 等
+                // 本轮采集指标照旧记本轮。summary 亦同对象，返回给调用方。
+                summary["status"] = json!("complete");
+                summary["viewer_count"] = json!(viewer_json_file_count(&root)?);
+                let guard_count = storage::read_json(&root.join("collection.json"))
+                    .ok()
+                    .flatten()
+                    .and_then(|value| value.get("guard_count").cloned())
+                    .and_then(|value| value.as_i64())
+                    .unwrap_or(0);
+                summary["guard_count"] = json!(guard_count);
+            }
             storage::write_json(&root.join("collection.json"), &summary)
                 .map_err(CollectError::Storage)?;
             emit(&format!(
@@ -169,22 +199,47 @@ pub fn collect_with_client(
             Ok(summary)
         }
         Err(err) => {
-            if storage::write_json(
-                &root.join("collection.json"),
-                &json!({
-                    "status": "failed",
-                    "started_at": started_at,
-                    "updated_at": now_iso(),
-                    "detail": err.to_string(),
-                }),
-            )
-            .is_err()
+            // R2-F1 失败收口：单查失败完全不写 collection.json——上一轮字节（哪怕
+            // 是 complete）原样保留，失败不杀伤集合门禁（episodes/baseline.rs 只认
+            // status=="complete"）；冷启动本来就没 collection.json 就保持没有。
+            // 其余模式保持原 failed 文案一字不差。
+            if !single_viewer
+                && storage::write_json(
+                    &root.join("collection.json"),
+                    &json!({
+                        "status": "failed",
+                        "started_at": started_at,
+                        "updated_at": now_iso(),
+                        "detail": err.to_string(),
+                    }),
+                )
+                .is_err()
             {
                 emit("警告：collection.json 失败状态写盘失败");
             }
             Err(err)
         }
     }
+}
+
+/// R2-F1：单查成功收口的盘面口径——viewers/*.json 实际文件数（含未动他人）。
+fn viewer_json_file_count(root: &std::path::Path) -> Result<i64, CollectError> {
+    let directory = root.join("viewers");
+    if !directory.is_dir() {
+        return Ok(0);
+    }
+    let entries = std::fs::read_dir(&directory)
+        .map_err(|err| CollectError::Storage(format!("read_dir {}: {err}", directory.display())))?;
+    let mut count = 0_i64;
+    for entry in entries {
+        let entry = entry.map_err(|err| {
+            CollectError::Storage(format!("read_dir entry {}: {err}", directory.display()))
+        })?;
+        if entry.path().extension().and_then(|e| e.to_str()) == Some("json") {
+            count += 1;
+        }
+    }
+    Ok(count)
 }
 
 fn collect_inner(
@@ -218,7 +273,9 @@ fn collect_inner(
         _ => Vec::new(),
     };
     let mut seeds: Vec<(String, Value)> = Vec::new();
-    if let CollectMode::SingleViewer(uid) = mode {
+    // R2-F2：SingleViewer 的显式目标 uid——后续 enrich 收面用它过滤 viewer 文件，
+    // 避免无差别全量回写其余舰长（每次单查都翻一批 input_hash → Z5「重保 AI」破）。
+    let single_viewer_uid: Option<String> = if let CollectMode::SingleViewer(uid) = mode {
         let uid = uid.trim().to_string();
         if uid.is_empty() {
             return Err(CollectError::Message(
@@ -237,7 +294,10 @@ fn collect_inner(
                 "seed_source": "manual",
             }),
         ));
-    }
+        Some(uid)
+    } else {
+        None
+    };
     for item in &guards {
         let uid = pystr(item.get("uid"));
         if uid.is_empty() {
@@ -332,6 +392,7 @@ fn collect_inner(
         client,
         &config.output_dir,
         config.collection.max_video_metadata_items,
+        single_viewer_uid.as_deref(),
         emit,
     )?;
     let hot_searches_count;

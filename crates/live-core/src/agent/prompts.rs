@@ -5,6 +5,7 @@
 use serde_json::{Value, json};
 
 use super::runtime::Trace;
+use super::specs::TOOL_SPECS_VERSION;
 
 /// prompts/schema 版本串：写入 trace 的 run_start 事件；改指令文本或提交 schema 时同步更新。
 pub const PROMPTS_VERSION: &str = "m3d-2026-08-04";
@@ -96,6 +97,7 @@ pub fn trace_run_start(
             "agent": agent,
             "model": model,
             "prompt_version": PROMPTS_VERSION,
+            "tool_specs_version": TOOL_SPECS_VERSION,
             "terminal_tool": terminal_tool,
             "submission_schema": submission_schema,
         }),

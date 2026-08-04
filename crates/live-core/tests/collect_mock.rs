@@ -245,6 +245,7 @@ fn test_config(root: &Path, budget: i64) -> Config {
                 local_trace: false,
                 run_retries: 0,
                 retry_backoff_seconds: 0.0,
+                viewer_token_budget: 200_000,
             },
             search_results_per_query: 20,
             rules: vec![],
@@ -558,6 +559,13 @@ async fn single_viewer_mode_collects_one_manual_viewer() {
 /// 险口 #1 回归钉：单查（SingleViewer）不得清场——archive 与 reset_output
 /// 都必须跳过，只覆写目标 uid 的 viewers/<uid>.json；其余舰长事实、site、
 /// shared 与 ai/ 哨兵一律字节级原样。
+///
+/// R2 强化：
+/// - u2 预栽升级为「带 sources.videos items（含 bvid）的完整舰长壳」——pre-fix
+///   enrich 无差别全量会把 u2 也回写（tags/platform_category 进件 → u2 字节翻）
+///   → u2 字节不变断言即是 F2 的红点。
+/// - 成功轮再断言 collection.json 口径诚实：viewer_count == 盘面文件数 2
+///   （u1+u2 都在盘），不是 seed 人数 1——F1 成功口径的红点。
 #[tokio::test(flavor = "multi_thread")]
 async fn single_viewer_preserves_other_viewers_site_and_shared() {
     let server = MockServer::start().await;
@@ -567,10 +575,22 @@ async fn single_viewer_preserves_other_viewers_site_and_shared() {
 
     // 预栽：两个观众事实 + site/shared/ai 哨兵（各写入识别串）
     let u1_seed = "{\"viewer\":{\"id\":\"u1\",\"name\":\"预栽旧事实\"}}";
-    let u2_seed = "{\"viewer\":{\"id\":\"u2\",\"name\":\"舰长B待保\"}}";
+    let u2_seed_value = json!({
+        "viewer": {"id": "u2", "name": "舰长B待保"},
+        "sources": {
+            "videos": {
+                "status": "ok",
+                "count": 1,
+                "items": [
+                    {"source": "video", "bvid": "BV14ff", "title": "舰长B投稿"}
+                ]
+            }
+        }
+    });
+    let u2_seed = serde_json::to_string(&u2_seed_value).unwrap();
     std::fs::create_dir_all(root.join("viewers")).unwrap();
     std::fs::write(root.join("viewers").join("u1.json"), u1_seed).unwrap();
-    std::fs::write(root.join("viewers").join("u2.json"), u2_seed).unwrap();
+    std::fs::write(root.join("viewers").join("u2.json"), &u2_seed).unwrap();
     std::fs::create_dir_all(root.join("site")).unwrap();
     std::fs::write(root.join("site").join("sentinel.txt"), "SITE-哨兵99").unwrap();
     std::fs::create_dir_all(root.join("shared")).unwrap();
@@ -578,11 +598,13 @@ async fn single_viewer_preserves_other_viewers_site_and_shared() {
     std::fs::create_dir_all(root.join("ai")).unwrap();
     std::fs::write(root.join("ai").join("sentinel.txt"), "AI-哨兵99").unwrap();
 
-    // 单查 u1：用既有 wiremock 布景完整采集一轮（与其余单查测试同铺）
+    // 单查 u1：用既有 wiremock 布景完整采集一轮（BV14ff 复用 mount_baseline 的
+    // video_detail/video_tags 铺法——路径匹配与 bvid 无关，天然点亮 enrich 回写路径）
     let summary = run_collect(server, root, 12, CollectMode::SingleViewer("u1".into()))
         .await
         .expect("collect ok");
-    assert_eq!(summary["viewer_count"], 1);
+    // R2-F1 口径：结果摘要的 viewer_count 也走盘面（=2），不是 seed=1
+    assert_eq!(summary["viewer_count"], 2);
 
     // (a) 其余舰长事实字节级原样
     assert_eq!(
@@ -610,6 +632,138 @@ async fn single_viewer_preserves_other_viewers_site_and_shared() {
     assert_eq!(u1["viewer"]["id"], "u1");
     assert!(u1.get("collected_at").is_some(), "新采集痕迹：collected_at");
     assert!(u1.get("sources").is_some(), "新采集痕迹：sources 面");
+
+    // (d) R2-F1 成功口径：collection.json 不得落成 seed=1 的空壳——viewer_count
+    // 必须等于盘面 viewers/*.json 实际文件数（u1+u2 都在盘 = 2）；guard_count
+    // 读不到既有值（本轮冷启动）置 0。
+    let collection = read(&root.join("collection.json"));
+    assert_eq!(collection["status"], "complete");
+    assert_eq!(
+        collection["viewer_count"], 2,
+        "单查成功轮 collection.json viewer_count 必须=盘面文件数（含未动他人），\
+         不得是种子人数 1：{collection}"
+    );
+    assert_eq!(
+        collection["guard_count"], 0,
+        "冷启动无既有 collection → guard_count 置 0：{collection}"
+    );
+}
+
+/// R2-F1 失败径回归钉：单查失败完全不写 collection.json——已经 status==complete
+/// 的旧集合字节级保留（失败不杀伤 baseline 门禁）；若冷启动本来就没有则该当保持没有。
+#[tokio::test(flavor = "multi_thread")]
+async fn single_viewer_failure_preserves_collection_json_gate() {
+    let server = MockServer::start().await;
+    // 关键端点 nav 500 → 单查在验证登录态即失败（collect_inner 第一步）
+    mount(&server, "/x/web-interface/nav", ResponseTemplate::new(500)).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    // 预栽一份 status==complete 的上一轮 collection.json（带识别摘要，字节级基线）
+    let gate_text = serde_json::to_string_pretty(&json!({
+        "status": "complete",
+        "project": "test-project",
+        "viewer_count": 15,
+        "guard_count": 14,
+        "detail": "R2-GATE-哨兵",
+    }))
+    .unwrap();
+    std::fs::write(root.join("collection.json"), &gate_text).unwrap();
+
+    let err = run_collect(server, root, 12, CollectMode::SingleViewer("u1".into()))
+        .await
+        .expect_err("nav 500 必须让单查失败");
+    assert!(
+        matches!(err, CollectError::Client(_) | CollectError::Message(_)),
+        "{err:?}"
+    );
+
+    // (a) collection.json 字节级未动（失败不得覆写为 failed / running）
+    assert_eq!(
+        std::fs::read_to_string(root.join("collection.json")).unwrap(),
+        gate_text,
+        "单查失败不得改写 collection.json（字节保真）"
+    );
+    // (b) 门禁可读：read 出来的 status 仍是 complete（baseline 门禁只看该键）
+    assert_eq!(
+        read(&root.join("collection.json"))["status"],
+        "complete",
+        "失败后 baseline 门禁仍可读 complete"
+    );
+}
+
+/// R2-F 的尾段消费闸回归钉：单查模式不得消费已批准线索——无论
+/// lead_fetch_budget_per_run 多大，pre-planted approved 行字节级原样，
+/// 搜索消费端点零请求，summary 不面世 leads_consumed。
+#[tokio::test(flavor = "multi_thread")]
+async fn single_viewer_does_not_consume_leads() {
+    let server = MockServer::start().await;
+    mount_baseline(&server).await;
+    // 消费端点蓄意备好：若 post-fix 仍误闯，必定留下请求痕迹与账本改写
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/wbi/search/type"))
+        .respond_with(json_ok(json!({"result": [
+            {"bvid": "BV1s1", "title": "实机1"}
+        ]})))
+        .mount(&server)
+        .await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    // 预置账本：1 条 approved（单查不应碰）
+    let row = live_core::leads::LedgerRow {
+        dedupe_key: "key-single-no-consum".into(),
+        lead_type: "search".into(),
+        locator: "异环 实机".into(),
+        motivation: "m".into(),
+        expected_signal: "s".into(),
+        priority: "high".into(),
+        evidence_ids: vec![],
+        viewer_id: "u".into(),
+        first_seen_run_id: "run:a".into(),
+        created_at: "t".into(),
+        status: live_core::leads::LeadStatus::Approved,
+        yield_count: 0,
+        resolution_note: String::new(),
+    };
+    let ledger_text = format!("{}\n", serde_json::to_string(&row).unwrap());
+    std::fs::write(root.join("leads.jsonl"), &ledger_text).unwrap();
+
+    let base = server.uri();
+    let mut config = test_config(root, 12);
+    config.collection.lead_fetch_budget_per_run = 1;
+    let summary = tokio::task::spawn_blocking(move || {
+        let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
+        collect_with_client(
+            client,
+            &config,
+            CollectMode::SingleViewer("1003".into()),
+            &mut |_msg: &str| {},
+        )
+    })
+    .await
+    .expect("task join")
+    .expect("collect ok");
+
+    // 账本字节级原样：approved 行未被消费
+    assert_eq!(
+        std::fs::read_to_string(root.join("leads.jsonl")).unwrap(),
+        ledger_text,
+        "单查不得消费已批准线索（预算>0 也要停火）"
+    );
+    // summary/collection 均不面世 leads_consumed
+    assert!(
+        summary.get("leads_consumed").is_none(),
+        "单查成功不得面世 leads_consumed"
+    );
+    // 消费端点零请求
+    let requests = server.received_requests().await.unwrap();
+    assert!(
+        requests
+            .iter()
+            .all(|r| !r.url.path().contains("/search/type")),
+        "单查不得触发搜索消费请求"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread")]

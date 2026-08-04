@@ -33,6 +33,12 @@ use super::runtime::{AgentTool, RunCtx, SubmissionSlot};
 pub const SEARCH_QUERY_MAX_CHARS: usize = 500;
 /// bvid 截断（Python `bvid.strip()[:100]`）。
 pub const BVID_MAX_CHARS: usize = 100;
+/// verify_videos 批内 bvid 上限（R1-2：超过直接拒绝整批）。
+pub const VERIFY_VIDEOS_MAX_ITEMS: usize = 10;
+/// verify_videos 错误行的短原因截断（只留「类别 + 短原因」，保持轻量）。
+pub const VERIFY_VIDEO_ERROR_CHARS: usize = 120;
+/// verify_videos 紧凑行 title 截断（与既有 clip 字符界同族）。
+pub const VERIFY_VIDEO_TITLE_CHARS: usize = 200;
 /// search_entity_candidates 的 limit 钳制上界（Python `max(1, min(limit, 100))`）。
 pub const SEARCH_ENTITY_LIMIT_CAP: i64 = 100;
 /// 搜索 limit 的双层钳制上界（Python `min(limit, per_query_cap, 50)` 的常数 50）。
@@ -306,6 +312,10 @@ impl ResearchService {
             "owner": if get("owner").is_object() { get("owner") } else { json!({}) },
             "stat": if get("stat").is_object() { get("stat") } else { json!({}) },
             "pubdate": get("pubdate"),
+            // R1-2：verify_videos 批原语的紧凑行需要 aid/duration——与 get_bilibili_video
+            // 同族（同详情端点、同缓存），在整形对象上增补这两个字段（纯增量，Python 无此工具）。
+            "aid": get("aid"),
+            "duration": get("duration"),
             "platform_category": {
                 "id": int_or_zero(&get("tid")),
                 "name": py_str(&get("tname")),
@@ -491,6 +501,66 @@ pub fn get_bilibili_video_tool<C: HasResearch>() -> AgentTool<C> {
     }
 }
 
+/// `verify_videos`：批量核验真实B站视频（R1-2 批原语，Python 无对应工具）。
+///
+/// 契约：
+/// - 参数 `bvids: string[]`，最多 {@link VERIFY_VIDEOS_MAX_ITEMS} 个，超限整批拒绝；
+/// - 同一详情端点族（ResearchService.video 缓存），单条失败不中断批次；
+/// - 每条成功 = 紧凑行：status/title/duration/aid（title 字符界收敛）；
+/// - 每条失败 = 只有 `error`：`类别 + 短原因`（字符界收敛）。
+pub fn verify_videos_tool<C: HasResearch>() -> AgentTool<C> {
+    AgentTool {
+        name: "verify_videos".to_string(),
+        description:
+            "批量核验真实B站视频是否存在，逐条返回紧凑确认（标题/时长/aid）；单条失败不影响其余。"
+                .to_string(),
+        parameters: obj_schema(
+            &[(
+                "bvids",
+                json!({"type": "array", "items": {"type": "string"}}),
+            )],
+            &["bvids"],
+        ),
+        terminal: false,
+        handler: Box::new(|ctx: &mut C, args: &Value| {
+            let bvids: Vec<String> = arg_str_list(args, "bvids");
+            if bvids.len() > VERIFY_VIDEOS_MAX_ITEMS {
+                return json!({
+                    "error": format!(
+                        "bvids 超过上限 {}：收到 {} 个，整批拒绝",
+                        VERIFY_VIDEOS_MAX_ITEMS,
+                        bvids.len()
+                    ),
+                    "count": 0,
+                    "results": [],
+                });
+            }
+            let mut results: Vec<Value> = Vec::with_capacity(bvids.len());
+            for raw in &bvids {
+                let bvid = char_prefix(raw.trim(), BVID_MAX_CHARS);
+                if bvid.is_empty() {
+                    results.push(json!({"bvid": raw, "error": "bvid: empty"}));
+                    continue;
+                }
+                match ctx.research().video(&bvid) {
+                    Ok(detail) => results.push(json!({
+                        "bvid": bvid,
+                        "status": "ok",
+                        "title": clip(detail.get("title"), VERIFY_VIDEO_TITLE_CHARS),
+                        "duration": detail.get("duration").cloned().unwrap_or(Value::Null),
+                        "aid": detail.get("aid").cloned().unwrap_or(Value::Null),
+                    })),
+                    Err(err) => results.push(json!({
+                        "bvid": bvid,
+                        "error": char_prefix(&err.to_string(), VERIFY_VIDEO_ERROR_CHARS),
+                    })),
+                }
+            }
+            json!({"count": results.len(), "results": results})
+        }),
+    }
+}
+
 /// `search_entity_candidates`：长期实体注册表检索，用于实体消歧（Viewer 面）。
 pub fn search_entity_candidates_tool<C: HasStore>() -> AgentTool<C> {
     AgentTool {
@@ -623,6 +693,12 @@ pub fn query_graph_tool<C: HasAudience>() -> AgentTool<C> {
 }
 
 /// Viewer Agent 调查工具集（终局工具在 M3-C 由 validators 装配）。
+///
+/// R1-2 注：`verify_videos` 批原语在此**钉面之外**——agent_golden 的
+/// `prompts_assembly_and_spec_parity` 把 Viewer 工具清单钉死为 Python 冻结的
+/// 4 工具（search_entity_candidates / search_bilibili_videos / get_bilibili_video /
+/// submit_viewer_perception），注册即破坏 parity（Python 侧无 verify_videos）。
+/// 实现与 3 个直用单测保留在 tests/agent_tools.rs；G2 决定是否入装配点。
 pub fn viewer_investigation_tools() -> Vec<AgentTool<ViewerAgentCtx>> {
     vec![
         search_entity_candidates_tool(),

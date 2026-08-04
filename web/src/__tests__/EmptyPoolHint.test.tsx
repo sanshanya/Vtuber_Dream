@@ -7,7 +7,15 @@ import { EmptyPoolHint } from "../pages/Viewers";
 /** 空池引导位是纯组件：uid 接线 + 提交时序由 props 走，不摸 fetch。 */
 function Harness(props: { onSubmit: () => void }) {
   const [uid, setUid] = useState("");
-  return <EmptyPoolHint uid={uid} pending={false} onUidChange={setUid} onSubmit={props.onSubmit} />;
+  return (
+    <EmptyPoolHint
+      uid={uid}
+      pending={false}
+      runActive={false}
+      onUidChange={setUid}
+      onSubmit={props.onSubmit}
+    />
+  );
 }
 
 describe("空池单查引导位（§12 冷启动）", () => {
@@ -28,9 +36,32 @@ describe("空池单查引导位（§12 冷启动）", () => {
   });
 
   it("pending 态：钮禁 + 文安暗示已提交", () => {
-    render(<EmptyPoolHint uid="42" pending={true} onUidChange={() => {}} onSubmit={() => {}} />);
+    render(
+      <EmptyPoolHint
+        uid="42"
+        pending={true}
+        runActive={false}
+        onUidChange={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
     const button = screen.getByRole("button");
     expect(button).toHaveProperty("disabled", true);
     expect(button.textContent).toBe("已提交…");
+  });
+
+  it("R3-F1 单飞互斥：在飞 run 期间钮禁（即便 uid 已填）——文本框照旧可输", () => {
+    render(
+      <EmptyPoolHint
+        uid="42"
+        pending={false}
+        runActive={true}
+        onUidChange={() => {}}
+        onSubmit={() => {}}
+      />,
+    );
+    const button = screen.getByRole("button");
+    expect(button).toHaveProperty("disabled", true);
+    expect(screen.getByLabelText("单查观众 uid")).toHaveProperty("disabled", false);
   });
 });

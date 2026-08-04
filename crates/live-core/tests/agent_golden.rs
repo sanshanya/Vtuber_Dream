@@ -72,6 +72,7 @@ fn plan<'a>(label: &'a str, prompt: &'a str, max_turns: usize) -> AttemptPlan<'a
         max_turns,
         retries: 0,
         backoff_seconds: 0.0,
+        token_budget: None,
     }
 }
 
@@ -240,6 +241,10 @@ async fn golden_viewer_reject_then_accept() {
     );
     assert!(trace_text.contains("m3d-2026-08-04"), "{trace_text}");
     assert!(
+        trace_text.contains("2026-08-04.v1"),
+        "R1-4 工具规格版本串必须随 run_start 入 trace：{trace_text}"
+    );
+    assert!(
         trace_text.contains("ViewerPerceptionSubmission"),
         "{trace_text}"
     );
@@ -394,6 +399,10 @@ async fn golden_audience_happy_path() {
     assert!(
         trace_text.contains("AudienceSituationSubmission"),
         "{trace_text}"
+    );
+    assert!(
+        trace_text.contains("2026-08-04.v1"),
+        "R1-4 工具规格版本串必须随 run_start 入 trace：{trace_text}"
     );
     assert!(!trace_text.contains("核验单人"), "{trace_text}");
 }

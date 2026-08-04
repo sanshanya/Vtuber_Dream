@@ -242,6 +242,86 @@ async fn existing_dist_serves_index() {
     assert!(text.contains("dist-ok"), "{text}");
 }
 
+// ---------------------------------------------------------------------------
+// R5-yellow：demo→HTML 一体化（site 挂 M5 之后，run --demo 的数据面↔页面骨架同端）
+// ---------------------------------------------------------------------------
+
+/// R5-yellow 钉 demo：run --demo 的数据面（data_root = build_demo 产物）与页面骨架
+/// （web_root = dist）必须同在一个 app 实例、同一端口两面可达——demo 是「历史数据
+/// 一体呈现」的完整形态，不是只有 API 的数据桩。不钉出什么：dist 路由改名 / 产物
+/// 注入失效会在这里静默回归（页面 200 但内容不再是 index，D5 有先例）。
+#[tokio::test(flavor = "multi_thread")]
+async fn demo_serve_closes_page_skeleton_and_data_surface() {
+    let tmp = tempfile::tempdir().unwrap();
+    // 页面骨架：dist 形态照抄 existing_dist_serves_index——合成 index.html 含可识别标记串。
+    let dist = tmp.path().join("dist");
+    std::fs::create_dir_all(&dist).unwrap();
+    std::fs::write(dist.join("index.html"), "<h1>demo-index-ok</h1>").unwrap();
+    // demo 数据面：照 app_data 的 demo fixture 姿势拿 config → build_demo 到临时输出根。
+    let output_dir = tmp.path().join("out");
+    let config_path = tmp.path().join("config.yaml");
+    std::fs::write(
+        &config_path,
+        common::yaml_template(
+            None,
+            "demo-serve",
+            "SESSDATA=supersecret",
+            "supersecret-key",
+            "http://127.0.0.1:9/v1",
+            "demo-serve",
+        )
+        .replace(
+            "OUTPUT_DIR",
+            &output_dir.display().to_string().replace('\\', "/"),
+        ),
+    )
+    .unwrap();
+    let config = live_core::config::load_config(&config_path).expect("config loads");
+    let built = live_core::demo::build_demo(&config, None).expect("demo builds");
+    let demo_root = std::path::PathBuf::from(
+        built["output_dir"]
+            .as_str()
+            .expect("demo reports output_dir"),
+    );
+    let app = build_app(AppState {
+        config_path,
+        web_root: dist,
+        registry: live_server::registry::Registry::new(),
+        demo: true,
+        data_root: Some(demo_root),
+        bilibili_hosts: None,
+        config_write_lock: Default::default(),
+    });
+
+    // ① 页面骨架：GET / → 200 且 index 标记串在（dist 装配在 demo 模式同样生效）。
+    let request = Request::builder()
+        .uri("/")
+        .body(axum::body::Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 200);
+    let page = String::from_utf8(
+        response
+            .into_body()
+            .collect()
+            .await
+            .unwrap()
+            .to_bytes()
+            .to_vec(),
+    )
+    .unwrap();
+    assert!(page.contains("demo-index-ok"), "{page}");
+
+    // ② 数据面：demo API 数据端点 → 200 且 demo 数据标志在（demo-1 观众行）。
+    let (status, body) = oneshot(&app, "GET", "/api/rooms/983/viewers", None).await;
+    assert_eq!(status, 200, "{body}");
+    let viewers = body.as_array().expect("viewer list");
+    assert!(
+        viewers.iter().any(|row| row["uid"] == "demo-1"),
+        "demo 数据面必须与页面骨架同端可达：{body}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn unknown_run_id_is_404() {
     let fx = fixture(None);
