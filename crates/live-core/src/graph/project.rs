@@ -16,9 +16,6 @@ use serde_json::{Map, Value, json};
 use super::query;
 use super::store::{GRAPH_SCHEMA_VERSION, Result, Store};
 
-/// Python graph.AUDIENCE_GRAPH_LIMIT。
-pub const AUDIENCE_GRAPH_LIMIT: i64 = 5_000;
-
 #[derive(Debug, Clone)]
 pub struct ProjectOptions {
     pub include_episodes: bool,

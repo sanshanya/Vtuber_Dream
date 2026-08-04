@@ -14,7 +14,7 @@ use crate::episodes::Episode;
 use crate::episodes::baseline::{build_factual_baseline, viewer_context};
 use crate::episodes::episodes_from_context;
 use crate::graph::build::{apply_audience_submission, apply_viewer_submission};
-use crate::graph::project::{self, AUDIENCE_GRAPH_LIMIT, ProjectOptions};
+use crate::graph::project::{self, ProjectOptions};
 use crate::graph::query::search_entities;
 use crate::graph::store::Store;
 use crate::models::{
@@ -516,7 +516,7 @@ pub fn build_demo(config: &Config, output_dir: Option<&Path>) -> Result<Value, D
             &ProjectOptions {
                 include_episodes: false,
                 include_interest_states: false,
-                limit: Some(AUDIENCE_GRAPH_LIMIT),
+                limit: Some(demo_config.perception.graph_row_limit),
                 minimum_community_size: demo_config.perception.minimum_community_size,
                 ..ProjectOptions::default()
             },

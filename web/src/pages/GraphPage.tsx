@@ -345,6 +345,12 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
     <section className="section">
       <div className="section-title">
         <h2>{vid ? `局部图 · ${vid}` : "整体图谱"}</h2>
+        {/* Z6/P0-6：默认折叠视图如实标注——细节层（场次/证据）不进首载。 */}
+        {!vid && (
+          <span className="muted small" data-testid="graph-fold-hint">
+            默认折叠视图：仅人与关注点主骨架
+          </span>
+        )}
         <div className="legend">
           <span><i className="dot fact" /> Viewer/舰长</span>
           <span><i className="dot ai" /> Entity/兴趣</span>

@@ -53,6 +53,11 @@ fn test_config(root: &Path) -> Config {
             preserve_raw_snapshots: false,
             platform_hot_search_limit: 1,
             minimum_community_size: 1,
+            graph_default_expanded_kinds: live_core::config::GRAPH_DEFAULT_EXPANDED_KINDS
+                .iter()
+                .map(|kind| kind.to_string())
+                .collect(),
+            graph_row_limit: live_core::config::DEFAULT_GRAPH_ROW_LIMIT,
             peer: PeerDiscoveryConfig {
                 candidate_limit: 1,
                 recent_videos: 1,

@@ -67,8 +67,32 @@ pub struct PerceptionConfig {
     pub preserve_raw_snapshots: bool,
     pub platform_hot_search_limit: i64,
     pub minimum_community_size: i64,
+    /// Z6/P0-6：整体图谱默认展开节点类白名单——Episode/Mention 细节层默认折叠，
+    /// 前端整体图首载只看 Viewer/Entity/状态-行动层。查询参数 `?kinds=all` 可逃回全量。
+    /// 配置值必须属于 [`GRAPH_KIND_ALLOWLIST`]；特殊单值 "all" 展开为全部类。
+    pub graph_default_expanded_kinds: Vec<String>,
+    /// Z6/P0-6：graph 读面各臂（nodes/edges/mentions/episodes）单行帽
+    /// （Python graph.AUDIENCE_GRAPH_LIMIT 归配）；>=1。与 GRAPH_QUERY_LIMIT=500
+    /// （Python 查询口径钳制，parity 钉）是两条独立闸线，本键只治理「面板导出行帽」。
+    pub graph_row_limit: i64,
     pub peer: PeerDiscoveryConfig,
 }
+
+/// 图节点类受控全集（node_type 全谱；InterestState/Situation/Action 历史上可作节点出现）。
+pub const GRAPH_KIND_ALLOWLIST: [&str; 7] = [
+    "Viewer",
+    "Entity",
+    "Episode",
+    "Mention",
+    "InterestState",
+    "Situation",
+    "Action",
+];
+/// Z6/P0-6 默认展开白名单（细节层 Episode/Mention 折叠：实测 s0 元素数 −75%、字节 −79%）。
+pub const GRAPH_DEFAULT_EXPANDED_KINDS: [&str; 5] =
+    ["Viewer", "Entity", "InterestState", "Situation", "Action"];
+/// 面板导出行帽默认值（Python graph.AUDIENCE_GRAPH_LIMIT 的同语义迁移锚）。
+pub const DEFAULT_GRAPH_ROW_LIMIT: i64 = 5_000;
 
 pub const ALLOWED_EFFORTS: [&str; 7] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"];
 
@@ -399,6 +423,54 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 Some(50),
             )?,
             minimum_community_size: integer(perception, "minimum_community_size", 1, Some(1))?,
+            graph_default_expanded_kinds: {
+                let kinds: Vec<String> = match perception.get("graph_default_expanded_kinds") {
+                    None => GRAPH_DEFAULT_EXPANDED_KINDS
+                        .iter()
+                        .map(|kind| kind.to_string())
+                        .collect(),
+                    Some(Value::Array(items)) => {
+                        let mut seen: Vec<String> = Vec::new();
+                        for item in items {
+                            let kind = py_str_config(item).trim().to_string();
+                            if kind.is_empty() || seen.contains(&kind) {
+                                continue;
+                            }
+                            if !GRAPH_KIND_ALLOWLIST.contains(&kind.as_str()) {
+                                return Err(ConfigError::new(format!(
+                                    "'perception.graph_default_expanded_kinds' 未知节点类 \
+                                     \"{kind}\"（允许：{}；或单值 all = 全谱）",
+                                    GRAPH_KIND_ALLOWLIST.join("/"),
+                                )));
+                            }
+                            seen.push(kind);
+                        }
+                        if seen.is_empty() {
+                            return Err(ConfigError::new(
+                                "'perception.graph_default_expanded_kinds' 不可为空列表",
+                            ));
+                        }
+                        seen
+                    }
+                    // 单值 "all" = 全谱逃生门（与白名单全集等价，刻意不止收进查询参数）。
+                    Some(Value::String(s)) if s.trim() == "all" => GRAPH_KIND_ALLOWLIST
+                        .iter()
+                        .map(|kind| kind.to_string())
+                        .collect(),
+                    Some(_) => {
+                        return Err(ConfigError::new(
+                            "'perception.graph_default_expanded_kinds' must be a list 或 \"all\"",
+                        ));
+                    }
+                };
+                kinds
+            },
+            graph_row_limit: integer(
+                perception,
+                "graph_row_limit",
+                1,
+                Some(DEFAULT_GRAPH_ROW_LIMIT),
+            )?,
             peer: PeerDiscoveryConfig {
                 candidate_limit: integer(peer, "candidate_limit", 1, Some(20))?,
                 recent_videos: integer(peer, "recent_videos", 1, Some(8))?,
@@ -822,6 +894,54 @@ report:
         );
         let err = load_config(write_temp(&bad).path()).unwrap_err();
         assert!(err.to_string().contains("viewer_token_budget"), "{err}");
+    }
+
+    /// Z6/P0-6：graph_default_expanded_kinds 默认五类白名单；"all" 展开七类全谱；
+    /// 未知类/空列表/非列表一律拒装。graph_row_limit 默认 5000、可覆盖、拒 0。
+    #[test]
+    fn graph_fold_and_row_limit_default_override_and_reject() {
+        let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
+        assert_eq!(
+            ok.perception.graph_default_expanded_kinds,
+            vec!["Viewer", "Entity", "InterestState", "Situation", "Action"]
+        );
+        assert_eq!(ok.perception.graph_row_limit, 5_000);
+
+        let overridden = EXAMPLE_YAML.replace(
+            "  peer_discovery:",
+            "  graph_default_expanded_kinds: [Viewer, Entity, Episode]\n  graph_row_limit: 2000\n  peer_discovery:",
+        );
+        let ok2 = load_config(write_temp(&overridden).path()).unwrap();
+        assert_eq!(
+            ok2.perception.graph_default_expanded_kinds,
+            vec!["Viewer", "Entity", "Episode"]
+        );
+        assert_eq!(ok2.perception.graph_row_limit, 2000);
+
+        let all = EXAMPLE_YAML.replace(
+            "  peer_discovery:",
+            "  graph_default_expanded_kinds: all\n  peer_discovery:",
+        );
+        let ok3 = load_config(write_temp(&all).path()).unwrap();
+        assert_eq!(ok3.perception.graph_default_expanded_kinds.len(), 7);
+
+        for snippet in [
+            "  graph_default_expanded_kinds: [Viewer, Unicorn]",
+            "  graph_default_expanded_kinds: []",
+            "  graph_default_expanded_kinds: 42",
+            "  graph_row_limit: 0",
+        ] {
+            let bad = EXAMPLE_YAML.replace(
+                "  peer_discovery:",
+                &format!("{snippet}\n  peer_discovery:"),
+            );
+            let err = load_config(write_temp(&bad).path()).unwrap_err();
+            assert!(
+                err.to_string().contains("graph_default_expanded_kinds")
+                    || err.to_string().contains("graph_row_limit"),
+                "{snippet} 必须拒装：{err}"
+            );
+        }
     }
 
     /// Z3/P0-4：`ai.agent.max_parallel_viewers` 默认 4（最低 1）；

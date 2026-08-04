@@ -50,6 +50,7 @@ fn fixture(web_root: Option<&str>) -> Fixture {
         data_root: None,
         bilibili_hosts: None,
         config_write_lock: Default::default(),
+        graph_artifact_lock: Default::default(),
     });
     Fixture {
         _tmp: tmp,
@@ -223,6 +224,7 @@ async fn existing_dist_serves_index() {
         data_root: None,
         bilibili_hosts: None,
         config_write_lock: Default::default(),
+        graph_artifact_lock: Default::default(),
     });
     let request = Request::builder()
         .uri("/")
@@ -291,6 +293,7 @@ async fn demo_serve_closes_page_skeleton_and_data_surface() {
         data_root: Some(demo_root),
         bilibili_hosts: None,
         config_write_lock: Default::default(),
+        graph_artifact_lock: Default::default(),
     });
 
     // ① 页面骨架：GET / → 200 且 index 标记串在（dist 装配在 demo 模式同样生效）。

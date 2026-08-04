@@ -18,6 +18,10 @@ axum = "0.7"
 tower-http = { version = "0.5", features = ["fs"] }
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 uuid = { version = "1", features = ["v4"] }
+# Z6/P0-6：graph payload 物化通道（ETag = sha256 前缀；trio 预压缩 = gzip fast + brotli q5）。
+sha2 = "0.10"
+flate2 = "1"
+brotli = "7"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }

@@ -455,7 +455,7 @@ use super::validators::{validate_audience_submission, validate_viewer_submission
 use crate::bilibili::BilibiliClient;
 use crate::config::Config;
 use crate::graph::build;
-use crate::graph::project::{AUDIENCE_GRAPH_LIMIT, ProjectOptions, project};
+use crate::graph::project::{ProjectOptions, project};
 use crate::graph::store::{Store, StoreError};
 use crate::leads;
 use crate::models::{AudienceSituationSubmission, ViewerPerceptionSubmission};
@@ -1531,7 +1531,7 @@ async fn run_pipeline_inner(
             include_interest_states: true,
             include_situation_actions: false,
             current_run_id: Some(run_id.clone()),
-            limit: Some(AUDIENCE_GRAPH_LIMIT),
+            limit: Some(config.perception.graph_row_limit),
             minimum_community_size: config.perception.minimum_community_size,
             ..ProjectOptions::default()
         },

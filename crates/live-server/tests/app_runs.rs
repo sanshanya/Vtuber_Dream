@@ -53,6 +53,7 @@ fn fixture(demo: bool, bilibili_hosts: Option<(String, String)>) -> Fixture {
         data_root: None,
         bilibili_hosts,
         config_write_lock: Default::default(),
+        graph_artifact_lock: Default::default(),
     });
     Fixture {
         _tmp: tmp,

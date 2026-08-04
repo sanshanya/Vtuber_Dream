@@ -2,6 +2,8 @@
 //!
 //! 布景 = build_demo 到临时输出根 → web/dist 无参与（fallback 另案钉）。
 
+use std::io::Read as _;
+
 use serde_json::Value;
 use tower::ServiceExt;
 
@@ -16,6 +18,7 @@ struct Fixture {
     _tmp: tempfile::TempDir,
     app: axum::Router,
     data_root: std::path::PathBuf,
+    config_path: std::path::PathBuf,
 }
 
 fn fixture() -> Fixture {
@@ -46,18 +49,20 @@ fn fixture() -> Fixture {
             .expect("demo reports output_dir"),
     );
     let app = build_app(AppState {
-        config_path,
+        config_path: config_path.clone(),
         web_root: tmp.path().join("no-dist"),
         registry: live_server::registry::Registry::new(),
         demo: true,
         data_root: Some(data_root.clone()),
         bilibili_hosts: None,
         config_write_lock: Default::default(),
+        graph_artifact_lock: Default::default(),
     });
     Fixture {
         _tmp: tmp,
         app,
         data_root,
+        config_path,
     }
 }
 
@@ -392,7 +397,8 @@ async fn viewer_tree_marks_stale_perception_hash_flips() {
 #[tokio::test(flavor = "multi_thread")]
 async fn graph_endpoints_cytoscape_shape_and_viewer_scope() {
     let fx = fixture();
-    let (status, body) = get(&fx.app, "/api/rooms/983/graph").await;
+    // Z6：默认视图已折叠——「全量」形状钉走显式 all 逃生门（Z6 前 payload 面同形）。
+    let (status, body) = get(&fx.app, "/api/rooms/983/graph?kinds=all").await;
     assert_eq!(status, 200, "{body}");
     let elements = body["elements"].as_array().expect("elements");
     assert!(!elements.is_empty(), "{body}");
@@ -447,6 +453,246 @@ async fn graph_endpoints_cytoscape_shape_and_viewer_scope() {
     assert!(scoped_elements.len() < elements.len(), "子集必须收敛");
 }
 
+// ---------------------------------------------------------------------------
+// Z6/P0-6：整体图谱物化协商 + kind 折叠钉团
+// ---------------------------------------------------------------------------
+
+/// 带请求头的原始往返（status, headers, raw bytes）。
+async fn request_raw(
+    app: &axum::Router,
+    path: &str,
+    headers: &[(&str, &str)],
+) -> (axum::http::StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let mut builder = Request::builder().uri(path);
+    for (key, value) in headers {
+        builder = builder.header(*key, *value);
+    }
+    let response = app
+        .clone()
+        .oneshot(builder.body(axum::body::Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let hdrs = response.headers().clone();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    (status, hdrs, bytes.to_vec())
+}
+
+/// 默认视图 = 配置白名单折叠投影；物化协商面：CE/ETag/Vary/Cache-Control + 304。
+#[tokio::test(flavor = "multi_thread")]
+async fn graph_default_folded_serves_artifact_with_etag_gzip_and_304() {
+    let fx = fixture();
+    // 1) 协商顺序钉：br 优先 → CE=br 且可 brotli 解码；gzip 请求 → CE=gzip 且可解压。
+    let (status, hdrs, bytes) = request_raw(
+        &fx.app,
+        "/api/rooms/983/graph",
+        &[("accept-encoding", "br, gzip")],
+    )
+    .await;
+    assert_eq!(status.as_u16(), 200, "headers={hdrs:?}");
+    assert_eq!(hdrs.get("content-encoding").unwrap(), "br", "br 优先");
+    let mut decompressed = Vec::new();
+    brotli::Decompressor::new(&bytes[..], 4096)
+        .read_to_end(&mut decompressed)
+        .expect("br 体可解码");
+    let etag = hdrs
+        .get("etag")
+        .expect("etag header")
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(etag.starts_with('\"') && etag.len() > 10, "{etag}");
+    assert!(
+        hdrs.get("vary")
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("Accept-Encoding")
+    );
+    assert_eq!(hdrs.get("cache-control").unwrap(), "no-cache");
+
+    let (status_g, hdrs_g, bytes_g) = request_raw(
+        &fx.app,
+        "/api/rooms/983/graph",
+        &[("accept-encoding", "gzip")],
+    )
+    .await;
+    assert_eq!(status_g.as_u16(), 200);
+    assert_eq!(hdrs_g.get("content-encoding").unwrap(), "gzip");
+    assert_eq!(
+        hdrs_g.get("etag").unwrap(),
+        &etag,
+        "ETag 与编码无关（内容寻址）"
+    );
+    let mut plain = String::new();
+    flate2::read::GzDecoder::new(&bytes_g[..])
+        .read_to_string(&mut plain)
+        .expect("gzip 体可解压");
+    assert_eq!(
+        plain.as_bytes(),
+        decompressed.as_slice(),
+        "两编码解码后必须同体"
+    );
+    let body: Value = serde_json::from_str(&plain).expect("解压体是 JSON");
+    let elements = body["elements"].as_array().expect("elements");
+    // 2) 折叠断言：demo 布景全谱含 Episode/Mention——默认视图必须折叠殆尽；
+    //    存活边双端都在投影内（悬空裁除完整性）。
+    let kinds: std::collections::BTreeSet<&str> = elements
+        .iter()
+        .filter_map(|el| el["data"]["kind"].as_str())
+        .collect();
+    assert!(
+        kinds.iter().all(|kind| ["Viewer", "Entity"].contains(kind)),
+        "默认视图 kind 收规：{kinds:?}"
+    );
+    let node_ids: std::collections::BTreeSet<&str> = elements
+        .iter()
+        .filter(|el| el["data"]["kind"].is_string())
+        .filter_map(|el| el["data"]["id"].as_str())
+        .collect();
+    let edges: Vec<&Value> = elements
+        .iter()
+        .filter(|el| !el["data"]["source"].is_null())
+        .collect();
+    assert!(!edges.is_empty(), "默认视图必须保有 INTERESTED_IN：{body}");
+    for edge in &edges {
+        for key in ["source", "target"] {
+            assert!(
+                node_ids.contains(edge["data"][key].as_str().unwrap_or("")),
+                "悬空边必须裁除：{edge}"
+            );
+        }
+    }
+    // 3) 304：If-None-Match 命中 → 空体 + 同 ETag。
+    let (status_304, hdrs_304, bytes_304) = request_raw(
+        &fx.app,
+        "/api/rooms/983/graph",
+        &[
+            ("accept-encoding", "gzip"),
+            ("if-none-match", etag.as_str()),
+        ],
+    )
+    .await;
+    assert_eq!(status_304, axum::http::StatusCode::NOT_MODIFIED);
+    assert_eq!(hdrs_304.get("etag").unwrap(), &etag);
+    assert!(bytes_304.is_empty(), "304 不能有体");
+
+    // 4) 物化件三通道按内容寻址 etag 命名落盘（demo 布景折叠体 > 压缩阈值 → trio 齐）。
+    let store_dir = fx.data_root.join("graph");
+    let bare_etag = etag.trim_matches('\"');
+    for path in [
+        format!("web-graph.{bare_etag}.json"),
+        format!("web-graph.{bare_etag}.json.gz"),
+        format!("web-graph.{bare_etag}.json.br"),
+    ] {
+        assert!(store_dir.join(&path).exists(), "缺物化档 {path}");
+    }
+}
+
+/// ?kinds=all 逃生门 = Z6 前的全量面；csv 自定义折叠现算直通；未知类响亮 400。
+#[tokio::test(flavor = "multi_thread")]
+async fn graph_kinds_all_escape_and_csv_straight_through_and_bad_kind_400() {
+    let fx = fixture();
+    let (status_all, _, bytes_all) =
+        request_raw(&fx.app, "/api/rooms/983/graph?kinds=all", &[]).await;
+    assert_eq!(status_all, 200);
+    let all: Value = serde_json::from_slice(&bytes_all).unwrap();
+    let all_kinds: std::collections::BTreeSet<&str> = all["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|el| el["data"]["kind"].as_str())
+        .collect();
+    assert!(
+        all_kinds.contains("Episode") && all_kinds.contains("Mention"),
+        "all 逃生门必须含细节层：{all_kinds:?}"
+    );
+
+    let (status_v, _, bytes_v) =
+        request_raw(&fx.app, "/api/rooms/983/graph?kinds=Viewer", &[]).await;
+    assert_eq!(status_v, 200);
+    let only_viewers: Value = serde_json::from_slice(&bytes_v).unwrap();
+    let list = only_viewers["elements"].as_array().unwrap();
+    assert!(!list.is_empty());
+    assert!(
+        list.iter().all(|el| el["data"]["kind"] == "Viewer"),
+        "{only_viewers}"
+    );
+
+    let (status_bad, _, bytes_bad) =
+        request_raw(&fx.app, "/api/rooms/983/graph?kinds=Viewer,Unicorn", &[]).await;
+    assert_eq!(status_bad, 400);
+    let err: Value = serde_json::from_slice(&bytes_bad).unwrap();
+    let message = err["error"].as_str().unwrap();
+    assert!(
+        message.contains("Unicorn") && message.contains("Viewer/Entity"),
+        "{err}"
+    );
+}
+
+/// 失效面一：配置白名单改动（重写 yaml；app 每请求 load_config）→ 指纹 kinds 键
+/// 翻面 → 重建 + 新默认视图构图随配置走。
+#[tokio::test(flavor = "multi_thread")]
+async fn graph_artifact_rebuilds_when_whitelist_config_changes() {
+    let fx = fixture();
+    let (_, hdrs, _) = request_raw(&fx.app, "/api/rooms/983/graph", &[]).await;
+    let etag_before = hdrs.get("etag").unwrap().to_str().unwrap().to_string();
+
+    let yaml = std::fs::read_to_string(&fx.config_path).unwrap();
+    std::fs::write(
+        &fx.config_path,
+        yaml.replace(
+            "  peer_discovery:",
+            "  graph_default_expanded_kinds: [Viewer]\n  peer_discovery:",
+        ),
+    )
+    .unwrap();
+    let (status, hdrs2, bytes) = request_raw(&fx.app, "/api/rooms/983/graph", &[]).await;
+    assert_eq!(status, 200);
+    let etag_after = hdrs2.get("etag").unwrap().to_str().unwrap();
+    assert_ne!(etag_before, etag_after, "白名单翻面必须翻面 ETag");
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    let kinds: std::collections::BTreeSet<&str> = body["elements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|el| el["data"]["kind"].as_str())
+        .collect();
+    assert_eq!(kinds, ["Viewer"].into_iter().collect(), "{body}");
+}
+
+/// 失效面二：图库写入新节点 → (mtime,len) 指纹翻面 → 重建；
+/// ETag 内容寻址：内容变 → ETag 必须变。
+#[tokio::test(flavor = "multi_thread")]
+async fn graph_artifact_etag_follows_store_content() {
+    let fx = fixture();
+    let (_, hdrs, _) = request_raw(&fx.app, "/api/rooms/983/graph", &[]).await;
+    let etag_before = hdrs.get("etag").unwrap().to_str().unwrap().to_string();
+
+    let conn = rusqlite::Connection::open(fx.data_root.join("graph/perception.sqlite3")).unwrap();
+    conn.execute(
+        "INSERT INTO nodes (node_id, node_type, name, properties_json, source_kind, first_seen_at, last_seen_at) \
+         VALUES ('viewer:z6-probe', 'Viewer', 'Z6探针', '{}', 'platform', 's', 's')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+
+    let (status, hdrs2, bytes) = request_raw(&fx.app, "/api/rooms/983/graph", &[]).await;
+    assert_eq!(status, 200);
+    let etag_after = hdrs2.get("etag").unwrap().to_str().unwrap();
+    assert_ne!(etag_before, etag_after, "内容变 → 内容寻址 ETag 必须变");
+    let body: Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(
+        body["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|el| el["data"]["id"] == "viewer:z6-probe"),
+        "新节点必须进默认视图（Viewer 在白名单）：{body}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn graph_endpoints_404_when_graph_absent() {
     let tmp = tempfile::tempdir().unwrap();
@@ -477,6 +723,7 @@ async fn graph_endpoints_404_when_graph_absent() {
         data_root: None,
         bilibili_hosts: None,
         config_write_lock: Default::default(),
+        graph_artifact_lock: Default::default(),
     });
     let (status, _body) = get(&app, "/api/rooms/983/graph").await;
     assert_eq!(status, 404);

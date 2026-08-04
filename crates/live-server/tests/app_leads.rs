@@ -89,6 +89,7 @@ fn fixture() -> Fixture {
         data_root: None,
         bilibili_hosts: None,
         config_write_lock: Default::default(),
+        graph_artifact_lock: Default::default(),
     });
     Fixture {
         _tmp: tmp,
@@ -262,6 +263,7 @@ async fn approve_migrates_legacy_jsonl_then_flips_row() {
         data_root: None,
         bilibili_hosts: None,
         config_write_lock: Default::default(),
+        graph_artifact_lock: Default::default(),
     });
     let (status, body) = post(&app, "/api/rooms/983/leads/k-pending/approve").await;
     assert_eq!(status, 200, "{body}");

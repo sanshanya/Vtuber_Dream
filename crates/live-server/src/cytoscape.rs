@@ -45,6 +45,36 @@ pub fn elements(project: &Value) -> Value {
     json!({ "elements": elements })
 }
 
+/// Z6/P0-6：kind 折叠投影——只保留 expanded 类节点；悬空边（任一端不存活）整边裁除。
+/// 节点序保持 project ORDER BY 位序；边序同理。未知 kind 的节点一律视为「非展开」
+/// （白名单是收口面，不是增幅面——不让未知类型借折叠缝流进默认视图）。
+pub fn elements_expanded(project: &Value, expanded: &std::collections::BTreeSet<String>) -> Value {
+    let mut kept_ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut elements: Vec<Value> = Vec::new();
+    if let Some(nodes) = project["nodes"].as_array() {
+        for node in nodes {
+            let kind = node["type"].as_str().unwrap_or("");
+            let id = node["id"].as_str().unwrap_or("");
+            if !expanded.contains(kind) || id.is_empty() {
+                continue;
+            }
+            kept_ids.insert(id.to_string());
+            elements.push(node_element(node));
+        }
+    }
+    if let Some(edges) = project["edges"].as_array() {
+        for edge in edges {
+            let source = edge["source"].as_str().unwrap_or("");
+            let target = edge["target"].as_str().unwrap_or("");
+            if !kept_ids.contains(source) || !kept_ids.contains(target) {
+                continue;
+            }
+            elements.push(edge_element(edge));
+        }
+    }
+    json!({ "elements": elements })
+}
+
 /// 局部图（个人页）：与 viewer 节点相邻的边 + 其两端节点。
 pub fn scoped(project: &Value, node_id: &str) -> Value {
     let mut node_ids: std::collections::BTreeSet<String> = [node_id.to_string()].into();
@@ -72,4 +102,65 @@ pub fn scoped(project: &Value, node_id: &str) -> Value {
         }
     }
     json!({ "elements": elements })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn mini_project() -> Value {
+        json!({
+            "nodes": [
+                {"id": "viewer:1", "name": "甲", "type": "Viewer", "properties": {"viewer_id": "1"}},
+                {"id": "entity:原神", "name": "原神", "type": "Entity", "properties": {}},
+                {"id": "episode:e1", "name": "场1", "type": "Episode", "properties": {}},
+                {"id": "mention:m1", "name": "m1", "type": "Mention", "properties": {}}
+            ],
+            "edges": [
+                {"id": "r1", "source": "viewer:1", "target": "entity:原神", "predicate": "INTERESTED_IN",
+                 "confidence": 0.8, "evidence_ids": ["m1"], "properties": {}},
+                {"id": "r2", "source": "episode:e1", "target": "mention:m1", "predicate": "CONTAINS_MENTION"},
+                {"id": "r3", "source": "viewer:1", "target": "mention:m1", "predicate": "REFERS_TO"},
+                {"id": "r4", "source": "entity:原神", "target": "viewer:1", "predicate": "FOLLOWED_BY"}
+            ]
+        })
+    }
+
+    #[test]
+    fn elements_unfiltered_keeps_everything() {
+        let out = elements(&mini_project());
+        assert_eq!(out["elements"].as_array().unwrap().len(), 8);
+    }
+
+    #[test]
+    fn elements_expanded_folds_kinds_and_drops_dangling_edges() {
+        let expanded: std::collections::BTreeSet<String> =
+            ["Viewer".to_string(), "Entity".to_string()]
+                .into_iter()
+                .collect();
+        let out = elements_expanded(&mini_project(), &expanded);
+        let list = out["elements"].as_array().unwrap();
+        let nodes: Vec<&Value> = list
+            .iter()
+            .filter(|el| el["data"]["kind"].is_string())
+            .collect();
+        let edges: Vec<&Value> = list
+            .iter()
+            .filter(|el| !el["data"]["source"].is_null())
+            .collect();
+        assert_eq!(nodes.len(), 2, "Viewer+Entity 存活：{out}");
+        // r1（双端存活）+ r4（双端存活）在；r2（双端均折叠）、r3（target 折叠）裁除。
+        let edge_ids: Vec<&str> = edges
+            .iter()
+            .map(|el| el["data"]["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(edge_ids, ["r1", "r4"], "{out}");
+    }
+
+    #[test]
+    fn elements_expanded_empty_whitelist_yields_no_edges() {
+        let expanded: std::collections::BTreeSet<String> = Default::default();
+        let out = elements_expanded(&mini_project(), &expanded);
+        assert_eq!(out["elements"].as_array().unwrap().len(), 0);
+    }
 }

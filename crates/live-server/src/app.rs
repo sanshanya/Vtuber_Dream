@@ -13,8 +13,8 @@ use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
+use axum::extract::{Path, Query, State};
+use axum::http::{HeaderMap, StatusCode};
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use serde_json::{Value, json};
@@ -53,6 +53,9 @@ pub struct AppState {
     /// W1/r2-F3：config 写互斥——并发 PUT 的 read-modify-write 会互相覆盖丢更新。
     /// write_keys 是同步原子写（tmp+rename），持锁窗口不含 await，std Mutex 足够。
     pub config_write_lock: Arc<Mutex<()>>,
+    /// Z6/P0-6：graph artifact 重建互斥——并发首访同时 miss 时只许一个线程重建
+    /// （≈0.6s SQL + 压缩），其余等待者复用其产物。持锁在 spawn_blocking 内。
+    pub graph_artifact_lock: Arc<Mutex<()>>,
 }
 
 /// 统一错误包装记类型：状态码 + {"error": 文案}（D3 形态）。
@@ -786,15 +789,222 @@ async fn viewer_graph(
     )))
 }
 
+// ---------------------------------------------------------------------------
+// Z6/P0-6：整体图谱端点——默认折叠视图走外置物化（trio + ETag/304）；
+// `?kinds=all` 全量逃生门与 `?kinds=A,B` 自定义折叠走现算直通。
+// ---------------------------------------------------------------------------
+
+#[derive(serde::Deserialize)]
+pub struct RoomGraphParams {
+    kinds: Option<String>,
+}
+
+/// kinds 查询参数 → 折叠集：None = 配置白名单；"all" = 全谱直通（无缓存）；
+/// csv = 自定义折叠（现算，无缓存）。未知类 → 响亮 400（配置面治错原则同穿透到查询面）。
+fn resolve_graph_kinds(
+    raw: Option<&str>,
+    default_whitelist: &[String],
+) -> AppResult<Option<std::collections::BTreeSet<String>>> {
+    let Some(text) = raw else {
+        return Ok(Some(default_whitelist.iter().cloned().collect()));
+    };
+    let trimmed = text.trim();
+    if trimmed.eq_ignore_ascii_case("all") {
+        return Ok(None);
+    }
+    let mut set = std::collections::BTreeSet::new();
+    for part in trimmed.split(',') {
+        let kind = part.trim();
+        if kind.is_empty() {
+            continue;
+        }
+        if !live_core::config::GRAPH_KIND_ALLOWLIST.contains(&kind) {
+            return Err(fail(
+                StatusCode::BAD_REQUEST,
+                &format!(
+                    "kinds 未知节点类 \"{kind}\"（允许：{}；或 all = 全谱）",
+                    live_core::config::GRAPH_KIND_ALLOWLIST.join("/")
+                ),
+            ));
+        }
+        set.insert(kind.to_string());
+    }
+    if set.is_empty() {
+        return Err(fail(
+            StatusCode::BAD_REQUEST,
+            "kinds 不可解析为空集（允许：Viewer/Entity/Episode/Mention/InterestState/Situation/Action；或 all = 全谱）",
+        ));
+    }
+    Ok(Some(set))
+}
+
+/// 现算直通（all / 自定义 kinds）：project + fold 一次性产出 JSON 字节。
+/// project() 是同步 rusqlite（s0 全量 ≈0.6s），放 spawn_blocking 避免卡 executor。
+async fn compute_graph_bytes(
+    root: PathBuf,
+    kinds: Option<std::collections::BTreeSet<String>>,
+) -> AppResult<Vec<u8>> {
+    tokio::task::spawn_blocking(move || {
+        let (_store, value) = project_for_viewer(&root)?;
+        let json = match &kinds {
+            None => crate::cytoscape::elements(&value),
+            Some(expanded) => crate::cytoscape::elements_expanded(&value, expanded),
+        };
+        Ok::<_, AppFail>(json.to_string().into_bytes())
+    })
+    .await
+    .map_err(|join| fail(StatusCode::INTERNAL_SERVER_ERROR, &join.to_string()))?
+}
+
+/// 物化确保（内容寻址）：探针 etag → 档命中直返；缺/陈旧 → 持锁双查重建。
+/// 全部 IO/SQL 收进 spawn_blocking（rusqlite + trio 文件读都是同步阻塞面）。
+async fn ensure_graph_artifact(
+    root: PathBuf,
+    kinds: Vec<String>,
+    lock: Arc<Mutex<()>>,
+) -> AppResult<crate::graph_artifact::GraphArtifact> {
+    if !root.join("graph").join("perception.sqlite3").exists() {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            "图尚未落盘——先跑过 Audience 阶段再取",
+        ));
+    }
+    let kinds_csv = kinds.join(",");
+    tokio::task::spawn_blocking(move || {
+        // 探针（毫秒级行扫）= 失效指纹 + 内容寻址 ETag（misfire 选型见 graph_artifact 卷首注）。
+        let store = open_graph(&root).ok_or_else(|| {
+            fail(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "graph 库存在但不可开（Store::open 失败）",
+            )
+        })?;
+        let etag = crate::graph_artifact::content_probe(&store, &kinds_csv)
+            .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+        if let Some(artifact) = crate::graph_artifact::read_artifact(&root, &etag) {
+            return Ok(artifact);
+        }
+        let _guard = lock
+            .lock()
+            .map_err(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "graph artifact 锁中毒"))?;
+        // 双查：等待锁期间另一线程可能已重建（重探 = 同店 scan，零成本）。
+        let etag2 = crate::graph_artifact::content_probe(&store, &kinds_csv)
+            .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+        if let Some(artifact) = crate::graph_artifact::read_artifact(&root, &etag2) {
+            return Ok(artifact);
+        }
+        let expanded: std::collections::BTreeSet<String> = kinds.iter().cloned().collect();
+        let value = live_core::graph::project::project(
+            &store,
+            &live_core::graph::project::ProjectOptions {
+                include_episodes: false,
+                include_interest_states: true,
+                include_situation_actions: false,
+                // 面板展示取全史：闸门左半（FIND-5）恒真。
+                current_run_id: None,
+                ..live_core::graph::project::ProjectOptions::default()
+            },
+        )
+        .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+        drop(store);
+        let folded = crate::cytoscape::elements_expanded(&value, &expanded);
+        let artifact =
+            crate::graph_artifact::write_artifact(&root, &etag2, folded.to_string().as_str())
+                .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+        Ok(artifact)
+    })
+    .await
+    .map_err(|join| fail(StatusCode::INTERNAL_SERVER_ERROR, &join.to_string()))?
+}
+
+/// If-None-Match 宽松比对（多值/弱校验前缀均容忍——读面协商，非安全面）。
+fn if_none_match_hit(headers: &HeaderMap, etag: &str) -> bool {
+    let Some(raw) = headers.get(axum::http::header::IF_NONE_MATCH) else {
+        return false;
+    };
+    let Ok(text) = raw.to_str() else { return false };
+    let quoted = format!("\"{etag}\"");
+    text.split(',').any(|candidate| {
+        let t = candidate.trim().trim_start_matches("W/");
+        t == quoted || t == etag || t == "*"
+    })
+}
+
+fn graph_body_response(etag: &str, encoding: Option<&str>, bytes: Vec<u8>) -> Response {
+    let mut builder = Response::builder()
+        .status(StatusCode::OK)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            "application/json; charset=utf-8",
+        )
+        .header(axum::http::header::ETAG, format!("\"{etag}\""))
+        .header(axum::http::header::CACHE_CONTROL, "no-cache")
+        .header(axum::http::header::VARY, "Accept-Encoding");
+    if let Some(encoding) = encoding {
+        builder = builder.header(axum::http::header::CONTENT_ENCODING, encoding);
+    }
+    builder
+        .body(axum::body::Body::from(bytes))
+        .expect("静态头组装不会失败")
+}
+
 async fn room_graph(
     State(state): State<AppState>,
     Path(uid): Path<String>,
-) -> AppResult<Json<Value>> {
+    headers: HeaderMap,
+    Query(params): Query<RoomGraphParams>,
+) -> AppResult<Response> {
     let config = load_config(&state)?;
     room_guard(&config, &uid)?;
     let root = data_root(&state)?;
-    let (_store, value) = project_for_viewer(&root)?;
-    Ok(Json(crate::cytoscape::elements(&value)))
+    let kinds = resolve_graph_kinds(
+        params.kinds.as_deref(),
+        &config.perception.graph_default_expanded_kinds,
+    )?;
+    // 全谱直通（?kinds=all）：保持 Z6 前的原始面（全量 Json，无物化）。
+    let Some(expanded) = kinds else {
+        let bytes = compute_graph_bytes(root, None).await?;
+        return Ok(graph_body_response("unversioned-all", None, bytes));
+    };
+    let default_set: std::collections::BTreeSet<String> = config
+        .perception
+        .graph_default_expanded_kinds
+        .iter()
+        .cloned()
+        .collect();
+    // 自定义 csv（≠配置白名单）：现算直通，不养第二套缓存键。
+    if expanded != default_set {
+        let bytes = compute_graph_bytes(root, Some(expanded)).await?;
+        return Ok(graph_body_response("unversioned-custom", None, bytes));
+    }
+    // 默认视图：物化协商通道（ETag 304 + 预压缩 trio）。
+    let artifact = ensure_graph_artifact(
+        root,
+        config.perception.graph_default_expanded_kinds.clone(),
+        state.graph_artifact_lock.clone(),
+    )
+    .await?;
+    if if_none_match_hit(&headers, &artifact.etag) {
+        return Ok(Response::builder()
+            .status(StatusCode::NOT_MODIFIED)
+            .header(axum::http::header::ETAG, format!("\"{}\"", artifact.etag))
+            .header(axum::http::header::CACHE_CONTROL, "no-cache")
+            .body(axum::body::Body::empty())
+            .expect("304 静态组装不会失败"));
+    }
+    // Accept-Encoding 协商：br 优先，gzip 次之，裸 JSON 兜底。q 值忽略（内部工具面）。
+    let accept = headers
+        .get(axum::http::header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let (encoding, bytes) = if accept.contains("br") && artifact.br.is_some() {
+        (Some("br"), artifact.br.expect("just checked"))
+    } else if accept.contains("gzip") && artifact.gz.is_some() {
+        (Some("gzip"), artifact.gz.expect("just checked"))
+    } else {
+        (None, artifact.raw)
+    };
+    Ok(graph_body_response(&artifact.etag, encoding, bytes))
 }
 
 // ---------------------------------------------------------------------------
@@ -1086,6 +1296,7 @@ pub fn serve(options: StartOptions) -> Result<(), String> {
             data_root: options.data_root,
             bilibili_hosts: options.bilibili_hosts,
             config_write_lock: Default::default(),
+            graph_artifact_lock: Default::default(),
         };
         let addr = SocketAddr::from(([127, 0, 0, 1], options.port));
         let listener = tokio::net::TcpListener::bind(addr)
