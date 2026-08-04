@@ -146,8 +146,13 @@ pub fn build_app(state: AppState) -> Router {
 
     let router = Router::new().nest("/api", api);
     // D2：ServeDir 指向 web/dist；缺 dist → `/` 显示构建指引页（防静默 404）。
+    // Z4/P0-7：消费 vite 预压缩产物——按 Accept-Encoding 协商 .br/.gz，无则回落原文件。
     if state.web_root.join("index.html").exists() {
-        router.fallback_service(ServeDir::new(status_root(state)))
+        router.fallback_service(
+            ServeDir::new(status_root(state))
+                .precompressed_gzip()
+                .precompressed_br(),
+        )
     } else {
         router.fallback(get(build_guide))
     }

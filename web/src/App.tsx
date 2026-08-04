@@ -3,15 +3,25 @@ import { lazy, Suspense } from "react";
 
 import { api, type OverviewView } from "./api";
 import { RunStatusBadge } from "./components/RunButton";
-import { Leads } from "./pages/Leads";
-import { Live } from "./pages/Live";
-import { Settings } from "./pages/Settings";
-import { Streamer } from "./pages/Streamer";
-import { ViewerTree } from "./pages/ViewerTree";
-import { Viewers } from "./pages/Viewers";
 import { matchRoute, useHashPath, type PageId } from "./router";
 
-/** R4-F1：图谱页（cytoscape 是重组件）拆 chunk——生产构建出独立分包，首屏不背图。 */
+/** R4-F1 → Z4 扩展：七页全懒加载——每路由一个 chunk，首屏 main 只背壳
+ *  （react + react-query + App + RunTracker + styles）。图谱页（cytoscape 重组件）
+ *  之外的六页同样是路由级边界，没有提前融合进首屏包的理由。 */
+const Streamer = lazy(() =>
+  import("./pages/Streamer").then((module) => ({ default: module.Streamer })),
+);
+const Viewers = lazy(() =>
+  import("./pages/Viewers").then((module) => ({ default: module.Viewers })),
+);
+const ViewerTree = lazy(() =>
+  import("./pages/ViewerTree").then((module) => ({ default: module.ViewerTree })),
+);
+const Live = lazy(() => import("./pages/Live").then((module) => ({ default: module.Live })));
+const Leads = lazy(() => import("./pages/Leads").then((module) => ({ default: module.Leads })));
+const Settings = lazy(() =>
+  import("./pages/Settings").then((module) => ({ default: module.Settings })),
+);
 const GraphPage = lazy(() =>
   import("./pages/GraphPage").then((module) => ({ default: module.GraphPage })),
 );
@@ -29,7 +39,8 @@ export function isSyntheticRun(overview: OverviewView | undefined): boolean {
   );
 }
 
-/** 页面键 → 组件实体装配（ROUTES 数据表在 router.tsx；懒加载缝只开图谱两路）。 */
+/** 页面键 → 组件实体装配（ROUTES 数据表在 router.tsx；Z4 七页全懒，
+ *  Suspense 边界唯一，挂在 <main> 出口——见 App 返回体）。 */
 function renderPage(page: PageId, params: string[], roomId: string) {
   switch (page) {
     case "streamer":
@@ -39,17 +50,9 @@ function renderPage(page: PageId, params: string[], roomId: string) {
     case "viewer-tree":
       return <ViewerTree roomId={roomId} vid={params[0]} />;
     case "viewer-graph":
-      return (
-        <Suspense fallback={<div className="empty">载入图谱…</div>}>
-          <GraphPage roomId={roomId} vid={params[0]} />
-        </Suspense>
-      );
+      return <GraphPage roomId={roomId} vid={params[0]} />;
     case "graph":
-      return (
-        <Suspense fallback={<div className="empty">载入图谱…</div>}>
-          <GraphPage roomId={roomId} />
-        </Suspense>
-      );
+      return <GraphPage roomId={roomId} />;
     case "live":
       return <Live roomId={roomId} />;
     case "leads":
@@ -143,7 +146,10 @@ export default function App() {
           </a>
         </div>
       </header>
-      <main className="container">{page}</main>
+      <main className="container">
+        {/* Z4：唯一懒加载边界——任何路由切页 fallback 一律走空态文案（T1 三态前的中性态）。 */}
+        <Suspense fallback={<div className="empty">载入页面…</div>}>{page}</Suspense>
+      </main>
       <footer className="container footer">
         公开信息感知原型 · 平台事实、AI语义、状态判断和行动建议分层展示
         {syntheticDemo && (
