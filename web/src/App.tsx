@@ -73,13 +73,13 @@ export default function App() {
     <>
       <header className="hero">
         <div className="container">
-          {/* 英雄区名字 = 主播本人（C 端面向）；工程代号退到角落徽标（overview 尚未返回
-              或 streamer 缺档时，名字栏回退工程代号——不会悬出空 hero）。 */}
+          {/* 英雄区名字 = 主播本人；副徽标 = 产品中文薄名「虚梦」（不是 config 工程代号——
+              项目名是内部记号，产品名是给人看的。主播缺档时名字栏落产品名。 */}
           <h1>
             {typeof overviewData.streamer?.name === "string" && overviewData.streamer.name
               ? overviewData.streamer.name
-              : (rooms.data?.[0]?.project_name ?? "live-audience")}
-            <span className="badge hero-project">{rooms.data?.[0]?.project_name ?? ""}</span>
+              : "虚梦"}
+            <span className="badge hero-project">虚梦 · Vtuber Dream</span>
           </h1>
           {/* Z3 定稿序：主播介绍（首页）→ 舰长列表 → 直播数据 → 线索账本（末位）→ 图谱 → 设置。 */}
           <nav className="nav">
