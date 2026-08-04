@@ -595,12 +595,15 @@ impl AgentRuntime {
             token_budget,
             trace,
         } = args;
-        let mut turns = 0usize;
+        // P2-β 降级是 run_rounds 级状态：一旦 thinking-mode 拒过 tool_choice，
+        // 已靠终端窗+提示，后面所有轮不再白撞同一 400。
+        let mut tool_choice = tool_choice.clone();
+        let mut rounds: usize = 0;
         loop {
-            turns += 1;
-            if turns > max_turns {
+            rounds += 1;
+            if rounds > max_turns {
                 return Err(RoundEnd::Fatal(AgentRuntimeError::MaxTurns {
-                    turns,
+                    turns: rounds,
                     cap: max_turns,
                 }));
             }
@@ -611,7 +614,28 @@ impl AgentRuntime {
             );
             let started = Instant::now();
             let request = self.build_request(tools, visible, history.clone(), tool_choice.clone());
-            let response = self.chat(&request).await.map_err(RoundEnd::Fatal)?;
+            let response = match self.chat(&request).await {
+                Ok(response) => response,
+                // P2-β（A1 裁决书 §6.1 真斑 2）：thinking-mode 拒 tool_choice:function 的
+                // 400 非瞬时；同轮弃 tool_choice 重打一钉——凭 visible-only terminal 窗 +
+                // 具名提示仍能钳住终局；trace 落降级事件供审计。
+                Err(err) => {
+                    if tool_choice.is_some() && is_tool_choice_rejected_400(&err) {
+                        trace.write(
+                            "llm_tool_choice_degraded",
+                            json!({
+                                "agent": agent_name,
+                                "reason": "thinking-mode 拒 tool_choice,已永久降级（只凭终端收窄+具名提示）",
+                            }),
+                        );
+                        tool_choice = None;
+                        let retries = self.build_request(tools, visible, history.clone(), None);
+                        self.chat(&retries).await.map_err(RoundEnd::Fatal)?
+                    } else {
+                        return Err(RoundEnd::Fatal(err));
+                    }
+                }
+            };
             let usage = response.usage.unwrap_or_default();
             trace.stats.input_tokens += usage.prompt_tokens;
             trace.stats.output_tokens += usage.completion_tokens;
@@ -746,6 +770,17 @@ fn is_transient(err: &async_openai::error::OpenAIError) -> bool {
         }
         _ => false,
     }
+}
+
+/// P2-β：thinking-mode（deepseek-reasoner）服务端在 reasoning 语境拒
+/// `tool_choice:{type:"function"}`，投 400 而非重试合格——只当错误文
+/// 同时含 400 + tool_choice 情境词才降级：窄到「就是那一种错」，
+/// 别的 400（参数非法/超长）不得被它吞掉。
+fn is_tool_choice_rejected_400(err: &AgentRuntimeError) -> bool {
+    let AgentRuntimeError::Transport(text) = err else {
+        return false;
+    };
+    text.contains("400") && text.contains("tool_choice")
 }
 
 /// Z3/P0-4：内层重试退避 = 指数（base·2^(attempt-1)，封顶 30s）× 全区间抖动。

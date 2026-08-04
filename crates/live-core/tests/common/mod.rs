@@ -144,3 +144,25 @@ pub async fn mount_turn(
         .mount(server)
         .await;
 }
+
+/// P2-β 剧本：thinking-mode 服务端拒 tool_choice 的 400 体（Granul zajazd
+/// DeepSeek 实测：message="Thinking mode does not support this tool_choice"）。
+pub async fn mount_tool_choice_rejected_400(
+    server: &MockServer,
+    predicate: impl Fn(&Value) -> bool + Send + Sync + 'static,
+) {
+    Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .and(BodyPred(predicate))
+        .respond_with(ResponseTemplate::new(400).set_body_json(serde_json::json!({
+            "error": {
+                "message": "Thinking mode does not support this tool_choice",
+                "type": "invalid_request_error",
+                "param": null,
+                "code": "invalid_request_error",
+            },
+        })))
+        .expect(1)
+        .mount(server)
+        .await;
+}

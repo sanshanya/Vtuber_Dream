@@ -219,6 +219,70 @@ async fn ordinary_text_triggers_forced_terminal_resubmission() {
     assert_eq!(requests.len(), 2, "普通文本后必须发起 forced 续跑");
 }
 
+/// P2-β（A1 裁决书 §6.1 真斑 2）：thinking-mode 拒 tool_choice:function → 400。
+/// forced 续跑必须弃 tool_choice 再打一钉，终局仍被工具窗+提示钳住；
+/// trace 必须留降级事件。
+#[tokio::test(flavor = "multi_thread")]
+async fn thinking_mode_tool_choice_rejected_degrades_to_window_only() {
+    let server = MockServer::start().await;
+    // turn 1：模型以普通文本落，启动 forced 续跑路径。
+    mount_turn(
+        &server,
+        messages_len(2),
+        assistant_text("这是草稿，不是有效提交"),
+    )
+    .await;
+    // turn 2：thinking-mode 服务端拒 tool_choice（真实原因串）。
+    mount_tool_choice_rejected_400(&server, |body: &Value| {
+        body["tool_choice"]["function"]["name"].as_str() == Some("submit_probe_result")
+            && body["tool_choice"]["type"].as_str() == Some("function")
+    })
+    .await;
+    // turn 3：弃 tool_choice、凭终端收窄 + 具名提示的续跑——终局仍钳住。
+    mount_turn(
+        &server,
+        |body: &Value| {
+            let no_tool_choice = body.get("tool_choice").is_none_or(Value::is_null);
+            let only_terminal = body["tools"].as_array().is_some_and(|tools| {
+                tools.len() == 1
+                    && tools[0]["function"]["name"].as_str() == Some("submit_probe_result")
+            });
+            no_tool_choice && only_terminal
+        },
+        assistant_tool_call(
+            "call-degraded",
+            "submit_probe_result",
+            json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+            None,
+        ),
+    )
+    .await;
+
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let tmp = tempfile::tempdir().unwrap();
+    let trace_path = tmp.path().join("traces/reasoner-tool-choice.jsonl");
+    let mut trace = Trace::new(Some(trace_path.clone()));
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("thinking-mode tool_choice 400 后应自动降级并收终局");
+
+    assert_eq!(outcome.submission.total, 21);
+    let trace_text = std::fs::read_to_string(&trace_path).expect("trace file");
+    assert!(
+        trace_text.contains("llm_tool_choice_degraded"),
+        "应落降级事件:{trace_text}"
+    );
+    let requests = server.received_requests().await.expect("captured requests");
+    assert_eq!(
+        requests.len(),
+        3,
+        "turn1 文本+turn2 400+turn3 降级成功 = 3 次"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn terminal_reject_then_correct_resubmission() {
     let server = MockServer::start().await;
