@@ -175,6 +175,92 @@ async fn viewers_list_reports_ai_completion_per_viewer() {
     assert_eq!(viewers[0]["medal_level"], 20, "{body}");
 }
 
+/// Z5c 时效位：旧 AI 结论保留不删，但 fact 面/提示面已变 → 行面 ai_stale 必须亮
+/// 「信源已更新」；哈希同参镇定 → stale=false；三态互斥互不串扰。
+#[tokio::test(flavor = "multi_thread")]
+async fn viewers_list_marks_stale_perception_hash_flips() {
+    let fx = fixture();
+    let config =
+        live_core::config::load_config(fx._tmp.path().join("config.yaml")).expect("config loads");
+
+    let write_cache = |uid: &str, hash: &str| {
+        let cached = serde_json::json!({
+            "status": "complete",
+            "input_hash": hash,
+            "analysis": {"profile_summary": "x"},
+        });
+        let path = fx
+            .data_root
+            .join("ai")
+            .join("perception")
+            .join("viewers")
+            .join(format!("{uid}.json"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string_pretty(&cached).unwrap()).unwrap();
+    };
+    let current_hash_of = |uid: &str| -> String {
+        let raw = live_core::storage::read_json(
+            &fx.data_root.join("viewers").join(format!("{uid}.json")),
+        )
+        .expect("viewer reads")
+        .expect("viewer exists");
+        let profile = live_core::episodes::baseline::viewer_input(
+            &raw,
+            config.perception.max_evidence_per_viewer as usize,
+        );
+        let reasoning = serde_json::json!({
+            "enabled": config.ai.reasoning.enabled,
+            "effort": config.ai.reasoning.effort.clone(),
+            "replay_content": config.ai.reasoning.replay_content,
+        });
+        let bundle = live_core::agent::pipeline::viewer_input_bundle(
+            &raw,
+            &profile,
+            &config.ai.model,
+            &config.ai.api,
+            &reasoning,
+            &config.ai.rules,
+            config.perception.max_evidence_per_viewer as usize,
+        );
+        bundle.input_hash
+    };
+
+    // demo-2 码现行哈希 → 绿灯；demo-1 栽错哈希 → 必亮过期
+    write_cache("demo-2", &current_hash_of("demo-2"));
+    write_cache("demo-1", "deadbeef");
+    let (status, body) = get(&fx.app, "/api/rooms/983/viewers").await;
+    assert_eq!(status, 200, "{body}");
+    let rows = body.as_array().unwrap();
+    let demo1 = rows.iter().find(|v| v["uid"] == "demo-1").expect("demo-1");
+    let demo2 = rows.iter().find(|v| v["uid"] == "demo-2").expect("demo-2");
+    assert_eq!(
+        demo1["ai_stale"],
+        Value::Bool(true),
+        "哈希翻 → 时效位必须亮：{demo1}"
+    );
+    assert_eq!(
+        demo2["ai_stale"],
+        Value::Bool(false),
+        "哈希稳定 → 时效位绿灯：{demo2}"
+    );
+
+    // demo-1 补码现行哈希 → 过期位应熄灭（时效位跟据哈希实况，不是一次性旗帜）
+    write_cache("demo-1", &current_hash_of("demo-1"));
+    let (status, body) = get(&fx.app, "/api/rooms/983/viewers").await;
+    assert_eq!(status, 200, "{body}");
+    let demo1 = body
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|v| v["uid"] == "demo-1")
+        .expect("demo-1");
+    assert_eq!(
+        demo1["ai_stale"],
+        Value::Bool(false),
+        "哈希复位 → 时效位熄灭：{demo1}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn viewer_tree_joins_raw_ai_episodes_mentions() {
     let fx = fixture();

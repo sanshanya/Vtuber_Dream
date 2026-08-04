@@ -2,8 +2,11 @@
 //!
 //! - `write_json`：父目录建齐 + 同名 `.tmp` 文件原子替换（中断不留半截 JSON）。
 //! - `archive_current_snapshot`：采集前把现状复制到 `history/snapshots/<UTC戳>`；
-//!   `graph/` 与 `history/` 永不归档、永不删除（长期时序记忆，AGENTS.md 时序优先）。
-//! - `reset_output`：清 viewers/site/shared/ai 与顶层 JSON，同样保留 graph/history。
+//!   `graph/` 与 `history/` 永不归档、永不删除（长期时序记忆，AGENTS.md 时序优先）；
+//!   `ai/` 同样不归档不下刀（Z5：重采保 AI——认知层由 input_hash 失效驱动，不归档即
+//!   不复制冗余）。
+//! - `reset_output`：只清事实面（viewers/site/shared 与顶层 JSON）；graph/history/ai
+//!   三面永不下刀（长期记忆 + 认知层缓存各自续命，失效由 input_hash 判定，不靠山刀）。
 //!
 //! 错误一律显式返回（字符串形态），绝不静默（AGENTS.md 完成定义）。
 
@@ -69,22 +72,18 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> StorageResult<()> {
     Ok(())
 }
 
-/// Python `archive_current_snapshot`：归档 collection.json/streamer.json/viewers/shared/ai；
+/// Python `archive_current_snapshot`：归档 collection.json/streamer.json/viewers/shared；
+/// Z5 后 ai/ 不再归档（ai/ 本就保活在 reset 之外，再复制只是磁盘churn——时间序列
+/// 快照保持事实层口径，AI 侧的真凭据在图库与 input_hash 里）。
 /// 没有任何候选时返回 None；同秒冲突追加 `-1/-2/...` 后缀。
 pub fn archive_current_snapshot(root: &Path) -> StorageResult<Option<PathBuf>> {
     for name in LEGACY_AGGREGATE_NAMES {
         remove_file_missing_ok(&root.join(name))?;
     }
-    let candidates = [
-        "collection.json",
-        "streamer.json",
-        "viewers",
-        "shared",
-        "ai",
-    ]
-    .iter()
-    .map(|name| root.join(name))
-    .collect::<Vec<_>>();
+    let candidates = ["collection.json", "streamer.json", "viewers", "shared"]
+        .iter()
+        .map(|name| root.join(name))
+        .collect::<Vec<_>>();
     if !candidates.iter().any(|path| path.exists()) {
         return Ok(None);
     }
@@ -113,10 +112,14 @@ pub fn archive_current_snapshot(root: &Path) -> StorageResult<Option<PathBuf>> {
     Ok(Some(target))
 }
 
-/// Python `reset_output`：清出下轮采集的工作面；graph/history 是长期记忆，不动。
+/// Python `reset_output`：清出下轮采集的事实工作面；graph/history 长期记忆不动，
+/// ai/ 认知层亦永不下刀（Z5 重采保 AI——AI 缓存的失效由 pipeline 的 per-viewer
+/// input_hash 驱动：事实未变即哈希相等 → 复用零 LLM；事实变了仅该舰长重判）。
+/// 原「整目录推倒」是 CLI 全量时代的混代防御，complete_cache 落地后该防御已由
+/// 细粒度哈希接管，整删只剩成本副作用（重采一轮全员 AI 重跑）。
 pub fn reset_output(root: &Path) -> StorageResult<()> {
     std::fs::create_dir_all(root).map_err(|err| io_err("create_dir_all", root, err))?;
-    for name in ["viewers", "site", "shared", "ai"] {
+    for name in ["viewers", "site", "shared"] {
         let path = root.join(name);
         if path.exists() {
             std::fs::remove_dir_all(&path).map_err(|err| io_err("remove_dir_all", &path, err))?;
@@ -183,8 +186,10 @@ mod tests {
         assert!(read_json(&bad).unwrap_err().contains("invalid JSON"));
     }
 
+    /// Z5 重采保 AI：事实三面清空，graph/history（长期记忆）与 ai/（认知层缓存）
+    /// 三面保活——失效归 input_hash 管，不归目录山刀管。
     #[test]
-    fn reset_output_clears_work_surface_but_keeps_memory() {
+    fn reset_output_clears_fact_surface_but_keeps_memory_and_ai() {
         let root = temp_root();
         let root = root.path();
         for dir in ["viewers", "site", "shared", "ai", "graph", "history"] {
@@ -197,10 +202,10 @@ mod tests {
 
         reset_output(root).unwrap();
 
-        for dir in ["viewers", "site", "shared", "ai"] {
+        for dir in ["viewers", "site", "shared"] {
             assert!(!root.join(dir).exists(), "{dir} should be removed");
         }
-        for dir in ["graph", "history"] {
+        for dir in ["graph", "history", "ai"] {
             assert!(root.join(dir).join("keep.json").exists(), "{dir} preserved");
         }
         assert!(!root.join("collection.json").exists());
@@ -250,6 +255,34 @@ mod tests {
     fn archive_empty_root_returns_none() {
         let root = temp_root();
         assert_eq!(archive_current_snapshot(root.path()).unwrap(), None);
+    }
+
+    /// Z5：ai/ 不在归档候选内——它在 reset 里保活，复制进快照只是磁盘 churn；
+    /// 时间序列快照保持事实层口径（单有 ai/ 甚至不足以成档）。
+    #[test]
+    fn archive_never_sweeps_ai_dir() {
+        let root = temp_root();
+        let root = root.path();
+        std::fs::create_dir_all(root.join("ai")).unwrap();
+        write_json(
+            &root.join("ai").join("state.json"),
+            &json!({"status": "complete"}),
+        )
+        .unwrap();
+        assert_eq!(
+            archive_current_snapshot(root).unwrap(),
+            None,
+            "只有 ai/ 时不成档"
+        );
+        write_json(&root.join("streamer.json"), &json!({"s": 1})).unwrap();
+        let snapshot = archive_current_snapshot(root)
+            .unwrap()
+            .expect("archive created");
+        assert!(snapshot.join("streamer.json").exists());
+        assert!(
+            !snapshot.join("ai").exists(),
+            "ai 留在原地续命，不进时间序列快照"
+        );
     }
 
     #[test]

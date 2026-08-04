@@ -684,6 +684,11 @@ async fn room_viewers(
             "ai_status": cached.as_ref().map(|c| c["status"].clone()),
             // 空池引导位约定：front-end 按 completed=false + viewer 数=0 渲染引导。
             "ai_completed": cached.as_ref().is_some_and(|c| c["status"] == "complete"),
+            // Z5c 时效位：旧 AI 结论保留但信源已变 → 行面亮「信源已更新·待重判」。
+            // null（无参考旧结论 / 非 complete）与 false（绿灯时效内）区分。
+            "ai_stale": cached
+                .as_ref()
+                .and_then(|c| live_core::agent::pipeline::viewer_perception_stale(&config, &viewer, c)),
         }));
     }
     Ok(Json(json!(viewers)))

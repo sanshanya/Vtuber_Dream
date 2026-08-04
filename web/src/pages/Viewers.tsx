@@ -81,11 +81,11 @@ export function Viewers({ roomId }: { roomId: string }) {
       <div className="action-bar" data-testid="guard-actions">
         <KindRunButton
           kind="collect_guards"
-          note="事实层：重拉大航海名单 + 每人动态/勋章/直播状态。重建采集面并清空舰长 AI 缓存（历史照旧归档）。"
+          note="事实层：重拉大航海名单 + 每人动态/勋章/直播状态。旧 AI 结论保留作参考——信源有变的行会亮「信源已更新·待重判」。"
         />
         <KindRunButton
           kind="ai_viewers"
-          note="认知层：对现有名单逐舰长跑感知（幂等缓存——已完成的复用，未跑/失效的补跑）。"
+          note="认知层：对现有名单逐舰长跑感知（哈希失效驱动——信源未变的零成本复用，变了的/未跑的重判；灭灯按行点火）。"
         />
       </div>
       {rows.length === 0 ? (
@@ -167,6 +167,16 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
                 <span className={`badge ${row.ai_completed ? "state" : ""}`}>
                   {row.ai_status ?? "未运行"}
                 </span>
+                {/* Z5c 时效位：旧结论保留作参考但信源已翻 → 亮标不重删（重跑才落新结论）。 */}
+                {row.ai_stale === true && (
+                  <span
+                    className="badge action"
+                    data-testid="ai-stale-badge"
+                    title="该舰长的事实面（采集内容）已有更新，现有 AI 结论基于旧信源——重跑「舰长 AI 分析」后熄灭"
+                  >
+                    信源已更新·待重判
+                  </span>
+                )}
               </td>
               <td>
                 <a href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>舰长态势</a> ·{" "}

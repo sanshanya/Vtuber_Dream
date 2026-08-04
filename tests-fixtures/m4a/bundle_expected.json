@@ -281,6 +281,7 @@
       }
     ]
   },
-  "input_hash": "75b9e7d6da095a81c51814056e7edb1239082bf6ac2390a2eafc580014719011",
+  "_note_input_hash": "Z5 语义哈希（Rust 口径，有意偏离 Python）：episodes 的 observed_at=观察时刻不参与哈希——事实相同的两次采集必须同哈希，complete_cache 才能跨采集复用。Python 预言机含 observed_at 的旧值：75b9e7d6da095a81c51814056e7edb1239082bf6ac2390a2eafc580014719011。payload 对账不受影响。",
+  "input_hash": "9661e1cfa23175652247f30924a92143d8411064113235f8455fa37caef5bfef",
   "episode_count": 2
 }

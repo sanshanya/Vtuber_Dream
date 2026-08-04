@@ -428,10 +428,12 @@ fn demo_snapshot_collapses_concurrent_callers_to_one_record() {
     assert_eq!(registry.record_count(), 1);
 }
 
-/// collect 期失败时上一轮的 ai/state.json 已被 collector 归档进
-/// history/snapshots——partial 必须为 false（X1-d 的集成姿势语义钉）。
+/// collect 期失败时 partial 必须为 false（X1-d 的集成姿势语义钉）。
+/// Z5 后旧的 ai/state.json 不再被 reset 推倒（重采保 AI）——文件原地留存，
+/// partial=false 由 W1/r2-F5 时间闸兜底：栽的 state 无 updated_at → 按旧票拒收，
+/// 不传「旧轮次」进本轮数据面。同钉顺手钉住保护面本身：终态后 state.json 必须还在。
 #[tokio::test(flavor = "multi_thread")]
-async fn collect_failure_archives_prior_state_and_reports_partial_false() {
+async fn collect_failure_keeps_prior_ai_state_and_reports_partial_false() {
     let mock = wiremock::MockServer::start().await;
     let fx = fixture(false, Some((mock.uri(), mock.uri())));
     let state_dir = fx._tmp.path().join("out").join("ai");
@@ -463,6 +465,11 @@ async fn collect_failure_archives_prior_state_and_reports_partial_false() {
     assert_eq!(
         terminal["partial"],
         Value::Bool(false),
-        "collect 期失败：预栽 state 已被归档 → partial=false：{terminal}"
+        "collect 期失败：旧 state 原地留存但无 updated_at 旧票拒收 → partial=false：{terminal}"
+    );
+    // Z5 保护钉：重采（含失败路径）不得推倒认知层——旧 state.json 原地留存。
+    assert!(
+        state_dir.join("state.json").exists(),
+        "Z5 重采保 AI：collect 失败路径同样不得碾平 ai/state.json"
     );
 }

@@ -74,8 +74,27 @@ pub struct ViewerInputBundle {
     pub input_hash: String,
 }
 
+/// Z5 语义哈希口径：`observed_at` = 观察时刻（本轮采集墙钟），不是事实内容。
+/// 事实相同的两次采集必须产出同一 input_hash——否则 complete_cache 跨采集恒假死，
+/// 「重采保 AI」成空架（reset_output 全删 ai/ 时代这个问题被物理掩盖）。
+/// 只从哈希件中摘除；LLM 提示面（input_payload.episodes）继续保留
+/// observed_at——时间域对推理仍是事实，账本上只摘口径，不摘信息。
+fn episodes_hash_material(episodes: &[Episode]) -> Vec<Value> {
+    episodes
+        .iter()
+        .map(|episode| {
+            let mut value = serde_json::to_value(episode).expect("Episode 恒可序列化");
+            if let Value::Object(map) = &mut value {
+                map.remove("observed_at");
+            }
+            value
+        })
+        .collect()
+}
+
 /// Python `_viewer_input_bundle`：context + episodes + payload + hash 四元组。
 /// `reasoning`/`rules`/`model`/`api` 只参与 hash，不改写平台事实。
+/// Z5：hash 件用 episodes_hash_material（摘 observed_at），payload 原样保真。
 pub fn viewer_input_bundle(
     raw_viewer: &Value,
     baseline: &Value,
@@ -94,13 +113,21 @@ pub fn viewer_input_bundle(
         "episodes": serde_json::to_value(&episodes).expect("Episode 恒可序列化"),
         "deterministic_mention_seeds": episodes::deterministic_mention_seeds(&episodes),
     });
+    let mut hash_input = input_payload
+        .as_object()
+        .cloned()
+        .expect("payload 恒为对象");
+    hash_input.insert(
+        "episodes".to_string(),
+        json!(episodes_hash_material(&episodes)),
+    );
     let input_hash = stable_hash(&json!({
         "runtime": CACHE_RUNTIME_VIEWER,
         "model": model,
         "api": api,
         "reasoning": reasoning,
         "rules": rules,
-        "input": input_payload,
+        "input": hash_input,
     }));
     ViewerInputBundle {
         context_data,
@@ -183,6 +210,23 @@ fn compact_chars(value: &Value) -> usize {
 
 /// Python `build_audience_input`：bounded 索引；详情只经工具按需取。两级封顶：
 /// ①逐条回退 interest_state 直到预算内；②清空全部 profile_summary；③仍超 → TooLarge。
+/// Z5 语义哈希口径（audience 侧，与 episodes_hash_material 同族）：baseline_summary 的
+/// collection_request_count / collection_elapsed_seconds 是**过程指标**（每轮采集必变），
+/// 不是听众事实——计入哈希会让 situation 缓存跨采集恒假死。提示面原样保留（与 Python
+/// 预言机 golden 对账面不漂移），哈希件剔除这两键。
+fn audience_input_hash_material(input: &Value) -> Value {
+    let mut material = input.clone();
+    if let Value::Object(summary) = &mut material["baseline_summary"] {
+        summary.remove("collection_request_count");
+        summary.remove("collection_elapsed_seconds");
+    }
+    // 同款戒条：platform_snapshot.captured_at = 本轮采集墙钟，非平台快照的事实面。
+    if let Value::Object(snapshot) = &mut material["platform_snapshot"] {
+        snapshot.remove("captured_at");
+    }
+    material
+}
+
 pub fn build_audience_input(
     analysis: &Value,
     viewer_analyses: &Map<String, Value>,
@@ -487,6 +531,39 @@ fn reasoning_json(config: &Config) -> Value {
     })
 }
 
+/// Z5c：舰长感知缓存的「时效位」（用户裁决：旧 AI 结论保留作参考、不删——但
+/// 事实面/提示面变化后，旧结论行必须亮「信源已更新·待重判」，不得摆绿）。
+/// 语义 = 「今天重跑会不会复用这条旧结论」的同源对照：
+/// `complete_cache` 用的完整判定里只有哈希对决策有话语权，此处频道专属：
+/// - Some(true)：旧 complete 结论存在，但当前输入哈希已变 → 旧信源，行面提亮示
+/// - Some(false)：旧 complete 结论存在且哈希相等 → 时效位亮绿灯
+/// - None：无缓存 / 非 complete / 缓存缺哈希键（本就不是「可参考的旧结论」，
+///   交给 ai_completed 行面自证——不是该亮标的语义）
+pub fn viewer_perception_stale(
+    config: &Config,
+    raw_viewer: &Value,
+    cached: &Value,
+) -> Option<bool> {
+    if cached.get("status").and_then(Value::as_str) != Some("complete") {
+        return None;
+    }
+    let cached_hash = cached.get("input_hash").and_then(Value::as_str)?;
+    let profile = crate::episodes::baseline::viewer_input(
+        raw_viewer,
+        config.perception.max_evidence_per_viewer as usize,
+    );
+    let bundle = viewer_input_bundle(
+        raw_viewer,
+        &profile,
+        &config.ai.model,
+        &config.ai.api,
+        &reasoning_json(config),
+        &config.ai.rules,
+        config.perception.max_evidence_per_viewer as usize,
+    );
+    Some(bundle.input_hash != cached_hash)
+}
+
 fn graph_file(root: &Path) -> PathBuf {
     root.join("graph").join("perception.sqlite3")
 }
@@ -743,58 +820,81 @@ async fn run_audience_stage(
             return (Err(PipelineError::Message(err.to_string())), research);
         }
     };
+    // Z5：哈希件走 audience_input_hash_material（过程指标摘出——同数据重采同哈希），
+    // 提示面 input 原样保真（golden 对账不漂移）。
     let input_hash = stable_hash(&json!({
         "runtime": CACHE_RUNTIME_AUDIENCE,
         "model": config.ai.model,
         "api": config.ai.api,
         "reasoning": reasoning_json(config),
         "rules": config.ai.rules,
-        "input": input,
+        "input": audience_input_hash_material(&input),
     }));
     let cache_path = config.output_dir.join("ai").join("situation.json");
-    if !force
-        && config.ai.agent.resume
-        && let Some(cached) = storage::read_json(&cache_path).ok().flatten()
-        && complete_cache(&cached, &input_hash)
-        && let Ok(submission) =
-            serde_json::from_value::<AudienceSituationSubmission>(cached["analysis"].clone())
-    {
-        let entity_ids: HashSet<String> = graph_context["nodes"]
-            .as_array()
-            .map(|nodes| {
-                nodes
-                    .iter()
-                    .filter(|n| n["type"] == "Entity" && n["id"].is_string())
-                    .filter_map(|n| n["id"].as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let mention_ids: HashSet<String> = graph_context["mentions"]
-            .as_array()
-            .map(|mentions| {
-                mentions
-                    .iter()
-                    .filter_map(|m| m["mention_id"].as_str().map(str::to_string))
-                    .collect()
-            })
-            .unwrap_or_default();
-        let viewer_ids: HashSet<String> = viewer_map.keys().cloned().collect();
-        let search_ids: HashSet<String> = research.search_results.keys().cloned().collect();
-        let errors = validate_audience_submission(
-            &submission,
-            &viewer_ids,
-            &entity_ids,
-            &mention_ids,
-            &search_ids,
-        );
-        if errors.is_empty() {
-            progress_say(knobs, "[AI] 复用整体Situation");
-            let runtime = cached
-                .get("runtime")
-                .filter(|v| v.is_object())
-                .cloned()
-                .unwrap_or(json!({}));
-            return (Ok((cached["analysis"].clone(), runtime)), research);
+    if !force && config.ai.agent.resume {
+        let cached = storage::read_json(&cache_path).ok().flatten();
+        if let Some(cached) = cached.as_ref() {
+            if !complete_cache(cached, &input_hash) {
+                // Z5 观测面：situation 缓存命中判别不可静默——哈希不等 / 复核不过 / 形态坏
+                // 三分面都写 events（viewer 阶段同款静默曾让我们排查三小时）。
+                let shape_ok = serde_json::from_value::<AudienceSituationSubmission>(
+                    cached["analysis"].clone(),
+                )
+                .is_ok();
+                progress_say(
+                    knobs,
+                    &format!(
+                        "[AI] situation 缓存未命中（hash 不等或形态坏：analysis 解析={shape_ok}）→ 重跑 audience"
+                    ),
+                );
+            } else if let Ok(submission) =
+                serde_json::from_value::<AudienceSituationSubmission>(cached["analysis"].clone())
+            {
+                let entity_ids: HashSet<String> = graph_context["nodes"]
+                    .as_array()
+                    .map(|nodes| {
+                        nodes
+                            .iter()
+                            .filter(|n| n["type"] == "Entity" && n["id"].is_string())
+                            .filter_map(|n| n["id"].as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let mention_ids: HashSet<String> = graph_context["mentions"]
+                    .as_array()
+                    .map(|mentions| {
+                        mentions
+                            .iter()
+                            .filter_map(|m| m["mention_id"].as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                let viewer_ids: HashSet<String> = viewer_map.keys().cloned().collect();
+                let search_ids: HashSet<String> = research.search_results.keys().cloned().collect();
+                let errors = validate_audience_submission(
+                    &submission,
+                    &viewer_ids,
+                    &entity_ids,
+                    &mention_ids,
+                    &search_ids,
+                );
+                if errors.is_empty() {
+                    progress_say(knobs, "[AI] 复用整体Situation");
+                    let runtime = cached
+                        .get("runtime")
+                        .filter(|v| v.is_object())
+                        .cloned()
+                        .unwrap_or(json!({}));
+                    return (Ok((cached["analysis"].clone(), runtime)), research);
+                }
+                progress_say(
+                    knobs,
+                    &format!(
+                        "[AI] situation 缓存复核未过：{} 项 → 重跑 audience",
+                        errors.len()
+                    ),
+                );
+            }
         }
     }
     progress_say(

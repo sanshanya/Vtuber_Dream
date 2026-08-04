@@ -791,6 +791,246 @@ async fn staged_ai_viewers_stops_then_ai_audience_completes_situation() {
 }
 
 // ---------------------------------------------------------------------------
+// Z5 重采保 AI 全链钉
+// ---------------------------------------------------------------------------
+
+/// Z5 前置真因钉（引擎层、零 LLM）：同一 mock 两轮同模式采集 → per-viewer
+/// input_hash 必须逐字节稳定（complete_cache 跨采集复用的物理前提）。
+/// 不稳 → 直接打印 input_payload 顶键 diff，当场出真凶。
+#[tokio::test(flavor = "multi_thread")]
+async fn recollect_same_data_keeps_viewer_input_hash_stable() {
+    let bilibili = MockServer::start().await;
+    mount_bilibili_baseline(&bilibili).await;
+    let (_tmp, config_path, _app, _registry) = build_zip_fixture(&bilibili.uri(), None);
+    let config = live_core::config::load_config(&config_path).expect("config loads");
+    let out_dir = config.output_dir.clone();
+    let bilibili_host = bilibili.uri();
+    let collect_once = |config: &live_core::config::Config| {
+        let host = bilibili_host.clone();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(move || {
+                    let client = live_core::bilibili::BilibiliClient::with_origin(
+                        &host,
+                        &host,
+                        &config.bilibili.cookie,
+                        config.collection.request_delay_seconds,
+                        config.collection.timeout_seconds,
+                    )
+                    .expect("client builds");
+                    let mut emit_fn = |_: &str| {};
+                    live_core::collector::run::collect_with_client(
+                        client,
+                        config,
+                        live_core::collector::run::CollectMode::SingleViewer("1003".to_string()),
+                        &mut emit_fn,
+                    )
+                    .expect("collect completes");
+                })
+                .join()
+                .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+        });
+    };
+    // 与 pipeline 运行期同向的输入面（settings 两轮同参，横比只盯采集面漂移）。
+    let bundle_of = |out_dir: &Path| -> (String, Value) {
+        let analysis = build_factual_baseline(out_dir, 1000).expect("baseline");
+        let raw = read(&out_dir.join("viewers").join("1003.json"));
+        let profile = analysis["viewer_profiles"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|p| p["viewer"]["id"] == "1003")
+            .unwrap()
+            .clone();
+        let bundle = live_core::agent::pipeline::viewer_input_bundle(
+            &raw,
+            &profile,
+            "m5d-staged",
+            "chat_completions",
+            &json!({"enabled": false, "effort": "high", "replay_content": true}),
+            &["取向优先".to_string()],
+            1000,
+        );
+        (bundle.input_hash.clone(), bundle.input_payload.clone())
+    };
+    collect_once(&config);
+    let (hash_round1, payload_round1) = bundle_of(&out_dir);
+    collect_once(&config);
+    let (hash_round2, payload_round2) = bundle_of(&out_dir);
+    if hash_round1 != hash_round2 {
+        for key in payload_round1.as_object().map(|o| o.keys()).unwrap() {
+            let (a, b) = (&payload_round1[key], &payload_round2[key]);
+            if a != b {
+                eprintln!("[hash-diff] key={key}\n  round1={a}\n  round2={b}");
+            }
+        }
+    }
+    assert_eq!(
+        hash_round1, hash_round2,
+        "同数据重采必须产出稳定 input_hash（漂移键见 stderr [hash-diff]）"
+    );
+}
+
+/// 单查采集 → ai_viewers 落定缓存 → 同数据重采（同模式再跑一遍 SingleViewer）→
+/// ai/ 现场实体零碾平 → 第二轮 ai_viewers 完全复用：LLM 请求数零新增（事实未变 →
+/// input_hash 相等 → complete_cache 命中——重采的 AI 成本下限 = 0）。
+/// 布景纪律：两轮采集同模式同种子（manual/1003 两轮一致）——seed_source 与种子件
+/// 若跨姿势变更（manual↔guard）属事实面变化，viewers 索引位重判为正确语义，本钉不混。
+#[tokio::test(flavor = "multi_thread")]
+async fn staged_recollect_keeps_ai_cache_and_second_ai_run_reuses_zero_llm() {
+    let bilibili = MockServer::start().await;
+    mount_bilibili_baseline(&bilibili).await;
+    let llm = MockServer::start().await;
+    let cell: Cell = Arc::new((Mutex::new(HashMap::new()), Condvar::new()));
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(DynamicSubmit {
+            cell: cell.clone(),
+            model: "m5d-z5".to_string(),
+            fail_audience: false,
+        })
+        .mount(&llm)
+        .await;
+    let (_tmp, config_path, app, registry) = build_zip_fixture(&bilibili.uri(), Some(&llm.uri()));
+    let config = live_core::config::load_config(&config_path).expect("config loads");
+    let out_dir = config.output_dir.clone();
+
+    // 布景+重采共用的同一动作：scoped 线程直采 SingleViewer("1003")
+    //（纪律 W2-C1 同刃：blocking client 绝不能在 async ctx 直调）。
+    let bilibili_host = bilibili.uri();
+    let collect_once = |config: &live_core::config::Config| {
+        let host = bilibili_host.clone();
+        std::thread::scope(|scope| {
+            scope
+                .spawn(move || {
+                    let client = live_core::bilibili::BilibiliClient::with_origin(
+                        &host,
+                        &host,
+                        &config.bilibili.cookie,
+                        config.collection.request_delay_seconds,
+                        config.collection.timeout_seconds,
+                    )
+                    .expect("client builds");
+                    let mut emit_fn = |_: &str| {};
+                    live_core::collector::run::collect_with_client(
+                        client,
+                        config,
+                        live_core::collector::run::CollectMode::SingleViewer("1003".to_string()),
+                        &mut emit_fn,
+                    )
+                    .expect("collect completes");
+                })
+                .join()
+                .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+        });
+    };
+
+    // ── 第一轮采集 ──
+    collect_once(&config);
+    assert!(
+        out_dir.join("viewers").join("1003.json").exists(),
+        "第一轮采集应落 viewers/1003.json"
+    );
+
+    // ── ai_viewers #1：1 次 viewer 提交落定缓存 ──
+    let (viewer_submission, audience_submission) = derive_submissions(&out_dir);
+    fill(&cell, "viewer", viewer_submission);
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "ai_viewers"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(90));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    let llm_calls_round1 = llm.received_requests().await.expect("llm requests").len();
+    assert_eq!(
+        llm_calls_round1, 1,
+        "首轮 ai_viewers 应恰好 1 次 viewer 提交"
+    );
+
+    // ── 同数据重采（Z5 主钉）：ai/ 现场实体零碾平 ──
+    collect_once(&config);
+    assert!(
+        out_dir.join("ai/state.json").exists(),
+        "Z5 重采保 AI：重采后 ai/state.json 必须原地保活"
+    );
+    assert!(
+        out_dir
+            .join("ai")
+            .join("perception")
+            .join("viewers")
+            .join("1003.json")
+            .exists(),
+        "Z5 重采保 AI：重采后观众缓存 ai/perception/viewers/1003.json 必须原地保活"
+    );
+    assert!(
+        out_dir.join("viewers").join("1003.json").exists(),
+        "重采后事实面必须重建（viewers/1003.json 在场）"
+    );
+
+    // ── ai_viewers #2：事实未变 → input_hash 命中 → LLM 零新增 ──
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "ai_viewers"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(90));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    let llm_calls_round2 = llm.received_requests().await.expect("llm requests").len();
+    assert_eq!(
+        llm_calls_round2, llm_calls_round1,
+        "Z5 重采保 AI：同数据重采后再跑 ai_viewers 必须零新增 LLM（complete_cache 复用）"
+    );
+
+    // ── ai_audience #1：viewer 复用 + 1 次 audience 提交落定态势 ──
+    fill(&cell, "audience", audience_submission);
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "ai_audience"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(90));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    assert!(
+        out_dir.join("ai/situation.json").exists(),
+        "ai_audience 必须落定态势面"
+    );
+    let llm_calls_audience1 = llm.received_requests().await.expect("llm requests").len();
+    assert_eq!(llm_calls_audience1, 2, "viewer + audience 各一次提交");
+
+    // ── 第三轮：重采 → ai_audience #2 零新增（态势哈希也跨采集稳定）──
+    collect_once(&config);
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "ai_audience"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(90));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    let llm_calls_audience2 = llm.received_requests().await.expect("llm requests").len();
+    assert_eq!(
+        llm_calls_audience2, llm_calls_audience1,
+        "Z5 重采保 AI：同数据重采后再跑 ai_audience 必须零新增 LLM（态势哈希跨采集稳定）"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // partial=true e2e（kickoff M6-B 挂账消化 2）：audience 期失败 → failed(partial)
 // ---------------------------------------------------------------------------
 

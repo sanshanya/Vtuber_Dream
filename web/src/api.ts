@@ -57,6 +57,8 @@ export interface ViewerRow {
   collected_at: string | null;
   ai_status: string | null;
   ai_completed: boolean;
+  /** Z5c 时效位：true=旧 AI 结论的信源已更新（哈希翻），false=时效内绿灯，null=无参考旧结论。 */
+  ai_stale: boolean | null;
 }
 
 export interface ConfigView {

@@ -171,6 +171,8 @@ fn viewer_input_bundle_matches_python() {
         expected["episode_count"].as_u64().unwrap() as usize
     );
     assert_eq!(bundle.input_payload, expected["input_payload"]);
+    // Z5：hash 对账走 Rust 语义口径（episodes.observed_at 不参与哈希——fixture
+    // 的 _note_input_hash 留了 Python 含观察时刻的旧值态）。
     assert_eq!(bundle.input_hash, expected["input_hash"].as_str().unwrap());
 }
 

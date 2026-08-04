@@ -103,7 +103,9 @@ export function RunButton({ viewerCount }: { viewerCount?: number | null }) {
             再逐舰长 AI + 整体态势（认知层）。实测 5 名舰长 ≈54 分钟、估算 ≈¥6.6
             （DeepSeek 价目上界；规模随舰长数伸缩
             {typeof viewerCount === "number" ? `，当前名单 ${viewerCount} 人` : ""}）。
-            重采会重建采集面并清空 AI 缓存（历史照旧归档）；运行期间一切触发 409 互斥。
+            重采只重建事实采集面，旧 AI 结论保留作参考——事实有变的舰长会被亮
+            「信源已更新·待重判」，本轮只重判他们（哈希失效驱动，未变的零成本复用）。
+            运行期间一切触发 409 互斥。
           </p>
           <span className="run-confirm-actions">
             <button className="primary" onClick={() => void trigger()}>

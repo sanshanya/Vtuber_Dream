@@ -119,7 +119,7 @@ export function Live({ roomId }: { roomId: string }) {
         <div className="action-bar" data-testid="live-actions">
           <KindRunButton
             kind="collect_streamer"
-            note="事实层：重抓主播 profile/投稿/直播回放（本页数据源）。注意：采集器会重建整个采集面并清空舰长 AI 缓存（历史照旧归档）。"
+            note="事实层：重抓主播 profile/投稿/直播回放（本页数据源）。舰长 AI 结论不受影响（保留为参考，信源有变会被标注）。"
           />
         </div>
         {records.length === 0 ? (
