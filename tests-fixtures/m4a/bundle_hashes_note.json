@@ -1,0 +1,6 @@
+{
+  "_note": "Z2 design-Δ：shell_hash/episode_set_hash 为 Rust 增量的双轨身份面——Python 冻结面无此概念（G2-A agent_tool_list_note 先例）。input_hash 维持与 bundle_expected.json 的 Python 整包口径逐字对账。本文件由本仓 viewer_input_bundle 公式首批算出（见 pipeline_inputs.rs::viewer_dual_rail_hashes_match_note_fixture）。",
+  "viewer": "g1",
+  "shell_hash": "21054d52c89aad78bd51aed6ce899da225767081ef5834acfd398514f4138dfd",
+  "episode_set_hash": "89b4f10f52a582fbc3aab1718e75c5ce5beafa7d6f7f8114f908c2ef46ef093f"
+}

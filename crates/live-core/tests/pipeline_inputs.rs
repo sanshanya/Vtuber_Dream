@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 
 use live_core::agent::pipeline::{
     aggregate_runtime_usage, audience_input_hash_material, build_audience_input, canonical_json,
-    compact_interest_state, stable_hash, viewer_input_bundle,
+    compact_interest_state, episode_set_hash, stable_hash, viewer_input_bundle,
 };
 use live_core::agent::runtime::OaiUsage;
 use live_core::episodes::baseline::{build_factual_baseline, viewer_context};
@@ -466,5 +466,116 @@ fn oracle_oai_usage_cache_fields_round_trip() {
         ),
         (0, 0),
         "无 cache 计数字段的响应必须按零落账"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Z2/P0-3：壳（shell_hash + episode_set_hash）双轨身份面。
+// design-Δ：Python 冻结面无此概念——input_hash 维持与 m4a golden 逐字对账；
+// 两新键的期望真值由本 Rust 公式首批产出，登记注记 fixture（G2-A 白名单先例）。
+// ---------------------------------------------------------------------------
+
+/// g1 golden 的 bundle 构造（两测试共用：parity 钉与双轨钉）。
+fn g1_bundle() -> live_core::agent::pipeline::ViewerInputBundle {
+    let expected = load("bundle_expected.json");
+    let baseline = load("baseline_expected.json");
+    let profile = baseline["viewer_profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["viewer"]["id"] == "g1")
+        .unwrap()
+        .clone();
+    let viewer: Value = serde_json::from_str(
+        &fs::read_to_string(m4a().join("viewer_root/viewers/g1.json")).unwrap(),
+    )
+    .unwrap();
+    let settings = &expected["settings"];
+    let rules: Vec<String> = settings["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap().to_string())
+        .collect();
+    viewer_input_bundle(
+        &viewer,
+        &profile,
+        settings["model"].as_str().unwrap(),
+        settings["api"].as_str().unwrap(),
+        &settings["reasoning"],
+        &rules,
+        MAX_EVIDENCE,
+    )
+}
+
+#[test]
+fn viewer_dual_rail_hashes_match_note_fixture() {
+    let note = load("bundle_hashes_note.json");
+    let bundle = g1_bundle();
+    assert_eq!(bundle.shell_hash, note["shell_hash"].as_str().unwrap());
+    assert_eq!(
+        bundle.episode_set_hash,
+        note["episode_set_hash"].as_str().unwrap()
+    );
+    // parity 不受污染：整包哈希仍逐字钉 m4a golden。
+    let expected = load("bundle_expected.json");
+    assert_eq!(bundle.input_hash, expected["input_hash"].as_str().unwrap());
+}
+
+#[test]
+fn oracle_hash_scopes_track_changes() {
+    let bundle = g1_bundle();
+    // 成员重排（同事实乱序）→ 集合身份不翻面。
+    let reversed: Vec<_> = bundle.episodes.iter().rev().cloned().collect();
+    assert_eq!(
+        episode_set_hash(&reversed),
+        bundle.episode_set_hash,
+        "集合身份必须序无关"
+    );
+    // 同一 viewer 事实变更→ 壳不动，集/整包双翻面。
+    // mutation 点 = baseline evidence_catalog（上游采集工程化裁剪后的事实面，
+    // bundle 消费此口径——改 raw viewer.sources 不会传导，见 Z2 后记）。
+    let expected = load("bundle_expected.json");
+    let baseline = load("baseline_expected.json");
+    let profile = baseline["viewer_profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["viewer"]["id"] == "g1")
+        .unwrap()
+        .clone();
+    let mut edited_profile = profile.clone();
+    edited_profile["evidence_catalog"][0]["title"] = json!("全新标题——事实变更");
+    let viewer: Value = serde_json::from_str(
+        &fs::read_to_string(m4a().join("viewer_root/viewers/g1.json")).unwrap(),
+    )
+    .unwrap();
+    let settings = &expected["settings"];
+    let rules: Vec<String> = settings["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap().to_string())
+        .collect();
+    let edited_bundle = viewer_input_bundle(
+        &viewer,
+        &edited_profile,
+        settings["model"].as_str().unwrap(),
+        settings["api"].as_str().unwrap(),
+        &settings["reasoning"],
+        &rules,
+        MAX_EVIDENCE,
+    );
+    assert_eq!(
+        edited_bundle.shell_hash, bundle.shell_hash,
+        "壳身份 = 环境+描述子，episode 漂移不翻面"
+    );
+    assert_ne!(
+        edited_bundle.episode_set_hash, bundle.episode_set_hash,
+        "集合身份必须捕到内容变更（episode_id 焊 content_version）"
+    );
+    assert_ne!(
+        edited_bundle.input_hash, bundle.input_hash,
+        "整包口径随内容变更翻面（Z5 parity 语义不动）"
     );
 }

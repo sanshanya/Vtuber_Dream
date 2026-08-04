@@ -38,6 +38,22 @@ pub fn stable_hash(value: &Value) -> String {
     format!("{:x}", Sha256::digest(canonical_json(value).as_bytes()))
 }
 
+/// Z2/P0-3：episode 集合身份 —— blake2s256(canonical_json 化的排序后 episode_id 列表)。
+/// episode_id 已焊 content_version 16 位内容摘要（episodes/build.rs），本函数只对
+/// 「集合成员资格」的身份二次定海：成员重排不翻面（序无关），成员增删/内容变才翻面。
+/// 域分离：kind 字面防与 stable_hash 家族值域互撞。（圆桌性能席 blake2b 提案的收敛实现：
+/// set 输入为已摘要化 id 串、体量数百字节，blake2s256 全输出即足，不引 digest_size 魔数。）
+pub fn episode_set_hash(episodes: &[Episode]) -> String {
+    let mut ids: Vec<&str> = episodes.iter().map(|e| e.episode_id.as_str()).collect();
+    ids.sort_unstable();
+    format!(
+        "{:x}",
+        blake2::Blake2s256::digest(
+            canonical_json(&json!({"kind": "episode-set-v1", "ids": ids})).as_bytes()
+        )
+    )
+}
+
 // ---------------------------------------------------------------------------
 // aggregate_runtime_usage（Python ai_data.aggregate_runtime_usage）
 // ---------------------------------------------------------------------------
@@ -72,6 +88,11 @@ pub struct ViewerInputBundle {
     pub episodes: Vec<Episode>,
     pub input_payload: Value,
     pub input_hash: String,
+    /// Z2/P0-3 壳身份：config 描述子 + 去 episodes 的输入包。episode 面任意漂移
+    /// （增删/内容变/重排）都不翻面——「环境没变」与「证据变了」从此可分账。
+    pub shell_hash: String,
+    /// Z2/P0-3 集合身份：episode_id 焊 content_version，排序无关（episode_set_hash）。
+    pub episode_set_hash: String,
 }
 
 /// Z5 语义哈希口径：`observed_at` = 观察时刻（本轮采集墙钟），不是事实内容。
@@ -129,11 +150,31 @@ pub fn viewer_input_bundle(
         "rules": rules,
         "input": hash_input,
     }));
+    // Z2/P0-3：input_hash 保持与 Python golden 逐字对账的整包口径；壳/集合同源新算。
+    // 壳 = 环境+描述子：episodes 与其导出物（deterministic_mention_seeds 由 episodes
+    // 函数派生）同属证据层，两面同时摘出——否则证据变 = 壳变，双轨语义塌陷。
+    let mut shell_input = input_payload
+        .as_object()
+        .cloned()
+        .expect("payload 恒为对象");
+    shell_input.remove("episodes");
+    shell_input.remove("deterministic_mention_seeds");
+    let shell_hash = stable_hash(&json!({
+        "runtime": CACHE_RUNTIME_VIEWER,
+        "model": model,
+        "api": api,
+        "reasoning": reasoning,
+        "rules": rules,
+        "input": shell_input,
+    }));
+    let episode_set_hash = episode_set_hash(&episodes);
     ViewerInputBundle {
         context_data,
         episodes,
         input_payload,
         input_hash,
+        shell_hash,
+        episode_set_hash,
     }
 }
 
@@ -636,6 +677,12 @@ async fn run_one_viewer(
     force: bool,
 ) -> (String, ViewerStage) {
     let input_hash = bundle.input_hash.clone();
+    // Z2/P0-3：壳/集合身份随缓存落盘——增量复用消费者（后续批次）的判定件。
+    let hash_manifest = json!({
+        "input_hash": bundle.input_hash,
+        "shell_hash": bundle.shell_hash,
+        "episode_set_hash": bundle.episode_set_hash,
+    });
     let episodes: std::collections::BTreeMap<String, Episode> = bundle
         .episodes
         .iter()
@@ -726,6 +773,7 @@ async fn run_one_viewer(
                     "input_hash": input_hash,
                     "model": config.ai.model,
                     "error": "viewer context build failed",
+                    "hash_manifest": hash_manifest,
                     "elapsed_seconds": 0.0,
                     "runtime": stats_json(&RuntimeStats::default()),
                 }),
@@ -783,6 +831,7 @@ async fn run_one_viewer(
                 &json!({
                     "status": "complete",
                     "input_hash": input_hash,
+                    "hash_manifest": hash_manifest,
                     "model": config.ai.model,
                     "protocol": "terminal_tool_call",
                     "terminal_tool": "submit_viewer_perception",
@@ -807,6 +856,7 @@ async fn run_one_viewer(
                 &json!({
                     "status": "failed",
                     "input_hash": input_hash,
+                    "hash_manifest": hash_manifest,
                     "model": config.ai.model,
                     "error": err.to_string(),
                     "elapsed_seconds": elapsed,
