@@ -694,16 +694,19 @@ pub fn query_graph_tool<C: HasAudience>() -> AgentTool<C> {
 
 /// Viewer Agent 调查工具集（终局工具在 M3-C 由 validators 装配）。
 ///
-/// R1-2 注：`verify_videos` 批原语在此**钉面之外**——agent_golden 的
-/// `prompts_assembly_and_spec_parity` 把 Viewer 工具清单钉死为 Python 冻结的
-/// 4 工具（search_entity_candidates / search_bilibili_videos / get_bilibili_video /
-/// submit_viewer_perception），注册即破坏 parity（Python 侧无 verify_videos）。
-/// 实现与 3 个直用单测保留在 tests/agent_tools.rs；G2 决定是否入装配点。
+/// G2-A1 注：`verify_videos` 批原语**已入装配**（docs 2026-08-04-g2-gate-ruling §5
+/// 遗留第 1 条「G2 第一刀」；design 红线②：高基数核验必须是批形原语）。装配面比
+/// Python 冻结的 4 工具（search_entity_candidates / search_bilibili_videos /
+/// get_bilibili_video / submit_viewer_perception）**多且只多**这一个——agent_golden
+/// 的 `prompts_assembly_and_spec_parity` 用白名单注记（tests-fixtures/golden/
+/// agent_tool_list_note.json）钉死该增量，未来静默加新工具即红。audience 面不装
+/// 此工具（红线② 语境是 viewer 校验场景）。
 pub fn viewer_investigation_tools() -> Vec<AgentTool<ViewerAgentCtx>> {
     vec![
         search_entity_candidates_tool(),
         search_bilibili_videos_tool(),
         get_bilibili_video_tool(),
+        verify_videos_tool(),
     ]
 }
 

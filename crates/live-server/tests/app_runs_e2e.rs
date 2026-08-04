@@ -1132,3 +1132,236 @@ async fn single_viewer_run_audience_failure_marks_partial_true() {
     );
     assert_eq!(state["status"], "failed", "{state}");
 }
+
+// ---------------------------------------------------------------------------
+// G2 冒烟：线索→采集→对账 两轮（M4.x 账本消费环端到端）
+// ---------------------------------------------------------------------------
+
+/// G2 立项裁决书§1 冒烟主戏：两轮「线索→采集→对账」自动化核对。
+///
+/// 轮一（线索入账）：Guards 动作面采集成面 → ai_audience 经 wiremock LLM
+/// 终局带回 ≥1 条 audience lead → 账本出现 pending_approval 行（以
+/// AUDIENCE_VIEWER_ID 入账），/rooms/:uid/overview 读数面同步呈现 pending。
+/// 人工审批 seam：当前实现**没有** POST /api 审批端点（前端 Leads 面板 = 手工
+/// 编辑 leads.jsonl）——按设计 seam 原地把 pending 行改为 approved（红线如实记录）。
+/// 轮二（采集消费+对账）：撬开 lead_fetch_budget_per_run=1 → 同模式非单查 collect
+/// 尾段按预算消费该 creator lead，wiremock /x/space/wbi/arc/search 以 mid=3001
+/// 命中并返还 1 条投稿 → 行转 consumed、yield_count>0、collection.json
+/// complete + leads_consumed=1、viewers/1003.json 重建；同时 ai/ 缓存与账本
+/// 跨轮存续（Z5：reset_output 白名单外，屠刀不碰），LLM 面零新增（事实未变→
+/// 哈希命中、缓存全复用）。
+#[tokio::test(flavor = "multi_thread")]
+async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
+    use live_core::leads::{
+        LeadStatus, ledger_path, read_ledger, read_ledger_guarded, rewrite_ledger,
+    };
+
+    let bilibili = MockServer::start().await;
+    mount_bilibili_baseline(&bilibili).await;
+    let llm = MockServer::start().await;
+    let cell: Cell = Arc::new((Mutex::new(HashMap::new()), Condvar::new()));
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(DynamicSubmit {
+            cell: cell.clone(),
+            model: "g2-smoke".to_string(),
+            fail_audience: false,
+        })
+        .mount(&llm)
+        .await;
+    let (_tmp, config_path, app, registry) = build_zip_fixture(&bilibili.uri(), Some(&llm.uri()));
+    // 给 Guards 采集面一个附加观众种子（yaml_template 默认空名单）。
+    let yaml = std::fs::read_to_string(&config_path).unwrap();
+    std::fs::write(
+        &config_path,
+        yaml.replace(
+            "additional_viewer_ids: []",
+            "additional_viewer_ids: [\"1003\"]",
+        ),
+    )
+    .unwrap();
+    let out_dir = live_core::config::load_config(&config_path)
+        .expect("config loads")
+        .output_dir;
+
+    // ── 轮一①：Guards 采集成面 ──
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "collect_guards"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    assert_eq!(snapshot["kind"], "collect_guards");
+    assert!(
+        out_dir.join("viewers").join("1003.json").exists(),
+        "采集面应落 viewers/1003.json"
+    );
+    // 默认预算 0 → 本轮不得面世 leads_consumed（M4.x-T1 冻结）。
+    let first_collection = read(&out_dir.join("collection.json"));
+    assert_eq!(first_collection["status"], "complete");
+    assert!(
+        first_collection.get("leads_consumed").is_none(),
+        "预算 0 不得面世 leads_consumed：{first_collection}"
+    );
+
+    // ── 轮一②：ai_audience 终局带回 ≥1 条 audience lead ──
+    let (viewer_submission, mut audience_submission) = derive_submissions(&out_dir);
+    audience_submission["leads"] = json!([{
+        "type": "creator", "locator": "3001",
+        "motivation": "G2 冒烟：audience 终局回传一条可消费线索。",
+        "expected_signal": "目标 up 的 arc/search 列表返回 ≥1 条投稿。",
+        "priority": "medium", "evidence_ids": []
+    }]);
+    fill(&cell, "viewer", viewer_submission);
+    fill(&cell, "audience", audience_submission);
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "ai_audience"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(90));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    assert_eq!(snapshot["partial"], false, "{snapshot}");
+
+    // 账本出现 1 条 pending_approval（audience 侧、creator/3001）。
+    let rows = read_ledger(&ledger_path(&out_dir));
+    assert_eq!(rows.len(), 1, "audience lead 应恰好 1 条账本行：{rows:?}");
+    assert_eq!(rows[0].lead_type, "creator");
+    assert_eq!(rows[0].locator, "3001");
+    assert_eq!(rows[0].status, LeadStatus::PendingApproval, "{rows:?}");
+    assert_eq!(
+        rows[0].viewer_id, "audience",
+        "audience lead 以 AUDIENCE_VIEWER_ID 入账：{rows:?}"
+    );
+    // 服务端读取侧同步呈现 pending 明细（人工审批工作队列就位）。
+    let (status, overview) = oneshot(&app, "GET", "/api/rooms/983/overview", None).await;
+    assert_eq!(status, 200, "{overview}");
+    assert_eq!(
+        overview["leads"]["totals"]["pending_approval"], 1,
+        "{overview}"
+    );
+    assert_eq!(overview["ai"]["status"], "complete", "{overview}");
+
+    // ── 审批（设计 seam）：无 POST /api 审批端点 → 手工编辑账本行 ──
+    let mut rows = read_ledger_guarded(&ledger_path(&out_dir)).expect("账本守卫读");
+    let mut flipped = 0;
+    for row in rows.iter_mut() {
+        if row.lead_type == "creator" {
+            row.status = LeadStatus::Approved;
+            flipped += 1;
+        }
+    }
+    assert_eq!(flipped, 1, "审批 seam 应恰好翻动 creator 一行");
+    rewrite_ledger(&out_dir, &rows).unwrap();
+
+    // Z5 前置快照：ai/ 缓存字节（重采后必须逐字节不变）。
+    let ai_state_before = std::fs::read(out_dir.join("ai/state.json")).unwrap();
+    let ai_situation_before = std::fs::read(out_dir.join("ai/situation.json")).unwrap();
+
+    // ── 轮二：撬开 lead_fetch_budget_per_run=1，非单查采集尾段消费 ──
+    let yaml = std::fs::read_to_string(&config_path).unwrap();
+    std::fs::write(
+        &config_path,
+        yaml.replacen(
+            "  timeout_seconds: 5",
+            "  timeout_seconds: 5\n  lead_fetch_budget_per_run: 1",
+            1,
+        ),
+    )
+    .unwrap();
+
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "collect_guards"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    assert_eq!(snapshot["kind"], "collect_guards");
+    assert_eq!(snapshot["outcome"]["status"], "complete", "{snapshot}");
+
+    // 对账①：creator 行 consumed + yield_count>0。
+    let rows = read_ledger(&ledger_path(&out_dir));
+    let consumed = rows
+        .iter()
+        .find(|r| r.lead_type == "creator" && r.locator == "3001")
+        .expect("creator 行必须存在");
+    assert_eq!(consumed.status, LeadStatus::Consumed, "{consumed:?}");
+    assert!(
+        consumed.yield_count > 0,
+        "creator 消费应带回 yield：{consumed:?}"
+    );
+    assert!(consumed.resolution_note.is_empty(), "{consumed:?}");
+
+    // 对账②：collection.json complete + leads_consumed=1。
+    let collection = read(&out_dir.join("collection.json"));
+    assert_eq!(collection["status"], "complete", "{collection}");
+    assert_eq!(collection["leads_consumed"], 1, "{collection}");
+
+    // 对账③：目标观众事实面重建。
+    assert!(
+        out_dir.join("viewers").join("1003.json").exists(),
+        "轮二采集应重建 viewers/1003.json"
+    );
+
+    // Z5：重采保 AI——ai/ 缓存字节级原样（reset_output 白名单外）。
+    assert_eq!(
+        std::fs::read(out_dir.join("ai/state.json")).unwrap(),
+        ai_state_before,
+        "重采不得碾平 ai/state.json"
+    );
+    assert_eq!(
+        std::fs::read(out_dir.join("ai/situation.json")).unwrap(),
+        ai_situation_before,
+        "重采不得碾平 ai/situation.json"
+    );
+
+    // 消费的真实网络面：creator 3001 必须以 mid=3001 命中 arc/search mock。
+    let bil = bilibili
+        .received_requests()
+        .await
+        .expect("bilibili requests");
+    assert!(
+        bil.iter().any(|r| {
+            r.url.path() == "/x/space/wbi/arc/search"
+                && r.url
+                    .query_pairs()
+                    .any(|(key, value)| key == "mid" && value == "3001")
+        }),
+        "creator 消费必须携带 mid=3001 命中 arc/search：\n{}",
+        bil.iter()
+            .map(|r| format!("{} {}", r.method, r.url))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+
+    // LLM 面零新增：全程恰 1 次 viewer + 1 次 audience 终局提交。
+    assert_eq!(
+        llm.received_requests().await.expect("llm requests").len(),
+        2,
+        "两轮全程不得有第三次 LLM 外呼（缓存全命中）"
+    );
+
+    // 终账对账：overview 读取侧呈现 consumed=1、pending 清零。
+    let (status, overview) = oneshot(&app, "GET", "/api/rooms/983/overview", None).await;
+    assert_eq!(status, 200, "{overview}");
+    assert_eq!(overview["leads"]["totals"]["consumed"], 1, "{overview}");
+    assert_eq!(
+        overview["leads"]["totals"]["pending_approval"], 0,
+        "{overview}"
+    );
+    assert_eq!(overview["collection"]["leads_consumed"], 1, "{overview}");
+}

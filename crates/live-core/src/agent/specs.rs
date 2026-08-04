@@ -1,7 +1,9 @@
 //! M3-D 终局工具厂 + Agent 装配（自 tools.rs 整平移，速度拆分见 review 工程 m4）。
 //!
 //! 消费者：pipeline（M4）与 tests/agent_golden.rs。这里的两个 spec 装配器带上
-//! Python pipeline.py 的 name/instructions/tools 顺序 parity。
+//! Python pipeline.py 的 name/instructions/tools 顺序 parity。G2-A1：viewer 装配
+//! 在冻结四件之外有唯一白名单增量 verify_videos（agent_golden 白名单机制对照）；
+//! audience 装配无增量（4+1 冻结）。
 
 use std::collections::{BTreeSet, HashSet};
 
@@ -20,7 +22,9 @@ use super::validators::{validate_audience_submission, validate_viewer_submission
 
 /// 工具规格版本串（R1-4）：工具 name/description/参数 schema 变更时同步递增，
 /// 与 prompts::PROMPTS_VERSION 一同写入 trace 的 run_start（协议红线：变更可审计）。
-pub const TOOL_SPECS_VERSION: &str = "2026-08-04.v1";
+/// G2-A1：viewer 装配入 verify_videos（白名单增量，见 tools.rs 装配注与 golden
+/// 注记 fixture agent_tool_list_note.json）→ .v1 → .v2。
+pub const TOOL_SPECS_VERSION: &str = "2026-08-04.v2";
 
 // ---------------------------------------------------------------------------
 // 终局工具厂 + Agent 装配（M3-D；Python submit_* + pipeline.py 组装逐字）

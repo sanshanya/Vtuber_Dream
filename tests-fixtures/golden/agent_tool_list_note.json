@@ -1,0 +1,22 @@
+{
+  "_note": "G2-A1 白名单注记：verify_videos 批形核验原语（design 红线②，docs/2026-08-03-rust-rewrite-design.md:182）正式入装配面（docs/2026-08-04-g2-gate-ruling §5 遗留第 1 条「G2 第一刀」）。Python 冻结清单（tools.py/pipeline.py 的 @function_tool 全集）永远不改 —— 装配面比冻结面多且只多 viewer_whitelist_increment 里的 verify_videos。golden parity 比对规则：冻结件逐字在 + 唯一白名单增量 + 除此之外无其他增量。新增任何调查工具必须先在此注记登记（∈白名单增量或冻结面）再改装配，否则 prompts_assembly_and_spec_parity 一行变红。audience 装配面无白名单增量（4+1 冻结），绝不允许出现 verify_videos（design 红线② 语境是 viewer 校验场景）。装配变更的审计载体：TOOL_SPECS_VERSION 随本次入装配升至 2026-08-04.v2。",
+  "viewer_python_frozen_tools": [
+    "search_entity_candidates",
+    "search_bilibili_videos",
+    "get_bilibili_video",
+    "submit_viewer_perception"
+  ],
+  "viewer_whitelist_increment": [
+    "verify_videos"
+  ],
+  "audience_python_frozen_tools": [
+    "search_bilibili_videos",
+    "get_bilibili_video",
+    "get_viewer_analysis",
+    "query_graph",
+    "submit_audience_situation"
+  ],
+  "audience_must_not_include": [
+    "verify_videos"
+  ]
+}

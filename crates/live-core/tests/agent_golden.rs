@@ -21,6 +21,25 @@ use wiremock::MockServer;
 mod common;
 use common::*;
 
+/// G2-A1 白名单注记 fixture（装配面比 Python 冻结面多且只多 verify_videos 的来源）。
+/// 路径约定同 m4a：`tests-fixtures/golden/agent_tool_list_note.json`。
+fn agent_tool_list_note() -> Value {
+    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests-fixtures/golden/agent_tool_list_note.json");
+    serde_json::from_str(&std::fs::read_to_string(&path).expect("golden agent_tool_list_note 可读"))
+        .expect("golden agent_tool_list_note 是合法 JSON")
+}
+
+/// golden 注记 fixture 的数组字段 → Vec<String>（冻结面/白名单共同的比对基准）。
+fn note_list(note: &Value, key: &str) -> Vec<String> {
+    note[key]
+        .as_array()
+        .expect("note 字段为数组")
+        .iter()
+        .map(|item| item.as_str().expect("工具名为字符串").to_string())
+        .collect()
+}
+
 // ---------------------------------------------------------------------------
 // 数据基建（与 agent_tools.rs 同型）
 // ---------------------------------------------------------------------------
@@ -241,8 +260,8 @@ async fn golden_viewer_reject_then_accept() {
     );
     assert!(trace_text.contains("m3d-2026-08-04"), "{trace_text}");
     assert!(
-        trace_text.contains("2026-08-04.v1"),
-        "R1-4 工具规格版本串必须随 run_start 入 trace：{trace_text}"
+        trace_text.contains("2026-08-04.v2"),
+        "R1-4 工具规格版本串必须随 run_start 入 trace（G2-A1 入装配 ≥ v2）：{trace_text}"
     );
     assert!(
         trace_text.contains("ViewerPerceptionSubmission"),
@@ -401,8 +420,8 @@ async fn golden_audience_happy_path() {
         "{trace_text}"
     );
     assert!(
-        trace_text.contains("2026-08-04.v1"),
-        "R1-4 工具规格版本串必须随 run_start 入 trace：{trace_text}"
+        trace_text.contains("2026-08-04.v2"),
+        "R1-4 工具规格版本串必须随 run_start 入 trace（G2-A1 入装配 ≥ v2）：{trace_text}"
     );
     assert!(!trace_text.contains("核验单人"), "{trace_text}");
 }
@@ -425,34 +444,108 @@ fn prompts_assembly_and_spec_parity() {
     let prompt = prompts::audience_user_prompt(&json!({"a": "异环"}));
     assert!(prompt.ends_with("{\"a\":\"异环\"}"));
 
-    let spec = viewer_agent_spec("v1", &rules());
-    assert_eq!(spec.name, "Viewer Grounded Perception v1");
-    let names: Vec<&str> = spec.tools.iter().map(|t| t.name.as_str()).collect();
+    // -------------------------------------------------------------------------
+    // G2-A1 白名单（golden 比对基准 = tests-fixtures/golden/agent_tool_list_note.json）：
+    // 本装配比 Python 冻结面多且只多 `verify_videos` —— design 红线② 的批形核验
+    // 原语（docs/2026-08-03-rust-rewrite-design.md:182，S0 实测：per-video 单验把每
+    // 观众滚到 15+ 轮、input 峰值 65k/轮），Python 侧（tools.py @function_tool 全集）
+    // 无此明文对象，无法进冻结面——故按 2026-08-04-g2-gate-ruling §5「入装配」。
+    // 比对规则 = 「冻结四件逐字在 + 唯一白名单增量 verify_videos + 除此之外无其他
+    // 增量」：本块不变会红、未来在装配里混入新工具也会红——白名单是防静默漂移的钩。
+    let note = agent_tool_list_note();
+    let frozen: Vec<String> = note_list(&note, "viewer_python_frozen_tools");
+    let whitelist: Vec<String> = note_list(&note, "viewer_whitelist_increment");
     assert_eq!(
-        names,
+        frozen,
         [
             "search_entity_candidates",
             "search_bilibili_videos",
             "get_bilibili_video",
             "submit_viewer_perception"
-        ]
+        ],
+        "Python 冻结四件 = 注记 fixture 基准，不得漂移"
     );
-    assert!(spec.tools[3].terminal);
+    assert_eq!(
+        whitelist,
+        ["verify_videos"],
+        "唯一白名单增量 = verify_videos（设计红线②），不得增改"
+    );
+
+    let spec = viewer_agent_spec("v1", &rules());
+    assert_eq!(spec.name, "Viewer Grounded Perception v1");
+    let names: Vec<String> = spec.tools.iter().map(|t| t.name.clone()).collect();
+    // viewer 装配 = 冻结调查三件 + 白名单 verify_videos + 冻结终局（5 件 = 4 冻结 + 1 白名单）。
+    let mut expected_viewer: Vec<String> = frozen[..3].to_vec();
+    expected_viewer.extend(whitelist.clone());
+    expected_viewer.push(frozen[3].clone());
+    assert_eq!(
+        names, expected_viewer,
+        "装配表必须严格等于「冻结+白名单」公式"
+    );
+    assert_eq!(
+        names.len(),
+        5,
+        "viewer 工具清单恰好 5 件（4 冻结 + verify_videos 白名单）"
+    );
+    assert!(!spec.tools[3].terminal);
+    assert!(spec.tools[4].terminal);
 
     let spec = audience_agent_spec(&rules());
     assert_eq!(spec.name, "Audience Situation Intelligence");
-    let names: Vec<&str> = spec.tools.iter().map(|t| t.name.as_str()).collect();
-    assert_eq!(
-        names,
-        [
-            "search_bilibili_videos",
-            "get_bilibili_video",
-            "get_viewer_analysis",
-            "query_graph",
-            "submit_audience_situation"
-        ]
-    );
+    let names: Vec<String> = spec.tools.iter().map(|t| t.name.clone()).collect();
+    let audience_frozen: Vec<String> = note_list(&note, "audience_python_frozen_tools");
+    assert_eq!(names, audience_frozen, "audience 装配仍 4+1 冻结，逐字不改");
     assert!(spec.tools[4].terminal);
+    assert!(
+        !names.contains(&"verify_videos".to_string()),
+        "audience 提示面不得出现 verify_videos（design 红线② 语境是 viewer 校验场景）"
+    );
+}
+
+/// G2-A1 新钉：调查工具面（不含终局）清单——
+/// - viewer 面 = 冻结三调查 + 唯一白名单增量 verify_videos（恰 4 件，比冻结面多且只多这一个）；
+/// - audience 面 = 冻结四件逐字，绝不出现 verify_videos（design 红线② 语境是 viewer 校验场景）。
+///
+/// 终局不入调查集（submit_* 由 specs 装配器 push），两处计数对账 4 起钉。
+#[test]
+fn g2_a1_investigation_surface_whitelist_and_audience_isolation() {
+    use live_core::agent::tools::{audience_investigation_tools, viewer_investigation_tools};
+
+    let note = agent_tool_list_note();
+    let frozen: Vec<String> = note_list(&note, "viewer_python_frozen_tools");
+    let whitelist: Vec<String> = note_list(&note, "viewer_whitelist_increment");
+    let audience_frozen: Vec<String> = note_list(&note, "audience_python_frozen_tools");
+
+    let viewer_inv: Vec<String> = viewer_investigation_tools()
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    // viewer 调查面 = 冻结前 3 件（调查三件）+ 白名单增量，恰 4 件。
+    let mut expected_viewer_inv: Vec<String> = frozen[..3].to_vec();
+    expected_viewer_inv.extend(whitelist.clone());
+    assert_eq!(viewer_inv, expected_viewer_inv);
+    assert_eq!(viewer_inv.len(), 4);
+    assert_eq!(
+        viewer_inv.iter().filter(|n| **n == "verify_videos").count(),
+        1,
+        "verify_videos 在 viewer 提示面恰好出现一次"
+    );
+
+    let audience_inv: Vec<String> = audience_investigation_tools()
+        .iter()
+        .map(|t| t.name.clone())
+        .collect();
+    // audience 调查面 4 件 + 终局 = 4+1；不含白名单增量。
+    assert_eq!(
+        &audience_inv[..],
+        &audience_frozen[..4],
+        "audience 调查面 = 冻结四件的 前四件（不含终局）"
+    );
+    assert_eq!(audience_inv.len(), 4);
+    assert!(
+        !audience_inv.iter().any(|n| whitelist.contains(n)),
+        "audience 调查面不得出现 viewer 白名单增量 {whitelist:?}"
+    );
 }
 
 /// blocking 客户端的 drop 禁在 async 上下文（M3-B 已证）；测试收尾统一走这里。
