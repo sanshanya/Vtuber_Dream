@@ -73,14 +73,9 @@ export default function App() {
     <>
       <header className="hero">
         <div className="container">
-          {/* 英雄区名字 = 主播本人；副徽标 = 产品中文薄名「虚梦」（不是 config 工程代号——
-              项目名是内部记号，产品名是给人看的。主播缺档时名字栏落产品名。 */}
-          <h1>
-            {typeof overviewData.streamer?.name === "string" && overviewData.streamer.name
-              ? overviewData.streamer.name
-              : "虚梦"}
-            <span className="badge hero-project">虚梦 · Vtuber Dream</span>
-          </h1>
+          {/* 英雄区上行 = 应用品牌（用户裁决摆位：红箭头行 = 虚梦应用标题，
+              黄箭头行 = 房间名=主播名 + ＋房间入口）。 */}
+          <h1>虚梦 · Vtuber Dream</h1>
           {/* Z3 定稿序：主播介绍（首页）→ 舰长列表 → 直播数据 → 线索账本（末位）→ 图谱 → 设置。 */}
           <nav className="nav">
             <a href="#/">主播介绍</a>
@@ -92,10 +87,25 @@ export default function App() {
           </nav>
         </div>
         {/* design §10「全部页头触发钮」裁决：hero 单点挂载；追踪态由 RunTracker 全局共享。
-            Z5 房间入口钮：行为 = 引导（跳「设置」页的房间配置区），不做真实多房间后端。 */}
+            房间模型：当前房间 = 主播名（房间即主播），名列最前，点击回主播介绍页；
+            「＋房间」行为 = 引导（跳设置页），多房间后端不在本原型。 */}
         <div className="container hero-runbar">
+          <a
+            className="room-current"
+            href="#/"
+            title="当前房间（房间 = 主播）"
+            data-testid="room-current"
+          >
+            {typeof overviewData.streamer?.name === "string" && overviewData.streamer.name
+              ? overviewData.streamer.name
+              : (rooms.data?.[0]?.project_name ?? "直播房间")}
+          </a>
           <RunButton />
-          <a className="room-entry" href="#/settings" title="房间配置在设置页——单房间原型，入口负责引导">
+          <a
+            className="room-entry"
+            href="#/settings"
+            title="房间配置在设置页——单房间原型，入口负责引导"
+          >
             ＋ 房间
           </a>
         </div>
