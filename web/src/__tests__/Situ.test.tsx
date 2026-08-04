@@ -80,4 +80,44 @@ describe("Situ 四层 badge（ag1-F1：计数与逐项同层）", () => {
     const badges = screen.getByTestId("situ-count-badges");
     expect(badges.textContent).toContain("兴趣实体 1");
   });
+
+  it("Z2b：content_calendar 不再只计数不呈现（theme/session/goal/验证信号）", () => {
+    const cal = {
+      ...ANALYSIS,
+      content_calendar: [
+        {
+          session: "近期（1-2周内）",
+          theme: "异环1.2版本探索直播",
+          goal: "激活舰长互动",
+          validation_signal: "舰长弹幕/评论互动量",
+        },
+      ],
+    };
+    render(<Situ analysis={cal} />);
+    const block = screen.getByTestId("situ-calendar");
+    expect(block.textContent).toContain("异环1.2版本探索直播");
+    expect(block.textContent).toContain("近期（1-2周内）");
+    expect(block.textContent).toContain("激活舰长互动");
+    expect(block.textContent).toContain("验证信号：舰长弹幕/评论互动量");
+  });
+
+  it("Z2b：摘要以「## 整体态势」开场 → 首标题行剥除（卡名不叠罗汉）", () => {
+    const dup = {
+      ...ANALYSIS,
+      executive_summary: "## 整体态势\n## 观众结构\n- 一\n",
+    };
+    render(<Situ analysis={dup} />);
+    const heads = document.querySelectorAll(".markdown h3");
+    expect(heads.length).toBe(1);
+    expect(heads[0].textContent).toBe("观众结构");
+  });
+
+  it("Z2b：拆卡——各部件独立 section（态势摘要 / 兴趣实体 / 观众社群 / 关键态势 / 行动建议与排期）", () => {
+    const cal = { ...ANALYSIS, content_calendar: [{ theme: "t" }] };
+    const { container } = render(<Situ analysis={cal} />);
+    const titles = Array.from(container.querySelectorAll(".situ-part h2")).map(
+      (el) => el.textContent,
+    );
+    expect(titles).toEqual(["态势摘要", "兴趣实体", "观众社群", "关键态势", "行动建议与排期"]);
+  });
 });

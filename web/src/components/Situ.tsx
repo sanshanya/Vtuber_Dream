@@ -3,9 +3,11 @@
  *
  * badge 四层调色纪律（ag1-F1 裁定）：推断=ai、状态判断=state、行动建议=action、
  * 平台事实=fact——计数徽标与逐项标注必须用同一层色（本组件是唯一实装点，
- * Dashboard 里的 count 行与 item 行致错史见 docs/review-m5/ag1）。
+ * 旧 Dashboard 里的 count 行与 item 行致错史见 docs/review-m5/ag1）。
  * LLM 产物形状漂移无 schema 校验（ag4-F6）：所有入 JSX 的键一律 String() 护栏。
  * Z2：executive_summary 走 Markdown 渲染（旧实现整段入 <p>，##/** 记号漏上墙）。
+ * Z2b：单卡 1595px 墙被用户点名——按语义部件拆卡（摘要/兴趣实体/社群/关键态势/
+ * 行动建议+排期）；content_calendar 补渲染（旧实现只计数、列表缺席）。
  */
 import { Markdown } from "./Markdown";
 
@@ -47,68 +49,124 @@ export function Situ({ analysis, synthetic = false }: { analysis: SituAnalysis; 
     content_opportunities: opportunities.length,
     content_calendar: calendars.length,
   };
+  // AI 摘要常以「## 整体态势」开场——与卡片标题重复，剥掉首个同名标题行。
+  const summary =
+    typeof analysis.executive_summary === "string"
+      ? analysis.executive_summary.replace(/^\s*#{1,3}\s*整体态势\s*\r?\n?/, "")
+      : "";
   return (
     <>
-      {/* W2/r1-F1：合成标记是「反事实」元信息，不穿 fact 层色——裸 badge 无层色。
-          四层调色只服务 事实/推断/状态/行动 的内容分层，元标记不入层。 */}
-      {synthetic && (
-        <span className="badge" data-testid="situ-synthetic">
-          synthetic_demo 合成演示数据
-        </span>
-      )}
-      {typeof analysis.executive_summary === "string" && (
-        <Markdown text={analysis.executive_summary} />
-      )}
-      <div className="badges" data-testid="situ-count-badges">
-        {COUNT_BADGE_LAYERS.map((layer) => (
-          <span className={layer.badgeClass} key={layer.key} data-layer={layer.key}>
-            {layer.label} {counts[layer.key]}
+      <section className="section card situ-part">
+        <div className="section-title">
+          <h2>态势摘要</h2>
+        </div>
+        {/* W2/r1-F1：合成标记是「反事实」元信息，不穿 fact 层色——裸 badge 无层色。
+            四层调色只服务 事实/推断/状态/行动 的内容分层，元标记不入层。 */}
+        {synthetic && (
+          <span className="badge" data-testid="situ-synthetic">
+            synthetic_demo 合成演示数据
           </span>
-        ))}
-      </div>
-      {interests.map((item, i) => (
-        <span className="badge ai" key={`g${i}`} title={text(item.evidence_summary)}>
-          {text(item.entity, "?")}
-          {text(item.status) ? ` · ${text(item.status)}` : ""}
-        </span>
-      ))}
+        )}
+        {summary.length > 0 && <Markdown text={summary} />}
+        <div className="badges" data-testid="situ-count-badges">
+          {COUNT_BADGE_LAYERS.map((layer) => (
+            <span className={layer.badgeClass} key={layer.key} data-layer={layer.key}>
+              {layer.label} {counts[layer.key]}
+            </span>
+          ))}
+        </div>
+      </section>
+
+      {interests.length > 0 && (
+        <section className="section card situ-part">
+          <div className="section-title">
+            <h2>兴趣实体</h2>
+            <span className="badge ai">{interests.length} 项</span>
+          </div>
+          <div className="badges">
+            {interests.map((item, i) => (
+              <span className="badge ai" key={`g${i}`} title={text(item.evidence_summary)}>
+                {text(item.entity, "?")}
+                {text(item.status) ? ` · ${text(item.status)}` : ""}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+
       {communities.length > 0 && (
-        <ul className="delta-list" data-testid="situ-communities">
-          {communities.map((item, i) => (
-            <li key={`c${i}`}>
-              <strong>{text(item.name, "?")}</strong>
-              {/* W2/r1-F5：communities 是 audience 提交的 AI 群体推断产物 → 推断层色。 */}
-              <span className="badge ai" style={{ margin: "0 6px" }}>
-                {`观众 ${Array.isArray(item.viewer_ids) ? item.viewer_ids.length : 0}`}
-              </span>
-              <span className="muted">{text(item.description)}</span>
-            </li>
-          ))}
-        </ul>
+        <section className="section card situ-part">
+          <div className="section-title">
+            <h2>观众社群</h2>
+          </div>
+          <ul className="delta-list" data-testid="situ-communities">
+            {communities.map((item, i) => (
+              <li key={`c${i}`}>
+                <strong>{text(item.name, "?")}</strong>
+                {/* W2/r1-F5：communities 是 audience 提交的 AI 群体推断产物 → 推断层色。 */}
+                <span className="badge ai" style={{ margin: "0 6px" }}>
+                  {`观众 ${Array.isArray(item.viewer_ids) ? item.viewer_ids.length : 0}`}
+                </span>
+                <span className="muted">{text(item.description)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
+
       {situations.length > 0 && (
-        <ul className="delta-list">
-          {situations.map((item, i) => (
-            <li key={`s${i}`}>
-              <strong>{text(item.title, "?")}</strong>
-              <span className="badge state" style={{ margin: "0 6px" }}>
-                {text(item.status, "?")}
-              </span>
-              <span className="muted">{text(item.description)}</span>
-            </li>
-          ))}
-        </ul>
+        <section className="section card situ-part">
+          <div className="section-title">
+            <h2>关键态势</h2>
+          </div>
+          <ul className="delta-list">
+            {situations.map((item, i) => (
+              <li key={`s${i}`}>
+                <strong>{text(item.title, "?")}</strong>
+                <span className="badge state" style={{ margin: "0 6px" }}>
+                  {text(item.status, "?")}
+                </span>
+                <span className="muted">{text(item.description)}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
       )}
-      {opportunities.length > 0 && (
-        <ul className="delta-list">
-          {opportunities.map((item, i) => (
-            <li key={`o${i}`}>
-              <strong>{text(item.title, text(item.entity, "?"))}</strong>
-              {text(item.format) ? <span className="badge action">{text(item.format)}</span> : null}{" "}
-              <span className="muted">{text(item.why_now)}</span>
-            </li>
-          ))}
-        </ul>
+
+      {(opportunities.length > 0 || calendars.length > 0) && (
+        <section className="section card situ-part">
+          <div className="section-title">
+            <h2>行动建议与排期</h2>
+          </div>
+          {opportunities.length > 0 && (
+            <ul className="delta-list">
+              {opportunities.map((item, i) => (
+                <li key={`o${i}`}>
+                  <strong>{text(item.title, text(item.entity, "?"))}</strong>
+                  {text(item.format) ? (
+                    <span className="badge action">{text(item.format)}</span>
+                  ) : null}{" "}
+                  <span className="muted">{text(item.why_now)}</span>
+                </li>
+              ))}
+            </ul>
+          )}
+          {/* Z2b：content_calendar 旧实现只计数不呈现——排期项与建议同卡下层。 */}
+          {calendars.length > 0 && (
+            <ul className="delta-list" data-testid="situ-calendar">
+              {calendars.map((item, i) => (
+                <li key={`k${i}`}>
+                  <strong>{text(item.theme, "?")}</strong>
+                  {text(item.session) ? <span className="badge action">{text(item.session)}</span> : null}{" "}
+                  <span className="muted">{text(item.goal)}</span>
+                  {text(item.validation_signal) ? (
+                    <span className="muted">（验证信号：{text(item.validation_signal)}）</span>
+                  ) : null}
+                </li>
+              ))}
+            </ul>
+          )}
+        </section>
       )}
     </>
   );

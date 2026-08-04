@@ -19,6 +19,26 @@ function stubFetch(status: number, body: string) {
   );
 }
 
+/** URL 判别 stub：overview 与 viewers 两面分别供给（舰长栏钉面需要真数组）。 */
+function stubFetchMap(map: Record<string, { status: number; body: unknown }>) {
+  vi.stubGlobal(
+    "fetch",
+    vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      for (const [needle, stub] of Object.entries(map)) {
+        if (url.includes(needle)) {
+          return {
+            ok: stub.status < 300,
+            status: stub.status,
+            text: async () => JSON.stringify(stub.body),
+          } as Response;
+        }
+      }
+      return { ok: false, status: 404, text: async () => JSON.stringify({ error: "?" }) } as Response;
+    }),
+  );
+}
+
 function renderStreamer() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });
   render(
@@ -149,5 +169,34 @@ describe("Streamer 主播卡（Z2）", () => {
       const strong = document.querySelector(".markdown li strong");
       expect(strong?.textContent).toBe("1名舰长");
     });
+  });
+
+  it("Z2b：舰长栏=采集一发的名单见人——chip 渲染名字+AI状态+态势深链", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: { ...base } },
+      viewers: {
+        status: 200,
+        body: [
+          { uid: "313200344", name: "丸丸丸丸丸丸子_F版", ai_status: "complete", ai_completed: true },
+          { uid: "1712756077", name: "Skystairs", ai_status: "complete", ai_completed: true },
+        ],
+      },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByTestId("guard-strip")).toBeTruthy());
+    const chips = document.querySelectorAll(".guard-chip");
+    expect(chips.length).toBe(2);
+    expect(chips[0].textContent).toContain("丸丸丸丸丸丸子_F版");
+    expect(chips[0].getAttribute("href")).toBe("#/viewers/313200344/tree");
+    expect(screen.getByText("全部舰长 →").getAttribute("href")).toBe("#/viewers");
+  });
+
+  it("Z2b：舰长名单空 → 引导空态，不悬挂 loading", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: { ...base } },
+      viewers: { status: 200, body: [] },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByText(/舰长名单为空/)).toBeTruthy());
   });
 });

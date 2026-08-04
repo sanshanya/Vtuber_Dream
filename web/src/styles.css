@@ -76,3 +76,10 @@ table.data-table td{vertical-align:middle}
 /* 房间入口钮（引导跳设置页）：hero 上的次级钮形。 */
 .room-entry{display:inline-flex;align-items:center;margin-left:10px;padding:6px 12px;border:1px solid rgba(255,255,255,.35);border-radius:10px;color:#eef2ff;text-decoration:none}
 .room-entry:hover{background:rgba(255,255,255,.12);text-decoration:none}
+
+/* Z2b 追加段：首页舰长栏 + 态势拆卡 */
+.guard-strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:10px}
+.guard-chip{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px;border:1px solid var(--line);border-radius:10px;background:var(--panel2);text-decoration:none;color:var(--text)}
+.guard-chip:hover{border-color:var(--accent)}
+.guard-chip strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.situ-part{margin-top:16px}

@@ -15,6 +15,13 @@ export function Streamer({ roomId }: { roomId: string }) {
     queryKey: ["overview", roomId],
     queryFn: () => api.overview(roomId),
   });
+  // 舰长栏（Z2b）：大航海名单是采集一发的产物，首页必须见人——
+  // 概览成功后才拉名单（404 空态在 overview 分支先行处理）。
+  const viewers = useQuery({
+    queryKey: ["viewers", roomId],
+    queryFn: () => api.viewers(roomId),
+    enabled: overview.data !== undefined && !overview.isError,
+  });
 
   if (overview.isLoading) {
     return <div className="empty">载入主播资料…</div>;
@@ -76,23 +83,44 @@ export function Streamer({ roomId }: { roomId: string }) {
 
       <section className="section card">
         <div className="section-title">
-          <h2>整体态势</h2>
+          <h2>舰长</h2>
+          <a href="#/viewers">全部舰长 →</a>
         </div>
-        {situation.status === "complete" && situation.analysis ? (
-          // synthetic_demo 徽标的数据面在 collection/ai/situation 任一分段（demo.rs 写位随工件；
-          // overview 原样透传读取文件，前端不臆造单一来源位）。
-          <Situ
-            analysis={situation.analysis}
-            synthetic={
-              collection.synthetic_demo === true ||
-              ai.synthetic_demo === true ||
-              situation.synthetic_demo === true
-            }
-          />
+        {viewers.data && viewers.data.length > 0 ? (
+          <div className="guard-strip" data-testid="guard-strip">
+            {viewers.data.map((row) => (
+              <a className="guard-chip" key={row.uid} href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>
+                <strong>{row.name ?? row.uid}</strong>
+                <span className={`badge${row.ai_completed ? " state" : ""}`}>
+                  {row.ai_status ?? "—"}
+                </span>
+              </a>
+            ))}
+          </div>
+        ) : viewers.isLoading ? (
+          <div className="empty">载入舰长…</div>
         ) : (
-          <div className="empty">整体态势尚未形成（跑完 Audience 阶段后呈现）</div>
+          <div className="empty">舰长名单为空——跑一轮全量感知或到「舰长列表」单查。</div>
         )}
       </section>
+
+      {situation.status === "complete" && situation.analysis ? (
+        // synthetic_demo 徽标的数据面在 collection/ai/situation 任一分段（demo.rs 写位随工件；
+        // overview 原样透传读取文件，前端不臆造单一来源位）。Z2b：各态势部件拆卡由 Situ 自持。
+        <Situ
+          analysis={situation.analysis}
+          synthetic={
+            collection.synthetic_demo === true ||
+            ai.synthetic_demo === true ||
+            situation.synthetic_demo === true
+          }
+        />
+      ) : (
+        <section className="section card">
+          <h2>整体态势</h2>
+          <div className="empty">整体态势尚未形成（跑完 Audience 阶段后呈现）</div>
+        </section>
+      )}
     </>
   );
 }
