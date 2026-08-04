@@ -357,6 +357,10 @@ async fn pipeline_green_path_and_fence_order() {
     assert_eq!(result["viewer_failures"], 0);
     assert_eq!(result["usage"]["llm_requests"], 3);
     assert_eq!(result["usage"]["input_tokens"], 30);
+    // Z1/P0-2：cache 观测盒姊妹键——mock 剧本中 backend 不返 cache 计数字段 → 诚实归零；
+    // 键必须存在且为整数（state 与 final_result 双面同源）。
+    assert_eq!(result["cache_usage"]["cache_hit_tokens"], 0);
+    assert_eq!(result["cache_usage"]["cache_miss_tokens"], 0);
     let state = read(&tmp.path().join("ai/state.json"));
     assert_eq!(state["status"], "complete");
     assert!(
@@ -368,6 +372,10 @@ async fn pipeline_green_path_and_fence_order() {
     assert!(
         state["usage"]["total_tokens"].as_i64().is_some(),
         "D-1 usage 入 state"
+    );
+    assert!(
+        state["cache_usage"]["cache_hit_tokens"].as_i64().is_some(),
+        "Z1 cache_usage 入 state"
     );
     assert!(state["viewer_input_hashes"]["g1"].as_str().is_some());
     let cache = read(&tmp.path().join("ai/perception/viewers/g1.json"));

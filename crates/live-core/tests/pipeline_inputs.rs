@@ -7,9 +7,10 @@ use std::path::{Path, PathBuf};
 use serde_json::{Value, json};
 
 use live_core::agent::pipeline::{
-    aggregate_runtime_usage, build_audience_input, canonical_json, compact_interest_state,
-    stable_hash, viewer_input_bundle,
+    aggregate_runtime_usage, audience_input_hash_material, build_audience_input, canonical_json,
+    compact_interest_state, stable_hash, viewer_input_bundle,
 };
+use live_core::agent::runtime::OaiUsage;
 use live_core::episodes::baseline::{build_factual_baseline, viewer_context};
 
 fn m4a() -> PathBuf {
@@ -331,4 +332,139 @@ fn compact_interest_state_drop_table_matches_python() {
             case["name"].as_str().unwrap()
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Z1/P0-1 golden oracle：哈希身份稳定面（事实不变 → 哈希不变 → AI 零成本复用）。
+// 与 *_matches_python parity 钉互补：那些钉「跨语言逐字节一致」，这里钉
+// 「观察时刻类过程值漂移永不翻面哈希、真实事实漂移必须翻面」的语义收口。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn oracle_viewer_hash_immune_to_collected_at_drift() {
+    let expected = load("bundle_expected.json");
+    let baseline = load("baseline_expected.json");
+    let profile = baseline["viewer_profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["viewer"]["id"] == "g1")
+        .unwrap()
+        .clone();
+    let viewer: Value = serde_json::from_str(
+        &fs::read_to_string(m4a().join("viewer_root/viewers/g1.json")).unwrap(),
+    )
+    .unwrap();
+    let settings = &expected["settings"];
+    let rules: Vec<String> = settings["rules"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|item| item.as_str().unwrap().to_string())
+        .collect();
+    let args = |v: &Value| {
+        viewer_input_bundle(
+            v,
+            &profile,
+            settings["model"].as_str().unwrap(),
+            settings["api"].as_str().unwrap(),
+            &settings["reasoning"],
+            &rules,
+            MAX_EVIDENCE,
+        )
+    };
+    let bundle_a = args(&viewer);
+
+    // 同事实重采：仅采集墙钟 collected_at 漂移（→ episode.observed_at）。
+    let mut drifted = viewer.clone();
+    drifted["collected_at"] = json!("2099-01-01T00:00:00+00:00");
+    let bundle_b = args(&drifted);
+
+    // 前提核验：两批 episode 摘除 observed_at 后逐字节一致（事实确实没变）。
+    let strip = |episodes: &[live_core::episodes::Episode]| -> Value {
+        let mut value = serde_json::to_value(episodes).unwrap();
+        for episode in value.as_array_mut().unwrap() {
+            episode.as_object_mut().unwrap().remove("observed_at");
+        }
+        value
+    };
+    assert_eq!(
+        strip(&bundle_a.episodes),
+        strip(&bundle_b.episodes),
+        "前提：仅观察时刻漂移，事实面必须逐字节一致"
+    );
+    // 收口一：哈希不变（complete_cache 跨采集真存活）。
+    assert_eq!(
+        bundle_a.input_hash, bundle_b.input_hash,
+        "oracle：observed_at 漂移不许翻面 input_hash"
+    );
+    // 收口二：提示面保真——摘口径不摘信息，LLM 仍看得到观察时刻。
+    assert!(
+        bundle_b
+            .input_payload
+            .to_string()
+            .contains("2099-01-01T00:00:00+00:00"),
+        "oracle：payload 必须保留 observed_at（账只摘口径不摘信息）"
+    );
+}
+
+#[test]
+fn oracle_audience_hash_strips_process_metrics() {
+    let case = load("audience_input_case.json");
+    let viewer_map = case["viewer_map"].as_object().unwrap();
+    let built =
+        build_audience_input(&case["analysis"], viewer_map, &case["graph"]).expect("index builds");
+    let hash_of = |input: &Value| {
+        stable_hash(&json!({
+            "runtime": "openai-agents",
+            "model": "m",
+            "api": "chat_completions",
+            "input": audience_input_hash_material(input),
+        }))
+    };
+    let baseline_hash = hash_of(&built);
+
+    // 过程指标 + captured_at 漂移 → 哈希不变（situation 缓存跨采集存活的语法）。
+    let mut drifted = built.clone();
+    drifted["baseline_summary"]["collection_request_count"] = json!(777);
+    drifted["baseline_summary"]["collection_elapsed_seconds"] = json!(12.34);
+    drifted["platform_snapshot"]["captured_at"] = json!("2099-01-01T00:00:00+00:00");
+    assert_eq!(
+        hash_of(&drifted),
+        baseline_hash,
+        "oracle：过程指标/观察时刻漂移不许翻面 situation input_hash"
+    );
+
+    // 真实事实面漂移 → 哈希必须翻面（该重判就得重判）。
+    let mut factual = built.clone();
+    factual["platform_snapshot"]["hot_searches"] = json!(["全新热搜事实"]);
+    assert_ne!(
+        hash_of(&factual),
+        baseline_hash,
+        "oracle：事实面漂移必须翻面 situation input_hash"
+    );
+}
+
+#[test]
+fn oracle_oai_usage_cache_fields_round_trip() {
+    // Z1/P0-2 观测盒数据源：DeepSeek wire 字段必须反序列化进 OaiUsage，
+    // 非 DeepSeek/无计数字段（旧供应商、demo）缺省归零——不炸旧面。
+    let usage: OaiUsage = serde_json::from_str(
+        r#"{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,
+            "prompt_cache_hit_tokens":64,"prompt_cache_miss_tokens":36}"#,
+    )
+    .unwrap();
+    assert_eq!(usage.prompt_cache_hit_tokens, 64);
+    assert_eq!(usage.prompt_cache_miss_tokens, 36);
+    let legacy: OaiUsage =
+        serde_json::from_str(r#"{"prompt_tokens":1,"completion_tokens":2,"total_tokens":3}"#)
+            .unwrap();
+    assert_eq!(
+        (
+            legacy.prompt_cache_hit_tokens,
+            legacy.prompt_cache_miss_tokens
+        ),
+        (0, 0),
+        "无 cache 计数字段的响应必须按零落账"
+    );
 }

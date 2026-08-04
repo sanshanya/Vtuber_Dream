@@ -145,6 +145,11 @@ pub struct OaiUsage {
     pub completion_tokens: i64,
     #[serde(default)]
     pub total_tokens: i64,
+    /// Z1/P0-2:DeepSeek prompt-caching 命中/未中计量。缺省=0（非 DeepSeek 或无计数）。
+    #[serde(default)]
+    pub prompt_cache_hit_tokens: i64,
+    #[serde(default)]
+    pub prompt_cache_miss_tokens: i64,
 }
 
 #[derive(Debug, Deserialize)]
@@ -202,6 +207,9 @@ pub struct RuntimeStats {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub total_tokens: i64,
+    /// Z1/P0-2:prompt-cache 命中/未中累计，cache 观测盒数据源。
+    pub cache_hit_tokens: i64,
+    pub cache_miss_tokens: i64,
     pub tool_names: Vec<String>,
 }
 
@@ -582,6 +590,9 @@ impl AgentRuntime {
             trace.stats.input_tokens += usage.prompt_tokens;
             trace.stats.output_tokens += usage.completion_tokens;
             trace.stats.total_tokens += usage.total_tokens;
+            // Z1/P0-2:prompt-cache 命中/未中累计
+            trace.stats.cache_hit_tokens += usage.prompt_cache_hit_tokens;
+            trace.stats.cache_miss_tokens += usage.prompt_cache_miss_tokens;
             // r1-F1 熔断点：每轮 LLM 请求后核对累计 total_tokens，超预算即触顶终止。
             // 顺既有 Fatal 通道（不发新错误类）；run_toolcall_agent 对 TokenBudget 特判不重试。
             if let Some(budget) = token_budget
@@ -599,6 +610,8 @@ impl AgentRuntime {
                     "input_tokens": usage.prompt_tokens,
                     "output_tokens": usage.completion_tokens,
                     "total_tokens": usage.total_tokens,
+                    "cache_hit_tokens": usage.prompt_cache_hit_tokens,
+                    "cache_miss_tokens": usage.prompt_cache_miss_tokens,
                     "output_item_count": 1,
                     "elapsed_ms": started.elapsed().as_millis() as u64,
                 }),

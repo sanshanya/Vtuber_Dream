@@ -214,7 +214,8 @@ fn compact_chars(value: &Value) -> usize {
 /// collection_request_count / collection_elapsed_seconds 是**过程指标**（每轮采集必变），
 /// 不是听众事实——计入哈希会让 situation 缓存跨采集恒假死。提示面原样保留（与 Python
 /// 预言机 golden 对账面不漂移），哈希件剔除这两键。
-fn audience_input_hash_material(input: &Value) -> Value {
+/// Z1/P0-1：oracle 测试面需要直接消费——与 build_audience_input 同族升级为 pub。
+pub fn audience_input_hash_material(input: &Value) -> Value {
     let mut material = input.clone();
     if let Value::Object(summary) = &mut material["baseline_summary"] {
         summary.remove("collection_request_count");
@@ -508,6 +509,16 @@ fn stats_json(stats: &RuntimeStats) -> Value {
     })
 }
 
+/// Z1/P0-2（cache 观测盒落地）：usage 键守 Python D-1 五键 parity；
+/// prompt-cache 计量以姊妹键 `cache_usage` 进 state.json/final_result——
+/// Rust 增量面，不冒充 Python 输出（零值如实落：复用臂/非 DeepSeek 端皆可读）。
+fn cache_usage_json(viewer: (i64, i64), audience: (i64, i64)) -> Value {
+    json!({
+        "cache_hit_tokens": viewer.0 + audience.0,
+        "cache_miss_tokens": viewer.1 + audience.1,
+    })
+}
+
 fn write_state(path: &Path, fields: Value) -> Result<(), PipelineError> {
     storage::write_json(path, &fields).map_err(PipelineError::Storage)
 }
@@ -597,13 +608,17 @@ struct ViewerTaskOut {
     analysis: Value,
     /// 待 absorb 的子实例（含 blocking client——跨任务移动后由主任务集中处置）。
     child: ResearchService,
+    /// Z1/P0-2：本观众本轮 LLM 的 prompt-cache 计量（hit, miss）；复用/早退为零——
+    /// 语义即「本轮新发起请求的缓存命中量」（复用路径没有新请求，计数诚实归零）。
+    cache_tally: (i64, i64),
 }
 
 enum ViewerStage {
     Ok(Box<ViewerTaskOut>),
     /// 缓存复用短路（Python：不再触碰 research；无新发现可吸收）。
     Reused(Value),
-    Failed,
+    /// Z1/P0-2：失败臂同样携带本轮已烧的 cache 计量（撞 budget 的浪费要入账）。
+    Failed((i64, i64)),
 }
 
 /// 单观众：缓存恢复 → agent 运行 → 缓存落盘。所有阻塞件经 spawn_blocking（M3 blocker）。
@@ -715,7 +730,7 @@ async fn run_one_viewer(
                     "runtime": stats_json(&RuntimeStats::default()),
                 }),
             );
-            return (uid, ViewerStage::Failed);
+            return (uid, ViewerStage::Failed((0, 0)));
         }
     };
     let started = std::time::Instant::now();
@@ -755,6 +770,8 @@ async fn run_one_viewer(
     .await;
     let elapsed = (started.elapsed().as_secs_f64() * 100.0).round() / 100.0;
     let runtime_payload = stats_json(&trace.stats);
+    // Z1/P0-2：cache 计量走独立 tally——persisted runtime 载荷守 Python D-4 五键 parity。
+    let cache_tally = (trace.stats.cache_hit_tokens, trace.stats.cache_miss_tokens);
     let ViewerAgentCtx {
         research: child, ..
     } = ctx;
@@ -780,6 +797,7 @@ async fn run_one_viewer(
                 ViewerStage::Ok(Box::new(ViewerTaskOut {
                     analysis: payload,
                     child,
+                    cache_tally,
                 })),
             )
         }
@@ -795,7 +813,7 @@ async fn run_one_viewer(
                     "runtime": runtime_payload,
                 }),
             );
-            (uid, ViewerStage::Failed)
+            (uid, ViewerStage::Failed(cache_tally))
         }
     }
 }
@@ -812,7 +830,11 @@ async fn run_audience_stage(
     runtime: &AgentRuntime,
     knobs: &PipelineKnobs<'_>,
     force: bool,
-) -> (Result<(Value, Value), PipelineError>, ResearchService) {
+    // Z1/P0-2：三元组尾件 = 本轮 LLM 的 prompt-cache 计量 (hit, miss)；复用臂为 (0, 0)。
+) -> (
+    Result<(Value, Value, (i64, i64)), PipelineError>,
+    ResearchService,
+) {
     let input = match build_audience_input(analysis, viewer_map, graph_context) {
         Ok(input) => input,
         Err(err) => {
@@ -884,7 +906,8 @@ async fn run_audience_stage(
                         .filter(|v| v.is_object())
                         .cloned()
                         .unwrap_or(json!({}));
-                    return (Ok((cached["analysis"].clone(), runtime)), research);
+                    // 复用臂：本轮零 LLM 请求 → cache 计量诚实归零。
+                    return (Ok((cached["analysis"].clone(), runtime, (0, 0))), research);
                 }
                 progress_say(
                     knobs,
@@ -948,6 +971,8 @@ async fn run_audience_stage(
     .await;
     let elapsed = (started.elapsed().as_secs_f64() * 100.0).round() / 100.0;
     let runtime_payload = stats_json(&trace.stats);
+    // Z1/P0-2：同 viewer 臂——cache 计量进程内 tally，不进 persisted runtime 五键。
+    let cache_tally = (trace.stats.cache_hit_tokens, trace.stats.cache_miss_tokens);
     let AudienceAgentCtx { research, .. } = ctx;
     match outcome {
         Ok(outcome) => {
@@ -966,7 +991,10 @@ async fn run_audience_stage(
                 }),
             )
             .map_err(PipelineError::Storage);
-            (write.map(|()| (overall, runtime_payload)), research)
+            (
+                write.map(|()| (overall, runtime_payload, cache_tally)),
+                research,
+            )
         }
         Err(err) => {
             let _ = storage::write_json(
@@ -1317,6 +1345,8 @@ async fn run_pipeline_inner(
     // 栅栏：viewer_ids 序应用 + absorb；失败 → graph_failures 明细 + 缓存 graph_failed。
     let mut viewer_submissions: Map<String, Value> = Map::new();
     let mut graph_failures: Vec<Value> = Vec::new();
+    // Z1/P0-2：viewer 阶段本轮 LLM 的 prompt-cache 入账（复用臂不贡献——诚实零）。
+    let mut viewer_cache_tally: (i64, i64) = (0, 0);
     for uid in &viewer_ids {
         let Some(stage) = outputs.remove(uid) else {
             continue;
@@ -1327,6 +1357,8 @@ async fn run_pipeline_inner(
                     .as_mut()
                     .expect("master 在场")
                     .absorb_from(&out.child);
+                viewer_cache_tally.0 += out.cache_tally.0;
+                viewer_cache_tally.1 += out.cache_tally.1;
                 let child = out.child;
                 tokio::task::spawn_blocking(move || drop(child))
                     .await
@@ -1334,7 +1366,11 @@ async fn run_pipeline_inner(
                 out.analysis
             }
             ViewerStage::Reused(analysis) => analysis,
-            ViewerStage::Failed => continue,
+            ViewerStage::Failed(tally) => {
+                viewer_cache_tally.0 += tally.0;
+                viewer_cache_tally.1 += tally.1;
+                continue;
+            }
         };
         let profile = baseline_profiles
             .iter()
@@ -1467,6 +1503,7 @@ async fn run_pipeline_inner(
             bail!(PipelineError::Store(err));
         }
         let usage = aggregate_runtime_usage(&viewer_runtime, &json!({}));
+        let cache_usage = cache_usage_json(viewer_cache_tally, (0, 0));
         if let Err(err) = write_state(
             &state_path,
             json!({
@@ -1479,6 +1516,7 @@ async fn run_pipeline_inner(
                 "viewer_input_hashes": viewer_input_hashes,
                 "graph_run_id": run_id,
                 "usage": usage,
+                "cache_usage": cache_usage,
             }),
         ) {
             bail!(err);
@@ -1496,6 +1534,7 @@ async fn run_pipeline_inner(
                 .len() as i64,
             "graph": {"database": graph_file.display().to_string()},
             "usage": usage,
+            "cache_usage": cache_usage,
         });
         return (Ok(final_result), master.take().expect("master 归还"));
     }
@@ -1511,8 +1550,8 @@ async fn run_pipeline_inner(
     )
     .await;
     master = Some(research);
-    let (overall, overall_runtime) = match audience {
-        Ok(pair) => pair,
+    let (overall, overall_runtime, audience_cache_tally) = match audience {
+        Ok(triple) => triple,
         Err(err) => bail!(err),
     };
     // 回读 situation.json 的 input_hash（Python：丢了即 AgentRuntimeError）。
@@ -1555,6 +1594,7 @@ async fn run_pipeline_inner(
         Err(err) => bail!(PipelineError::Store(err)),
     }
     let usage = aggregate_runtime_usage(&viewer_runtime, &overall_runtime);
+    let cache_usage = cache_usage_json(viewer_cache_tally, audience_cache_tally);
     match write_state(
         &state_path,
         json!({
@@ -1567,6 +1607,8 @@ async fn run_pipeline_inner(
             "graph_run_id": run_id,
             // D-1（design-Δ）：token 成本一等公民入 state.json。
             "usage": usage,
+            // Z1/P0-2：cache 观测盒姊妹键（usage 保 Python 五键 parity）。
+            "cache_usage": cache_usage,
         }),
     ) {
         Ok(()) => {}
@@ -1585,6 +1627,7 @@ async fn run_pipeline_inner(
         "search_result_count": search_result_count,
         "graph": {"database": graph_file.display().to_string()},
         "usage": usage,
+        "cache_usage": cache_usage,
     });
     (Ok(final_result), master.take().expect("master 归还"))
 }
