@@ -62,9 +62,10 @@ npm run build
 
 ## 线索账本（M4.x 薄切）
 
-AI 终局提交中的 `leads[]`（经终局校验白名单：search/creator/video/room）由程序记入 `output_dir/leads.jsonl`：身份为 `(type, locator)` 的内容哈希，重复线索不增行；状态机 `pending_approval → approved → consumed / rejected`（另有 `deferred` 搁置态，不入主链）。**人工审批 = 直接编辑账本行的 status 字段**（无 UI、无自动抓取）——这是薄切设计有意为之。
+AI 终局提交中的 `leads[]`（经终局校验白名单：search/creator/video/room）由程序记入 `output_dir/leads.jsonl`：身份为 `(type, locator)` 的内容哈希，重复线索不增行；状态机 `pending_approval → approved → consumed / rejected`（另有 `deferred` 搁置态，不入主链）。人工审批两条路：线索账本页的「批准」钮（`POST /api/rooms/{room}/leads/{lead_id}/approve`，`lead_id` = 行 `dedupe_key`；幂等——重放返回相同终态不写账本；不存在=404；非法迁移=422 讲规则）或直接编辑账本行的 status 字段（旁路面仍合法）。
 
 - 消费：采集（collect）尾段按 `collection.lead_fetch_budget_per_run`（默认 0＝完全休眠）消费 `approved` 行，成功行记 `yield_count`；>0 会产生额外 B 站请求，同样受 `request_delay_seconds` 限速。
+- 自治位：`collection.leads_autonomy`（0|1，默认 0=纯人工）。置 1（L1）后，collect 尾段在预算消费前先自动批准 pending 行——谓词限 creator/search 型、且 creator 目标 uid 不在本房间既有名册（viewers/*.json ∪ 主播 uid）——账本 resolution_note 记「L1 自动批准」，再照常按预算消费；线索页标题行徽标可读当前位。
 - 回喂：下一轮 AI 提示面上注入一行摘要（计数 + 最新消费），作为定向增长的上下文信号。
 
 ## 仓库边界

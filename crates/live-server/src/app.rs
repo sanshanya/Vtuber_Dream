@@ -15,7 +15,7 @@ use axum::extract::DefaultBodyLimit;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use serde_json::{Value, json};
 use tower_http::services::ServeDir;
 
@@ -128,6 +128,7 @@ pub fn build_app(state: AppState) -> Router {
         .route("/rooms/:uid/viewers/:vid/tree", get(viewer_tree))
         .route("/rooms/:uid/viewers/:vid/graph", get(viewer_graph))
         .route("/rooms/:uid/graph", get(room_graph))
+        .route("/rooms/:uid/leads/:lead_id/approve", post(lead_approve))
         .route("/config", get(config_get).put(config_put))
         .route("/runs", axum::routing::post(runs_post))
         .route("/runs/:id", get(run_get))
@@ -633,6 +634,8 @@ async fn room_overview(
             "pending": rows.iter()
                 .filter(|r| r.status == live_core::leads::LeadStatus::PendingApproval)
                 .collect::<Vec<_>>(),
+            // G2-B：自治位读取面（Leads 页标题行 L1 状态徽标）
+            "autonomy": config.collection.leads_autonomy,
         },
         "delta": delta,
     })))
@@ -743,6 +746,56 @@ async fn room_graph(
     let root = data_root(&state)?;
     let (_store, value) = project_for_viewer(&root)?;
     Ok(Json(crate::cytoscape::elements(&value)))
+}
+
+// ---------------------------------------------------------------------------
+// leads 审批缝（G2-B 工作项 1）：POST /api/rooms/:uid/leads/:lead_id/approve
+// ---------------------------------------------------------------------------
+
+/// `lead_id` = 账本行 `dedupe_key`（身份：`(type, locator)` 的 hash；16hex）。
+///
+/// 状态机单行道 `pending_approval → approved`（live_core::leads::approve_transition
+/// 唯一裁决点）：
+/// - 正常翻转：守卫读 → 改行 → `rewrite_ledger` tmp+rename 受控落盘；
+/// - 幂等重放：已 approved → 200 相同终态，账本字节不动（不重写不增行）；
+/// - 不存在（lead_id 未知 / 房间错 / 穿透形 id）→ 404（D3 错误形态）；
+/// - 非法迁移（consumed/rejected/deferred 源态）→ 422，错文讲规则 + 当前状态；
+/// - MXA-1 延伸：账本含坏行（守卫读 Err）→ 500 响铃，绝不带病重写。
+async fn lead_approve(
+    State(state): State<AppState>,
+    Path((uid, lead_id)): Path<(String, String)>,
+) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    // 路径消毒与 viewer uid 同口径（%2F 解码后的穿透形在此截断，404 与不存在同形）。
+    if !uid_charset_legal(&lead_id, MAX_VID_PATH_CHARS) {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            &format!("lead {lead_id} 不存在"),
+        ));
+    }
+    let root = data_root(&state)?;
+    let mut rows = live_core::leads::read_ledger_guarded(&live_core::leads::ledger_path(&root))
+        .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
+    let Some(index) = rows.iter().position(|row| row.dedupe_key == lead_id) else {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            &format!("lead {lead_id} 不存在"),
+        ));
+    };
+    let changed = live_core::leads::approve_transition(rows[index].status)
+        .map_err(|message| fail(StatusCode::UNPROCESSABLE_ENTITY, &message))?;
+    if changed {
+        rows[index].status = live_core::leads::LeadStatus::Approved;
+        live_core::leads::rewrite_ledger(&root, &rows)
+            .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
+    }
+    Ok(Json(json!({
+        "dedupe_key": rows[index].dedupe_key,
+        "status": live_core::leads::status_name(rows[index].status),
+        // 为幂等重放留可观测位：终态（dedupe_key/status）恒定，仅动作位分野。
+        "changed": changed,
+    })))
 }
 
 async fn viewer_tree(

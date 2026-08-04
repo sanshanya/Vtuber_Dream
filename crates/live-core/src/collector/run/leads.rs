@@ -38,6 +38,72 @@ pub fn fetch_lead_yield(client: &mut BilibiliClient, row: &LedgerRow) -> Result<
     }
 }
 
+/// G2-B（工作项 3）：L1 自动批准在账本行的留痕字面（「L1 自动」是契约子串）。
+pub const L1_AUTO_NOTE: &str = "L1 自动批准（collection.leads_autonomy=1）";
+
+/// G2-B 自治 L1（collection.leads_autonomy=1 时由 collect 尾段在预算消费前调用）：
+/// 把符合谓词的 pending 行就地迁 `Approved` 并记 `resolution_note=L1_AUTO_NOTE`，
+/// 随后照常走 `consume_approved_leads` 预算内消费。
+///
+/// 谓词只碰账本既有字段（LedgerRow.lead_type / locator，schema 侦察面）：
+/// - 类型限 `creator`/`search`（video/room 永远人工域）；
+/// - `creator` 目标 uid（locator 即 uid，validators 冻结数字形）不得在本房间
+///   既有名册（viewers/*.json 文件名 ∪ 主播 uid——采在册者零增量）；`search`
+///   无目标 uid，名册闸天然不适用。
+///
+/// autonomy ≤ 0 → 秒返 0（L0 现状纯人工，一字不动，账本不读不写）。
+/// MXA-1/MXA-4 同族：坏行在场停火响铃；写回失败响铃返回 0。
+pub fn auto_approve_pending_leads(
+    output_dir: &Path,
+    roster: &std::collections::BTreeSet<String>,
+    autonomy: i64,
+    emit: &mut dyn FnMut(&str),
+) -> usize {
+    if autonomy <= 0 {
+        return 0;
+    }
+    let mut rows = match read_ledger_guarded(&ledger_path(output_dir)) {
+        Ok(rows) => rows,
+        Err(err) => {
+            emit(&format!(
+                "[LEADS] 账本不可读或含坏行，L1 自动批准停火：{err}"
+            ));
+            return 0;
+        }
+    };
+    if !rows
+        .iter()
+        .any(|row| row.status == LeadStatus::PendingApproval)
+    {
+        return 0;
+    }
+    let mut flipped = 0_usize;
+    for row in rows.iter_mut() {
+        if row.status != LeadStatus::PendingApproval {
+            continue;
+        }
+        let eligible = match row.lead_type.as_str() {
+            "creator" => !roster.contains(row.locator.trim()),
+            "search" => true,
+            _ => false,
+        };
+        if !eligible {
+            continue;
+        }
+        row.status = LeadStatus::Approved;
+        row.resolution_note = L1_AUTO_NOTE.to_string();
+        flipped += 1;
+    }
+    if flipped == 0 {
+        return 0;
+    }
+    if let Err(err) = rewrite_ledger(output_dir, &rows) {
+        emit(&format!("[LEADS] L1 自动批准写回失败：{err}"));
+        return 0;
+    }
+    flipped
+}
+
 /// 按预算消费账本：只碰 `approved` 行；返回消费成功行数。
 /// fetch 失败 → 行保持 approved 并记 `resolution_note`（下轮重试）；预算 0 → 秒返。
 ///
@@ -317,6 +383,127 @@ mod tests {
             "[lead_ledger] pending=0 approved=0 consumed=1 rejected=0 deferred=0 \
              by_type={video: 1} yield_total=1 latest_consumed=[{\"type\":\"video\",\"locator\":\"loc-k1\",\"yield_count\":1}]",
             "{line}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // G2-B（工作项 3）：L1 自治自动批准钉团
+    // -----------------------------------------------------------------------
+
+    fn roster(ids: &[&str]) -> std::collections::BTreeSet<String> {
+        ids.iter().map(ToString::to_string).collect()
+    }
+
+    /// L0 一字不动：autonomy=0 → 秒返 0，账本字节级原样（预算再大也无动作）。
+    #[test]
+    fn l0_autonomy_zero_sleeps_byte_identical() {
+        let dir = tmp("l0");
+        write(&dir, &[row("k1", "creator", LeadStatus::PendingApproval)]);
+        let before = std::fs::read_to_string(leads::ledger_path(&dir)).unwrap();
+        let n = auto_approve_pending_leads(&dir, &roster(&[]), 0, &mut |_: &str| {
+            panic!("L0 不得发任何响铃")
+        });
+        assert_eq!(n, 0);
+        assert_eq!(
+            std::fs::read_to_string(leads::ledger_path(&dir)).unwrap(),
+            before,
+            "L0 账本字节级不动"
+        );
+    }
+
+    /// L1 正当事：creator（目标 uid 不在册）+ search pending → 迁 Approved +
+    /// resolution_note 记「L1 自动」；approved/rejected/consumed 行不被触碰。
+    /// 重放幂等：无 pending 可批 → 0 且账本不动。
+    #[test]
+    fn l1_auto_approves_eligible_pending_rows_only() {
+        let dir = tmp("l1");
+        write(
+            &dir,
+            &[
+                row("k-new-creator", "creator", LeadStatus::PendingApproval),
+                row("k-search", "search", LeadStatus::PendingApproval),
+                row("k-approved", "video", LeadStatus::Approved),
+                row("k-rejected", "search", LeadStatus::Rejected),
+                row("k-consumed", "creator", LeadStatus::Consumed),
+            ],
+        );
+        // 名册：loc-k-new-creator 不在册（loc- 前缀由 row() 生成，名册只放别的 uid）。
+        let n = auto_approve_pending_leads(&dir, &roster(&["1001", "9001"]), 1, &mut |_: &str| {});
+        assert_eq!(n, 2, "creator + search 各迁一条");
+        let back = read_ledger(&leads::ledger_path(&dir));
+        for key in ["k-new-creator", "k-search"] {
+            let hit = back.iter().find(|r| r.dedupe_key == key).unwrap();
+            assert_eq!(hit.status, LeadStatus::Approved, "{key}");
+            assert!(
+                hit.resolution_note.contains("L1 自动"),
+                "{key} 须记 L1 自动痕：{hit:?}"
+            );
+        }
+        // 非 pending 行分毫不动（状态机单行道不被 L1 倒车）
+        for (key, status) in [
+            ("k-approved", LeadStatus::Approved),
+            ("k-rejected", LeadStatus::Rejected),
+            ("k-consumed", LeadStatus::Consumed),
+        ] {
+            let hit = back.iter().find(|r| r.dedupe_key == key).unwrap();
+            assert_eq!(hit.status, status, "{key}");
+            assert!(hit.resolution_note.is_empty(), "{key}");
+        }
+        // 重放幂等：再批一轮 = 0 动作，账本字节不动
+        let settled = std::fs::read_to_string(leads::ledger_path(&dir)).unwrap();
+        let n = auto_approve_pending_leads(&dir, &roster(&[]), 1, &mut |_: &str| {});
+        assert_eq!(n, 0);
+        assert_eq!(
+            std::fs::read_to_string(leads::ledger_path(&dir)).unwrap(),
+            settled
+        );
+    }
+
+    /// L1 谓词拒位：video/room 型 pending 永远人工域；creator 目标 uid 已在册
+    /// （重复采集无增量）同样不批——整账无一人动，不写盘。
+    #[test]
+    fn l1_predicate_rejects_video_room_and_in_roster_creator() {
+        let dir = tmp("l1-no");
+        write(
+            &dir,
+            &[
+                row("k-video", "video", LeadStatus::PendingApproval),
+                row("k-room", "room", LeadStatus::PendingApproval),
+                row("k-existing", "creator", LeadStatus::PendingApproval),
+            ],
+        );
+        let before = std::fs::read_to_string(leads::ledger_path(&dir)).unwrap();
+        // 名册含 loc-k-existing（row() 的 locator = "loc-{key}"）
+        let n = auto_approve_pending_leads(
+            &dir,
+            &roster(&["loc-k-existing", "9001"]),
+            1,
+            &mut |_: &str| {},
+        );
+        assert_eq!(n, 0, "谓词全拒 → 零动作");
+        assert_eq!(
+            std::fs::read_to_string(leads::ledger_path(&dir)).unwrap(),
+            before,
+            "全拒时不写账本"
+        );
+    }
+
+    /// MXA-1 同族：坏行在场 → L1 停火 + 响铃，账本原文不动。
+    #[test]
+    fn l1_corrupt_ledger_stop_fire_with_ring() {
+        let dir = tmp("l1-guard");
+        let good = row("k1", "creator", LeadStatus::PendingApproval);
+        let text = format!("{}\nnot json\n", serde_json::to_string(&good).unwrap());
+        std::fs::write(leads::ledger_path(&dir), &text).unwrap();
+        let mut rings: Vec<String> = Vec::new();
+        let n = auto_approve_pending_leads(&dir, &roster(&[]), 1, &mut |m: &str| {
+            rings.push(m.to_string())
+        });
+        assert_eq!(n, 0);
+        assert!(rings.iter().any(|m| m.contains("停火")), "{rings:?}");
+        assert_eq!(
+            std::fs::read_to_string(leads::ledger_path(&dir)).unwrap(),
+            text
         );
     }
 }

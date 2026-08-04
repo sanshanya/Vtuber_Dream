@@ -1142,8 +1142,9 @@ async fn single_viewer_run_audience_failure_marks_partial_true() {
 /// 轮一（线索入账）：Guards 动作面采集成面 → ai_audience 经 wiremock LLM
 /// 终局带回 ≥1 条 audience lead → 账本出现 pending_approval 行（以
 /// AUDIENCE_VIEWER_ID 入账），/rooms/:uid/overview 读数面同步呈现 pending。
-/// 人工审批 seam：当前实现**没有** POST /api 审批端点（前端 Leads 面板 = 手工
-/// 编辑 leads.jsonl）——按设计 seam 原地把 pending 行改为 approved（红线如实记录）。
+/// 审批 seam（G2-B 已端点化）：POST /api/rooms/:uid/leads/:lead_id/approve
+/// 翻转 pending → approved（幂等重放同终态不写账本）；旧红线（手工编辑
+/// leads.jsonl）仍是合法的旁路面。
 /// 轮二（采集消费+对账）：撬开 lead_fetch_budget_per_run=1 → 同模式非单查 collect
 /// 尾段按预算消费该 creator lead，wiremock /x/space/wbi/arc/search 以 mid=3001
 /// 命中并返还 1 条投稿 → 行转 consumed、yield_count>0、collection.json
@@ -1152,9 +1153,7 @@ async fn single_viewer_run_audience_failure_marks_partial_true() {
 /// 哈希命中、缓存全复用）。
 #[tokio::test(flavor = "multi_thread")]
 async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
-    use live_core::leads::{
-        LeadStatus, ledger_path, read_ledger, read_ledger_guarded, rewrite_ledger,
-    };
+    use live_core::leads::{LeadStatus, ledger_path, read_ledger, read_ledger_guarded};
 
     let bilibili = MockServer::start().await;
     mount_bilibili_baseline(&bilibili).await;
@@ -1251,17 +1250,29 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
     );
     assert_eq!(overview["ai"]["status"], "complete", "{overview}");
 
-    // ── 审批（设计 seam）：无 POST /api 审批端点 → 手工编辑账本行 ──
-    let mut rows = read_ledger_guarded(&ledger_path(&out_dir)).expect("账本守卫读");
-    let mut flipped = 0;
-    for row in rows.iter_mut() {
-        if row.lead_type == "creator" {
-            row.status = LeadStatus::Approved;
-            flipped += 1;
-        }
-    }
-    assert_eq!(flipped, 1, "审批 seam 应恰好翻动 creator 一行");
-    rewrite_ledger(&out_dir, &rows).unwrap();
+    // ── 审批（G2-B 审批缝，原 seam 红线已端点化）：
+    // POST /api/rooms/:uid/leads/:lead_id/approve 翻转 pending → approved；
+    // 幂等重放同终态、账本字节不动 ──
+    let approve_path = format!("/api/rooms/983/leads/{}/approve", rows[0].dedupe_key);
+    let (status, body) = oneshot(&app, "POST", &approve_path, None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["status"], "approved", "{body}");
+    assert_eq!(body["changed"], true, "{body}");
+    let settled_ledger = std::fs::read_to_string(ledger_path(&out_dir)).unwrap();
+    let (status, replay) = oneshot(&app, "POST", &approve_path, None).await;
+    assert_eq!(status, 200, "{replay}");
+    assert_eq!(replay["status"], "approved", "重放返回相同终态：{replay}");
+    assert_eq!(replay["changed"], false, "{replay}");
+    assert_eq!(
+        std::fs::read_to_string(ledger_path(&out_dir)).unwrap(),
+        settled_ledger,
+        "幂等重放不得写账本"
+    );
+    assert_eq!(
+        read_ledger_guarded(&ledger_path(&out_dir)).unwrap()[0].status,
+        LeadStatus::Approved,
+        "审批缝翻转已落账本"
+    );
 
     // Z5 前置快照：ai/ 缓存字节（重采后必须逐字节不变）。
     let ai_state_before = std::fs::read(out_dir.join("ai/state.json")).unwrap();

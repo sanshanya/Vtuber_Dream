@@ -2,9 +2,9 @@
 //!
 //! - 账本 = `output_dir/leads.jsonl`，每行 JSON 一个 lead；身份 = (type, locator)
 //!   的 `dedupe_key`（hash_parts 同源 sha1·16hex），同键任意状态再写入 → 跳行（幂等）。
-//! - 状态机：pending_approval →（人工改行）approved →（collect 尾段按预算消费）
-//!   consumed + yield_count；人工可改 rejected；适配器无映射的类型写 deferred。
-//!   禁倒退路径。
+//! - 状态机：pending_approval →（审批缝端点 / L1 自治 / 人工改行）approved →
+//!   （collect 尾段按预算消费）consumed + yield_count；人工可改 rejected；
+//!   适配器无映射的类型写 deferred。禁倒退路径。
 //! - fail-open（kickoff D7）：账本失败 = 丢账目不丢感知——`read_*` 对不存在/
 //!   不可读文件返回空集、坏行静默跳；`record_*` 的 Err 由调用方 `let _ =` 吞。
 //! - 摘要段是下轮 AI 上下文唯一消费者（移除实验体：不在则死）。
@@ -173,6 +173,33 @@ pub fn record_leads(
         writeln!(file, "{line}")?;
     }
     Ok(fresh.len())
+}
+
+/// G2-B 审批缝状态机辅助：`pending_approval → approved` 是 approve 通道唯一合法
+/// 迁移（禁倒退纪律的程序面）。返回值 = 是否需要落盘改写：
+/// - approved 重放 → Ok(false)：幂等，终态相同、账本不动；
+/// - consumed/rejected/deferred 源态 → Err（422 面错文：规则 + 当前源态）。
+pub fn approve_transition(status: LeadStatus) -> Result<bool, String> {
+    match status {
+        LeadStatus::PendingApproval => Ok(true),
+        LeadStatus::Approved => Ok(false),
+        other => Err(format!(
+            "状态机只许 pending_approval → approved；\
+             当前状态 {}，不允许此迁移（人工可编辑账本行另改）",
+            status_name(other)
+        )),
+    }
+}
+
+/// 状态名的 serde snake_case 字面（错文/日志面唯一拼写源）。
+pub fn status_name(status: LeadStatus) -> &'static str {
+    match status {
+        LeadStatus::PendingApproval => "pending_approval",
+        LeadStatus::Approved => "approved",
+        LeadStatus::Consumed => "consumed",
+        LeadStatus::Rejected => "rejected",
+        LeadStatus::Deferred => "deferred",
+    }
 }
 
 /// 整账本重写（消费写回用；tmp+rename 与 storage 原子替换同款纪律）。

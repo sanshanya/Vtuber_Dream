@@ -46,6 +46,11 @@ pub struct CollectionConfig {
     /// M4.x：单轮 collect 的 leads 消费尝试预算（attempt 计次；0=休眠=默认人工
     /// 审批文化，薄切条款；Rust-only 能力，无 Python 对照键）。
     pub lead_fetch_budget_per_run: i64,
+    /// G2-B：线索自治位 0|1。0=纯人工审批（默认，现状一字不动）；1=L1 自治——
+    /// collect 尾段在预算消费前先把 creator/search 且目标 uid 不在本房间既有
+    /// 名单的 pending 线索自动迁 approved（账本记「L1 自动批准」），再照常按
+    /// 预算消费。域外值拒装（Rust-only，无 Python 对照键）。
+    pub leads_autonomy: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -367,6 +372,15 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 0,
                 Some(0),
             )?,
+            leads_autonomy: {
+                let value = integer(collection, "leads_autonomy", 0, Some(0))?;
+                if value > 1 {
+                    return Err(ConfigError::new(
+                        "'collection.leads_autonomy' must be 0 or 1",
+                    ));
+                }
+                value
+            },
         },
         perception: PerceptionConfig {
             max_evidence_per_viewer: integer(perception, "max_evidence_per_viewer", 0, Some(1000))?,
@@ -726,6 +740,38 @@ report:
         // 缺省 = 0＝休眠（M4.x 默认人工审批文化）
         let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
         assert_eq!(ok.collection.lead_fetch_budget_per_run, 0);
+    }
+
+    /// G2-B（工作项 3）：leads_autonomy 自治位——默认 0=现状纯人工；合法 1=L1 自治；
+    /// 域外值（2/-1/布尔）一律拒装。
+    #[test]
+    fn leads_autonomy_default_and_domain_rejects() {
+        let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
+        assert_eq!(
+            ok.collection.leads_autonomy, 0,
+            "默认 0=纯人工审批（现状文化）"
+        );
+        let on = EXAMPLE_YAML.replace(
+            "max_video_metadata_items: 120",
+            "max_video_metadata_items: 120\n  leads_autonomy: 1",
+        );
+        let ok = load_config(write_temp(&on).path()).unwrap();
+        assert_eq!(ok.collection.leads_autonomy, 1, "合法 1=L1 自治");
+        for injected in [
+            "  leads_autonomy: 2",
+            "  leads_autonomy: -1",
+            "  leads_autonomy: true",
+        ] {
+            let bad = EXAMPLE_YAML.replace(
+                "max_video_metadata_items: 120",
+                &format!("max_video_metadata_items: 120\n{injected}"),
+            );
+            let err = load_config(write_temp(&bad).path()).unwrap_err();
+            assert!(
+                err.to_string().contains("leads_autonomy"),
+                "{injected} 必须拒装：{err}"
+            );
+        }
     }
 
     #[test]

@@ -214,6 +214,7 @@ fn test_config(root: &Path, budget: i64) -> Config {
             room_comment_request_budget: 3,
             live_replay_danmaku_limit: 2,
             lead_fetch_budget_per_run: 0,
+            leads_autonomy: 0,
         },
         perception: PerceptionConfig {
             max_evidence_per_viewer: 1000,
@@ -940,5 +941,168 @@ async fn collect_tail_consumes_approved_leads_and_recounts_requests() {
     assert_eq!(
         collection["request_count"].as_i64().unwrap(),
         total_requests
+    );
+}
+
+// ---------------------------------------------------------------------------
+// G2-B（工作项 3）：L1 自治（collection.leads_autonomy）集成钉——
+// 自动批准（谓词 = creator/search 且 creator 目标 uid 不在本房间名册）
+// → 照常预算消费 → 账本记「L1 自动」痕。L0 = 现状纯人工，一字不动。
+// ---------------------------------------------------------------------------
+
+fn leads_row(
+    lead_type: &str,
+    locator: &str,
+    status: live_core::leads::LeadStatus,
+) -> live_core::leads::LedgerRow {
+    live_core::leads::LedgerRow {
+        dedupe_key: format!("key-{locator}"),
+        lead_type: lead_type.into(),
+        locator: locator.into(),
+        motivation: "m".into(),
+        expected_signal: "s".into(),
+        priority: "high".into(),
+        evidence_ids: vec![],
+        viewer_id: "audience".into(),
+        first_seen_run_id: "run:a".into(),
+        created_at: "t".into(),
+        status,
+        yield_count: 0,
+        resolution_note: String::new(),
+    }
+}
+
+/// L1 链：pending creator（3001，不在名册 {9001,1001,1002,1003}）+ autonomy=1
+/// + 预算>0 → 尾段先自动批准（落账本记 L1 痕）再照常消费 → consumed + yield；
+/// 同账本的 pending video 谓词拒位（类型不符）原样保留。
+#[tokio::test(flavor = "multi_thread")]
+async fn l1_autonomy_auto_approves_and_consumes_new_creator() {
+    let server = MockServer::start().await;
+    mount_baseline(&server).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    std::fs::write(
+        root.join("leads.jsonl"),
+        format!(
+            "{}\n{}\n",
+            serde_json::to_string(&leads_row(
+                "creator",
+                "3001",
+                live_core::leads::LeadStatus::PendingApproval
+            ))
+            .unwrap(),
+            serde_json::to_string(&leads_row(
+                "video",
+                "BVpending",
+                live_core::leads::LeadStatus::PendingApproval
+            ))
+            .unwrap()
+        ),
+    )
+    .unwrap();
+
+    let base = server.uri();
+    let mut config = test_config(root, 12);
+    config.collection.lead_fetch_budget_per_run = 1;
+    config.collection.leads_autonomy = 1;
+    let rings = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = rings.clone();
+    let summary = tokio::task::spawn_blocking(move || {
+        let mut emit = move |msg: &str| sink.lock().unwrap().push(msg.to_string());
+        let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
+        collect_with_client(client, &config, CollectMode::Guards, &mut emit)
+    })
+    .await
+    .expect("task join")
+    .expect("collect ok");
+
+    // 链闭合：自动批准 → 预算消费 → consumed + yield 落袋
+    assert_eq!(summary["leads_consumed"], 1, "{summary}");
+    let rows = live_core::leads::read_ledger(&root.join("leads.jsonl"));
+    assert_eq!(rows.len(), 2, "账本行数不变");
+    let creator = rows
+        .iter()
+        .find(|r| r.lead_type == "creator")
+        .expect("creator 行");
+    assert_eq!(
+        creator.status,
+        live_core::leads::LeadStatus::Consumed,
+        "{creator:?}"
+    );
+    assert!(creator.yield_count > 0, "消费带回 yield：{creator:?}");
+    assert!(
+        creator.resolution_note.is_empty(),
+        "消费成功清痕（L1 痕已兑现为消费）：{creator:?}"
+    );
+    // 谓词拒位：video 型 pending 不被 L1 自动批准（类型不符，永远人工域）
+    let video = rows
+        .iter()
+        .find(|r| r.lead_type == "video")
+        .expect("video 行");
+    assert_eq!(
+        video.status,
+        live_core::leads::LeadStatus::PendingApproval,
+        "video 型 pending 不得被 L1 批：{video:?}"
+    );
+    // L1 自动批准有响铃留痕（克隆后即刻放锁——不得持锁跨 await，clippy::await_holding_lock）
+    let rings = rings.lock().unwrap().clone();
+    assert!(
+        rings.iter().any(|m| m.contains("L1")),
+        "L1 自动批准必须响铃：{rings:?}"
+    );
+    // 消费的真实网络面：creator 3001 命中 arc/search（mid=3001）
+    let requests = server.received_requests().await.expect("requests");
+    assert!(
+        requests.iter().any(|r| {
+            r.url.path() == "/x/space/wbi/arc/search"
+                && r.url.query_pairs().any(|(k, v)| k == "mid" && v == "3001")
+        }),
+        "creator 消费必须携带 mid=3001"
+    );
+}
+
+/// L0 一字不动：默认 autonomy=0（不显式设置）即使预算>0，pending 行也原样
+/// 保留、零消费请求、summary 不面世 leads_consumed、账本字节级不动。
+#[tokio::test(flavor = "multi_thread")]
+async fn l0_autonomy_default_pending_never_auto_approved() {
+    let server = MockServer::start().await;
+    mount_baseline(&server).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+    let row = leads_row(
+        "creator",
+        "3001",
+        live_core::leads::LeadStatus::PendingApproval,
+    );
+    let ledger_text = format!("{}\n", serde_json::to_string(&row).unwrap());
+    std::fs::write(root.join("leads.jsonl"), &ledger_text).unwrap();
+
+    let base = server.uri();
+    let mut config = test_config(root, 12);
+    config.collection.lead_fetch_budget_per_run = 1;
+    let summary = tokio::task::spawn_blocking(move || {
+        let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
+        collect_with_client(client, &config, CollectMode::Guards, &mut |_msg: &str| {})
+    })
+    .await
+    .expect("task join")
+    .expect("collect ok");
+
+    assert_eq!(
+        std::fs::read_to_string(root.join("leads.jsonl")).unwrap(),
+        ledger_text,
+        "L0 账本字节级不动（无消费也无自动批准）"
+    );
+    assert!(
+        summary.get("leads_consumed").is_none(),
+        "L0 零消费不得面世 leads_consumed：{summary}"
+    );
+    let requests = server.received_requests().await.expect("requests");
+    assert!(
+        !requests.iter().any(|r| {
+            r.url.path() == "/x/space/wbi/arc/search"
+                && r.url.query_pairs().any(|(k, v)| k == "mid" && v == "3001")
+        }),
+        "L0 不得发 creator 消费请求"
     );
 }

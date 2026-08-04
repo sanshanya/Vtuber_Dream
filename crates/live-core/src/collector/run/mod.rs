@@ -155,6 +155,18 @@ pub fn collect_with_client(
             let consumed = if single_viewer {
                 0
             } else {
+                // G2-B 自治 L1：消费前先把谓词合格的 pending 行自动迁 approved
+                //（autonomy=0 → 秒返 0，L0 现状纯人工一字不动；R2-F3 单查同样
+                // 不进此闸——单查不动账本是闸门级纪律）。
+                let auto = leads::auto_approve_pending_leads(
+                    &root,
+                    &room_roster(&root, config),
+                    config.collection.leads_autonomy,
+                    emit,
+                );
+                if auto > 0 {
+                    emit(&format!("[LEADS] L1 自动批准 {auto} 条待审线索"));
+                }
                 consume_approved_leads(
                     &root,
                     config.collection.lead_fetch_budget_per_run,
@@ -220,6 +232,23 @@ pub fn collect_with_client(
             Err(err)
         }
     }
+}
+
+/// G2-B：本房间既有名册 = viewers/*.json 文件名 ∪ 主播 uid——L1 自动批准的
+/// creator 谓词查据（采已在册者零增量）。目录缺席 = 仅主播 uid（冷启动态）。
+fn room_roster(root: &std::path::Path, config: &Config) -> BTreeSet<String> {
+    let mut roster = BTreeSet::from([config.bilibili.streamer_uid.clone()]);
+    if let Ok(entries) = std::fs::read_dir(root.join("viewers")) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|ext| ext.to_str()) == Some("json")
+                && let Some(stem) = path.file_stem().and_then(|stem| stem.to_str())
+            {
+                roster.insert(stem.to_string());
+            }
+        }
+    }
+    roster
 }
 
 /// R2-F1：单查成功收口的盘面口径——viewers/*.json 实际文件数（含未动他人）。

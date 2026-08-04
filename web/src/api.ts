@@ -141,6 +141,12 @@ export const api = {
   run: (id: string) => request<RunRecordView>("GET", `/runs/${encodeURIComponent(id)}`),
   startRun: (body: { kind: RunKind; force?: boolean; viewer_uid?: string }) =>
     request<{ run_id: string }>("POST", "/runs", body),
+  /** G2-B 审批缝：状态机单行道 pending_approval → approved（幂等；404 未知 / 422 非法迁移）。 */
+  approveLead: (roomId: string, leadId: string) =>
+    request<{ dedupe_key: string; status: string; changed: boolean }>(
+      "POST",
+      `/rooms/${encodeURIComponent(roomId)}/leads/${encodeURIComponent(leadId)}/approve`,
+    ),
 };
 
 /** Z4 动作平面：六 kind 字面冻结（与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源）。 */
