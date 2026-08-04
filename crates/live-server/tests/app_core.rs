@@ -281,3 +281,82 @@ async fn overview_without_collection_is_404() {
     let (status, _) = oneshot(&fx.app, "GET", "/api/rooms/983/overview", None).await;
     assert_eq!(status, 404);
 }
+
+// ---------------------------------------------------------------------------
+// X1 修复批钉团（8-agent 盲评裁定）
+// ---------------------------------------------------------------------------
+
+/// ag2-F2/X1-b：非字符串值（数字/布尔/null）一律 422——曾被
+/// `as_str().unwrap_or_default()` 沉默成「空串 = 保持」。
+#[tokio::test(flavor = "multi_thread")]
+async fn config_put_rejects_non_string_values_422_and_untouched() {
+    let fx = fixture(None);
+    let before = std::fs::read_to_string(&fx.config_path).unwrap();
+    for body in [
+        json!({"ai": {"model": 42}}),
+        json!({"ai": {"model": true}}),
+        json!({"bilibili": {"cookie": null}}),
+        json!({"ai": {"base_url": {"nested": 1}}}),
+    ] {
+        let (status, reply) = oneshot(&fx.app, "PUT", "/api/config", Some(body.clone())).await;
+        assert_eq!(status, 422, "case {body} → {reply}");
+        let error = reply["error"].as_str().expect("error 文案");
+        assert!(error.contains("值必须是字符串"), "case {body} → {error}");
+        assert_eq!(
+            std::fs::read_to_string(&fx.config_path).expect("config"),
+            before,
+            "拒绝后原文件不得有变"
+        );
+    }
+}
+
+/// ag2-F3/X1-c：多行值拒绝——行级重写只承载单行 scalar（块标量会撕裂布局），且原文件不动。
+#[tokio::test(flavor = "multi_thread")]
+async fn config_put_rejects_multiline_values_422_and_untouched() {
+    let fx = fixture(None);
+    let before = std::fs::read_to_string(&fx.config_path).unwrap();
+    let (status, reply) = oneshot(
+        &fx.app,
+        "PUT",
+        "/api/config",
+        Some(json!({"bilibili": {"cookie": "line1\nline2"}})),
+    )
+    .await;
+    assert_eq!(status, 422, "{reply}");
+    let error = reply["error"].as_str().expect("error 文案");
+    assert!(error.contains("多行"), "{error}");
+    assert_eq!(
+        std::fs::read_to_string(&fx.config_path).expect("config"),
+        before,
+        "拒绝后原文件分毫未动"
+    );
+}
+
+/// ag2-F3/X1-c：原子写成功路径不留 tmp 残渣，失败路径同样清洁。
+#[tokio::test(flavor = "multi_thread")]
+async fn config_put_atomic_write_leaves_no_tmp_residue() {
+    let fx = fixture(None);
+    let (status, reply) = oneshot(
+        &fx.app,
+        "PUT",
+        "/api/config",
+        Some(json!({"ai": {"model": "next-model"}})),
+    )
+    .await;
+    assert_eq!(status, 200, "{reply}");
+    let then_fail = oneshot(
+        &fx.app,
+        "PUT",
+        "/api/config",
+        Some(json!({"bilibili": {"cookie": "bad\nvalue"}})),
+    )
+    .await;
+    assert_eq!(then_fail.0, 422, "{}", then_fail.1);
+    let residue: Vec<_> = std::fs::read_dir(fx._tmp.path())
+        .expect("tmp dir")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .filter(|name| name.contains("live-server-tmp"))
+        .collect();
+    assert!(residue.is_empty(), "tmp 残渣：{residue:?}");
+}

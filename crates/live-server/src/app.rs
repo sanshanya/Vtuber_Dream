@@ -89,6 +89,29 @@ fn fail_box(status: StatusCode, message: &str) -> AppFail {
     AppFail::new(status, message)
 }
 
+/// D9/ag3-F4：JSON 体信封化——所有 JsonRejection（含 DefaultBodyLimit 触发的 413）
+/// 统一落成 {error} JSON 响应，保持 D3 错误形态；原生 axum 只会吐裸文本。
+struct JsonBody<T>(T);
+
+#[axum::async_trait]
+impl<S, T> axum::extract::FromRequest<S> for JsonBody<T>
+where
+    S: Send + Sync,
+    T: serde::de::DeserializeOwned,
+{
+    type Rejection = AppFail;
+
+    async fn from_request(req: axum::extract::Request, state: &S) -> Result<Self, Self::Rejection> {
+        match Json::<T>::from_request(req, state).await {
+            Ok(Json(value)) => Ok(Self(value)),
+            Err(rejection) => {
+                let status = rejection.status();
+                Err(AppFail::new(status, &rejection.body_text()))
+            }
+        }
+    }
+}
+
 pub fn build_app(state: AppState) -> Router {
     let api = Router::new()
         .route("/rooms", get(rooms_list))
@@ -190,6 +213,12 @@ async fn config_get(State(state): State<AppState>) -> AppResult<Json<Value>> {
 
 /// D6：线路级 YAML 重写（保留注释与其余内容）——把 (段, 键) 定位段内首行
 /// `  {key}:` 与整行替换为新值；找不到合法落点 → 422。
+///
+/// ag2-F3 加固三面：
+/// - 多行值拒绝：行级重写只承载单行 scalar，换行会被 serde_yml 落成块标量撕裂布局；
+/// - 重复键拒绝：同段内键出现 2 处以上 → 拒绝，不猜哪行是「真值」；
+/// - 原子写：tmp 文件先过 load + validate 双门禁再 rename 落位——不合格配置
+///   永远接触不到真路径，同时消除「半截写盘」窗口与「已落盘请检查」的脏姿势。
 fn write_keys(
     config_path: &std::path::Path,
     patch: &[((&str, &str), String)],
@@ -199,41 +228,86 @@ fn write_keys(
     let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
     let had_trailing_newline = text.ends_with('\n');
     for ((section, key), value) in patch {
+        if value.contains(['\n', '\r']) {
+            return Err(format!(
+                "「{section}.{key}」不支持多行值（行级重写只承载单行 scalar）"
+            ));
+        }
         let header = format!("{section}:");
         let Some(section_idx) = lines.iter().position(|line| line.trim_end() == header) else {
             return Err(format!("配置缺少「{section}」段"));
         };
-        let mut replaced = false;
-        for line in lines.iter_mut().skip(section_idx + 1).take_while(|line| {
-            line.starts_with(' ') || line.starts_with('\t') || line.trim().is_empty()
-        }) {
+        let mut hits: Vec<usize> = Vec::new();
+        for (index, line) in
+            lines
+                .iter()
+                .enumerate()
+                .skip(section_idx + 1)
+                .take_while(|(_, line)| {
+                    line.starts_with(' ') || line.starts_with('\t') || line.trim().is_empty()
+                })
+        {
             if line.trim_start().starts_with(&format!("{key}:")) {
+                hits.push(index);
+            }
+        }
+        match hits.as_slice() {
+            [] => {
+                return Err(format!(
+                    "「{section}.{key}」在配置中找不到位置（不追加新键，请手写一行）"
+                ));
+            }
+            [index] => {
                 // 值含空格/井号/引号等 → serde_yml 走 quoted 形态，永不裸写。
                 let frag = serde_yml::to_string(&Value::String(value.clone()))
                     .map_err(|error| format!("YAML 序列化失败：{error}"))?;
                 let frag = frag.trim();
+                let line = &mut lines[*index];
                 let indent: String = line.chars().take_while(char::is_ascii_whitespace).collect();
                 *line = format!("{indent}{key}: {frag}");
-                replaced = true;
-                break;
             }
-        }
-        if !replaced {
-            return Err(format!(
-                "「{section}.{key}」在配置中找不到位置（不追加新键，请手写一行）"
-            ));
+            many => {
+                return Err(format!(
+                    "「{section}.{key}」在配置中出现 {} 处，拒绝猜测（请手工收敛为一行）",
+                    many.len()
+                ));
+            }
         }
     }
     let mut out = lines.join("\n");
     if had_trailing_newline {
         out.push('\n');
     }
-    std::fs::write(config_path, out).map_err(|error| format!("写入配置失败：{error}"))
+    // 原子序列：tmp → load+validate → rename。校验不过则 tmp 清走、原文件分毫未动。
+    let file_name = config_path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("config");
+    let tmp_path = config_path.with_file_name(format!(
+        ".{file_name}.live-server-tmp-{}",
+        std::process::id()
+    ));
+    std::fs::write(&tmp_path, &out).map_err(|error| format!("写入临时配置失败：{error}"))?;
+    let verdict = live_core::config::load_config(&tmp_path)
+        .map_err(|error| error.to_string())
+        .and_then(|config| {
+            live_core::config::validate_for_collection(&config)
+                .map_err(|error| error.to_string())
+                .and(live_core::config::validate_for_ai(&config).map_err(|error| error.to_string()))
+        });
+    match verdict {
+        Ok(()) => std::fs::rename(&tmp_path, config_path)
+            .map_err(|error| format!("落位失败（原配置未动，见 {tmp_path:?}）：{error}")),
+        Err(error) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(format!("写入后校验未通过，配置未改动：{error}"))
+        }
+    }
 }
 
 async fn config_put(
     State(state): State<AppState>,
-    Json(body): Json<Value>,
+    JsonBody(body): JsonBody<Value>,
 ) -> AppResult<Json<Value>> {
     let object = match body.as_object() {
         Some(object) => object,
@@ -255,6 +329,13 @@ async fn config_put(
             let writable = WRITABLE_CONFIG_KEYS
                 .iter()
                 .find(|(s, k)| s == section && k == key);
+            // D9 显式类型：非字符串值 → 422，不许被「空串=保持」沉默吞掉（ag2-F2）。
+            if !value.is_string() {
+                rejected.push(format!(
+                    "{section}.{key} 的值必须是字符串（null→删除语义不支持）"
+                ));
+                continue;
+            }
             let value_str = value.as_str().unwrap_or_default().to_string();
             match (writable, value_str.trim().is_empty()) {
                 (_, true) => {} // 空串 = 保持现值（D6）
@@ -280,23 +361,11 @@ async fn config_put(
     if patch.is_empty() {
         return Ok(Json(json!({"status": "unchanged"})));
     }
+    // 校验已并入 write_keys 的 tmp 阶段（ag2-F3）：失败 → 422 且原文件分毫未动。
     if let Err(error) = write_keys(&state.config_path, &patch) {
         return Err(fail_box(StatusCode::UNPROCESSABLE_ENTITY, &error));
     }
-    // D6：写后走 config 同款校验（数值层未动，security 键加载 + ai 校验通过即视为一致）。
-    match live_core::config::load_config(&state.config_path)
-        .map_err(|error| error.to_string())
-        .and_then(|config| {
-            live_core::config::validate_for_collection(&config)
-                .map_err(|error| error.to_string())
-                .and(live_core::config::validate_for_ai(&config).map_err(|error| error.to_string()))
-        }) {
-        Ok(()) => Ok(Json(json!({"status": "updated", "keys": patch.len()}))),
-        Err(error) => Err(fail_box(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            &format!("写入后校验失败（已落盘，请检查）：{error}"),
-        )),
-    }
+    Ok(Json(json!({"status": "updated", "keys": patch.len()})))
 }
 
 // ---------------------------------------------------------------------------
@@ -310,7 +379,7 @@ async fn config_put(
 /// 互斥；非布尔 force / 超长 uid / 非对象体一律 422。
 async fn runs_post(
     State(state): State<AppState>,
-    Json(body): Json<Value>,
+    JsonBody(body): JsonBody<Value>,
 ) -> AppResult<(StatusCode, Json<Value>)> {
     let object = body.as_object().ok_or_else(|| {
         fail(
@@ -381,6 +450,7 @@ async fn runs_post(
             "detail": "demo 模式：返回静态快照，不触发真实运行",
         }))
     } else {
+        // ag3-F3：已有未终态 run → 409，客户端可从错文中拿到在飞 run_id 自行轮询。
         Registry::spawn_run(
             &state.registry,
             load_config(&state)?,
@@ -389,6 +459,12 @@ async fn runs_post(
             force,
             state.bilibili_hosts.clone(),
         )
+        .map_err(|active| {
+            fail(
+                StatusCode::CONFLICT,
+                &format!("已有进行中的 run（{active}），待其到达终态后再触发"),
+            )
+        })?
     };
     let run_id = record.lock().expect("record poisoned").run_id.clone();
     Ok((StatusCode::ACCEPTED, Json(json!({"run_id": run_id}))))
@@ -406,6 +482,22 @@ async fn run_get(State(state): State<AppState>, Path(id): Path<String>) -> AppRe
 // ---------------------------------------------------------------------------
 // 房间数据面（B2）：overview / viewers / tree / graph
 // ---------------------------------------------------------------------------
+
+/// D9：路径参数中观众 vid 的消毒限值（长度顶与 POST 同一口径：64 宽限值上限）。
+pub const MAX_VID_PATH_CHARS: usize = 64;
+/// D9：vid 合法字符集（alnum + "_" + "-"）。B 站 uid 是数字串，demo uid 走
+/// 「demo-N」形——制表与连字符之外的一律视作穿透恶意（%2F 经 axum 解码后落此）。
+fn vid_guard(vid: &str) -> AppResult<()> {
+    let legal = !vid.is_empty()
+        && vid.len() <= MAX_VID_PATH_CHARS
+        && vid
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-');
+    if !legal {
+        return Err(fail(StatusCode::NOT_FOUND, &format!("观众 {vid} 不存在")));
+    }
+    Ok(())
+}
 
 /// uid 守卫：D3 路径形承诺——现布局单房间，uid 暂恒等于 config 房号，其他值一律 404。
 fn room_guard(config: &live_core::config::Config, uid: &str) -> AppResult<()> {
@@ -559,6 +651,7 @@ async fn viewer_graph(
 ) -> AppResult<Json<Value>> {
     let config = load_config(&state)?;
     room_guard(&config, &uid)?;
+    vid_guard(&vid)?;
     let root = data_root(&state)?;
     let (_store, value) = project_for_viewer(&root)?;
     Ok(Json(crate::cytoscape::scoped(
@@ -584,6 +677,7 @@ async fn viewer_tree(
 ) -> AppResult<Json<Value>> {
     let config = load_config(&state)?;
     room_guard(&config, &uid)?;
+    vid_guard(&vid)?;
     let root = data_root(&state)?;
     let viewer_path = root.join("viewers").join(format!("{vid}.json"));
     let Some(viewer) = read_json(&viewer_path) else {

@@ -12,7 +12,7 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
-use live_server::app::{AppState, MAX_VIEWER_UID_CHARS, build_app};
+use live_server::app::{AppState, MAX_REQUEST_BODY_BYTES, MAX_VIEWER_UID_CHARS, build_app};
 use live_server::registry::{Registry, RunRecord};
 
 const YAML_TEMPLATE: &str = r#"
@@ -239,4 +239,140 @@ async fn spawn_run_full_lifecycle_collect_failure_marks_failed() {
     assert_eq!(via_http["status"], "failed");
     assert_eq!(via_http["kind"], "full");
     assert_eq!(via_http["viewer_uid"], Value::Null);
+}
+
+// ---------------------------------------------------------------------------
+// X1 修复批钉团（8-agent 盲评裁定）
+// ---------------------------------------------------------------------------
+
+/// ag3-F3：已有未终态 run → 409，错文携带在飞 run_id。
+#[tokio::test(flavor = "multi_thread")]
+async fn runs_post_rejects_second_active_run_409() {
+    let fx = fixture(false, None);
+    fx.registry.register(RunRecord {
+        run_id: "run-in-flight".to_string(),
+        kind: "full".to_string(),
+        viewer_uid: None,
+        force: false,
+        status: "collecting".to_string(),
+        started_at: "t0".to_string(),
+        finished_at: None,
+        outcome: None,
+        partial: false,
+        events: Arc::new(live_core::events::RunEvents::new()),
+    });
+    let (status, body) = oneshot(&fx.app, "POST", "/api/runs", Some(json!({"kind": "full"}))).await;
+    assert_eq!(status, 409, "{body}");
+    let error = body["error"].as_str().expect("error 文案");
+    assert!(error.contains("run-in-flight"), "{error}");
+    // 未登记第二个 run：在飞的仍是唯一记录。
+    let (status, snapshot) = oneshot(&fx.app, "GET", "/api/runs/run-in-flight", None).await;
+    assert_eq!(status, 200, "{snapshot}");
+    assert_eq!(snapshot["status"], "collecting");
+}
+
+/// ag3-F4：超上限 body → axum 原生 413 纯文本被信封化为 JSON {error}。
+#[tokio::test(flavor = "multi_thread")]
+async fn runs_post_oversized_body_is_413_json_envelope() {
+    let fx = fixture(false, None);
+    let payload = format!(
+        r#"{{"kind":"full","pad":"{}"}}"#,
+        "x".repeat(MAX_REQUEST_BODY_BYTES)
+    );
+    let request = Request::builder()
+        .method("POST")
+        .uri("/api/runs")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(payload))
+        .unwrap();
+    let response = fx.app.clone().oneshot(request).await.unwrap();
+    assert_eq!(response.status().as_u16(), 413);
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    assert!(
+        content_type.contains("application/json"),
+        "413 必须是 JSON 信封：{content_type}"
+    );
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let body: Value = serde_json::from_slice(&bytes).expect("413 体必须可解析为 JSON");
+    assert!(body["error"].is_string(), "{body}");
+}
+
+/// ag3-F1/X1-d：partial 契约键 viewer_stage_status 的单元钉——
+/// 双向复现老死键之错：老读法 `status=="viewer_complete"` 在真实失败姿势下假阴性，
+/// 在幻觉姿势下假阳性。
+#[test]
+fn viewer_stage_complete_reads_contract_key() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = tmp.path().join("state.json");
+    assert!(
+        !live_server::registry::viewer_stage_complete(&state),
+        "文件缺失 → false"
+    );
+    std::fs::write(&state, "not json").unwrap();
+    assert!(
+        !live_server::registry::viewer_stage_complete(&state),
+        "非法 JSON → false"
+    );
+    std::fs::write(
+        &state,
+        r#"{"status":"failed","viewer_stage_status":"complete"}"#,
+    )
+    .unwrap();
+    assert!(
+        live_server::registry::viewer_stage_complete(&state),
+        "audience 期失败姿势 → true（老读法假阴性之复现）"
+    );
+    std::fs::write(
+        &state,
+        r#"{"status":"viewer_complete","viewer_stage_status":"incomplete"}"#,
+    )
+    .unwrap();
+    assert!(
+        !live_server::registry::viewer_stage_complete(&state),
+        "老死键幻觉姿势 → false（老读法假阳性之复现）"
+    );
+}
+
+/// collect 期失败时上一轮的 ai/state.json 已被 collector 归档进
+/// history/snapshots——partial 必须为 false（X1-d 的集成姿势语义钉）。
+#[tokio::test(flavor = "multi_thread")]
+async fn collect_failure_archives_prior_state_and_reports_partial_false() {
+    let mock = wiremock::MockServer::start().await;
+    let fx = fixture(false, Some((mock.uri(), mock.uri())));
+    let state_dir = fx._tmp.path().join("out").join("ai");
+    std::fs::create_dir_all(&state_dir).unwrap();
+    std::fs::write(
+        state_dir.join("state.json"),
+        r#"{"status":"failed","viewer_stage_status":"complete"}"#,
+    )
+    .unwrap();
+
+    let (status, body) = oneshot(&fx.app, "POST", "/api/runs", Some(json!({"kind": "full"}))).await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().expect("run_id 字符串").to_string();
+
+    let record = fx.registry.get(&run_id).expect("run registered");
+    let deadline = Instant::now() + Duration::from_secs(60);
+    let terminal = loop {
+        let snapshot = record_json(&record);
+        if ["done", "failed"].contains(&snapshot["status"].as_str().unwrap_or("")) {
+            break snapshot;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "run 未在时限内到达终态：{snapshot}"
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    };
+    assert_eq!(terminal["status"], "failed", "{terminal}");
+    assert_eq!(
+        terminal["partial"],
+        Value::Bool(false),
+        "collect 期失败：预栽 state 已被归档 → partial=false：{terminal}"
+    );
 }

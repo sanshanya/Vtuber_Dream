@@ -251,3 +251,34 @@ async fn graph_endpoints_404_when_graph_absent() {
     let (status, _body) = get(&app, "/api/rooms/983/graph").await;
     assert_eq!(status, 404);
 }
+
+// ---------------------------------------------------------------------------
+// X1 修复批钉团（8-agent 盲评裁定）
+// ---------------------------------------------------------------------------
+
+/// ag2-F1/X1-a（blocker）：viewer 路径段的 vid 清洗——Path 抽取器把 %2F/%5C 解码成
+/// 真斜杠，零校验时 tmp 之外的哨兵会经 viewers/../../ 穿透读出；guard 必须 404 截断。
+#[tokio::test(flavor = "multi_thread")]
+async fn viewer_tree_graph_reject_traversal_vids_404() {
+    let fx = fixture();
+    let long = "a".repeat(65); // 超 MAX_VID_PATH_CHARS=64
+    for vid in [
+        "..%2F..%2Fevidence-sink",
+        "..%5C..%5Cevidence-sink",
+        "with.dot",
+        "with%20space",
+        long.as_str(),
+    ] {
+        let (status, body) = get(&fx.app, &format!("/api/rooms/983/viewers/{vid}/tree")).await;
+        assert_eq!(status, 404, "tree vid={vid} → {body}");
+        assert!(
+            body["error"].as_str().is_some_and(|s| s.contains("不存在")),
+            "tree vid={vid} → {body}"
+        );
+        let (status, body) = get(&fx.app, &format!("/api/rooms/983/viewers/{vid}/graph")).await;
+        assert_eq!(status, 404, "graph vid={vid} → {body}");
+    }
+    // 合法 demo vid 不得被误伤（正向对照）。
+    let (status, _) = get(&fx.app, "/api/rooms/983/viewers/demo-1/tree").await;
+    assert_eq!(status, 200, "demo-1 tree 应通行");
+}
