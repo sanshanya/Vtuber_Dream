@@ -692,3 +692,78 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
     assert!(outcome.is_err());
     assert_eq!(trace.stats.llm_calls, 1, "transport 错不烧 turn");
 }
+
+/// W2-C1（M6-C② 实战炸点）：工具 handler 中执行真实 blocking HTTP 必须
+/// 不炸「Cannot drop a runtime…」——reqwest::blocking 的 debug 构建 shell
+/// runtime 自查在 async ctx 下必 panic；修法 = 调度点卸到 scoped std::thread
+/// （无 tokio ctx 的干净线程）。此钉在修复前的执行形态 = task panic。
+#[tokio::test(flavor = "multi_thread")]
+async fn tool_handler_with_blocking_http_survives_async_context() {
+    use std::sync::{Arc, Mutex};
+
+    use live_core::agent::runtime::ToolHandler;
+
+    let server = MockServer::start().await;
+    mount_turn(
+        &server,
+        messages_len(2),
+        assistant_tool_call("call-b1", "blocking_probe", json!({}), Some("先探活")),
+    )
+    .await;
+    mount_turn(
+        &server,
+        messages_len(4),
+        assistant_tool_call(
+            "call-t",
+            "submit_probe_result",
+            json!({"submission": {"a": 7, "b": 14, "total": 21, "note": ""}}),
+            None,
+        ),
+    )
+    .await;
+
+    // 记录器证明 handler 真跑过（visitation + 错误形态落笔）。
+    let log: Arc<Mutex<Vec<String>>> = Arc::new(Mutex::new(Vec::new()));
+    let log_capture: Arc<Mutex<Vec<String>>> = log.clone();
+    let blocking_probe = live_core::agent::runtime::AgentTool::<ProbeContext> {
+        name: "blocking_probe".to_string(),
+        description: "向不可达 B 站端点发真实 blocking HTTP——修前 async ctx 执行即 panic。"
+            .to_string(),
+        parameters: json!({"type": "object", "properties": {}, "required": []}),
+        terminal: false,
+        handler: {
+            let boxed: ToolHandler<ProbeContext> = Box::new(move |_, _| {
+                let client = live_core::bilibili::BilibiliClient::with_origin(
+                    "http://127.0.0.1:9",
+                    "http://127.0.0.1:9",
+                    "SESSDATA=test",
+                    0.0,
+                    5.0,
+                );
+                let entry = match client.and_then(|mut c| c.nav()) {
+                    Ok(_) => "executed:ok".to_string(),
+                    Err(err) => format!("executed:error:{err}"),
+                };
+                log_capture.lock().unwrap().push(entry.clone());
+                json!({"probe": entry})
+            });
+            boxed
+        },
+    };
+    let mut spec = probe_spec();
+    spec.tools.insert(0, blocking_probe);
+    let runtime = test_runtime(&server);
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("blocking 工具不得在 async ctx 炸锅");
+    assert_eq!(outcome.final_output, "accepted");
+    let entries = log.lock().unwrap().clone();
+    assert_eq!(entries.len(), 1, "handler 必须恰好跑一次：{entries:?}");
+    assert!(
+        entries[0].starts_with("executed:error:"),
+        "不可达端点应回错误形态而非 panic：{entries:?}"
+    );
+}

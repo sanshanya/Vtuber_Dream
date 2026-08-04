@@ -543,7 +543,9 @@ impl AgentRuntime {
 
     /// 单 attempt 的 turn 循环。历史由 caller 持有（forced 续跑的续接输入）。
     /// Ok(()) = 终局 accepted；PlainTextEnd = 普通文本提前结束（draft 随 history 一起可用）。
-    async fn run_rounds<C: RunCtx>(&self, args: RoundArgs<'_, C>) -> Result<(), RoundEnd> {
+    // C: Send 的前置要求升格自此：工具 handler 卸到 scoped std::thread 上执行
+    // （&mut C 跨线程借用），viewer agent ctx 本就满足于 JoinSet::spawn 的 Send 界。
+    async fn run_rounds<C: RunCtx + Send>(&self, args: RoundArgs<'_, C>) -> Result<(), RoundEnd> {
         let RoundArgs {
             agent_name,
             tools,
@@ -624,7 +626,17 @@ impl AgentRuntime {
                 };
                 let result = match routed {
                     Some(tool) => match serde_json::from_str(&call.function.arguments) {
-                        Ok(args) => (tool.handler)(ctx, &args),
+                        // W2-C1（M6-C② 实战炸出）：工具 handler 必须在「无 tokio 上下文」的
+                        // 线程上执行。reqwest::blocking 的 wait.rs enter() 在 debug 构建下
+                        // 会为每次阻塞调用临时建/丢一个壳 runtime 做误脚枪检查——在 async
+                        // ctx 内执行即 panic「Cannot drop a runtime…」。scoped std::thread：
+                        // 干净上下文 + 借用安全（C: Send）+ 与 inline 同序的执行语义。
+                        Ok(args) => std::thread::scope(|scope| {
+                            scope
+                                .spawn(|| (tool.handler)(ctx, &args))
+                                .join()
+                                .unwrap_or_else(|payload| std::panic::resume_unwind(payload))
+                        }),
                         // 非法 arguments：不执行 handler，回喂可读错误让模型自愈（工程 m2）。
                         Err(err) => json!({"error": format!("invalid tool arguments: {err}")}),
                     },
@@ -697,7 +709,7 @@ pub struct RunOutcome<S> {
 }
 
 /// 终局协议主循环（Python `runtime.py:150` `run_toolcall_agent` 的逐行契约）。
-pub async fn run_toolcall_agent<C: RunCtx, S: for<'de> Deserialize<'de>>(
+pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
     runtime: &AgentRuntime,
     spec: &mut AgentSpec<C>,
     plan: AttemptPlan<'_>,
