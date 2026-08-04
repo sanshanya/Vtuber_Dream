@@ -474,6 +474,7 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
         demo: false,
         data_root: None,
         bilibili_hosts: Some((bilibili.uri(), bilibili.uri())),
+        config_write_lock: Default::default(),
     });
 
     // 触发：kind=viewer → CollectMode::SingleViewer
@@ -643,6 +644,7 @@ async fn single_viewer_run_audience_failure_marks_partial_true() {
         demo: false,
         data_root: None,
         bilibili_hosts: Some((bilibili.uri(), bilibili.uri())),
+        config_write_lock: Default::default(),
     });
 
     let (status, body) = oneshot(

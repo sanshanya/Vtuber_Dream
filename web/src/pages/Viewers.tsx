@@ -25,7 +25,7 @@ export function EmptyPoolHint(props: {
       <div className="toolbar">
         <input
           aria-label="单查观众 uid"
-          placeholder="B站观众 uid（数字）"
+          placeholder="B站观众 uid（如 1003 或 demo-1）"
           value={props.uid}
           onChange={(event) => props.onUidChange(event.target.value)}
         />
@@ -89,7 +89,7 @@ export function Viewers({ roomId }: { roomId: string }) {
       {submittedRun && (
         <p className="muted small">
           已触发单查 run：<code>{submittedRun}</code>
-          ——完成后列表自动刷新；进度与 events 流见页面右上角徽标。
+          ——完成后列表自动刷新；进度与 events 流见页面顶部页头徽标。
         </p>
       )}
     </section>

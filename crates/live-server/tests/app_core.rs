@@ -49,6 +49,7 @@ fn fixture(web_root: Option<&str>) -> Fixture {
         demo: false,
         data_root: None,
         bilibili_hosts: None,
+        config_write_lock: Default::default(),
     });
     Fixture {
         _tmp: tmp,
@@ -221,6 +222,7 @@ async fn existing_dist_serves_index() {
         demo: false,
         data_root: None,
         bilibili_hosts: None,
+        config_write_lock: Default::default(),
     });
     let request = Request::builder()
         .uri("/")

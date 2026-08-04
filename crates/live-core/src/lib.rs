@@ -5,7 +5,7 @@
 //! - M2：bilibili（HTTP 适配 + WBI）/ collector（normalize + 编排）/ storage（文件面）。
 
 pub const PROTOCOL_NOTE: &str =
-    "事实、推断、状态、行动必须分层；普通 assistant 文本不是程序输出（AGENTS.md §2）";
+    "事实、推断、状态、行动必须分层；普通 assistant 文本不是程序输出（AGENTS.md 哲学核心）";
 
 pub mod agent;
 pub mod bilibili;

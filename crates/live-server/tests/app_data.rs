@@ -51,6 +51,7 @@ fn fixture() -> Fixture {
         demo: true,
         data_root: Some(data_root),
         bilibili_hosts: None,
+        config_write_lock: Default::default(),
     });
     Fixture { _tmp: tmp, app }
 }
@@ -221,6 +222,7 @@ async fn graph_endpoints_404_when_graph_absent() {
         demo: false,
         data_root: None,
         bilibili_hosts: None,
+        config_write_lock: Default::default(),
     });
     let (status, _body) = get(&app, "/api/rooms/983/graph").await;
     assert_eq!(status, 404);

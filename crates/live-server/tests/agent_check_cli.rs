@@ -2,7 +2,7 @@
 //!
 //! 钉面：
 //! 1. 未设 VTD_AGENT_CHECK → 拒绝（exit 2）且**先于 config 读取**（给不存在的路径仍报门）。
-//! 2. 值非 "1" → 同样拒绝（只认显式字面，AGENTS.md §8 真实端点 opt-in）。
+//! 2. 值非 "1" → 同样拒绝（只认显式字面，AGENTS.md 质量门禁·真实端点 opt-in）。
 //! 3. VTD_AGENT_CHECK=1 → 过门走正常路径（坏配置落入 `error: {load_error}` 臂）。
 //! 4. wiremock 三回合剧本 + 过门 → 全链 PASS 摘要（非真实端点的协议面钉）。
 

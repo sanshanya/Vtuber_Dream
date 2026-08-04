@@ -1,6 +1,6 @@
 //! M3-R1 安全批：LLM 传输错误的脱敏（review 8-agent 安全 M1）。
 //!
-//! 红线（AGENTS.md §6/§11）：reasoning_content 与 api_key 片段永不进 trace/日志/终态。
+//! 红线（AGENTS.md 明确禁止）：reasoning_content 与 api_key 片段永不进 trace/日志/终态。
 //! 事故路径：async-openai 的 `OpenAIError::JSONDeserialize` Display 全量携带响应体
 //! （网关把 200 改成坏形状时，body 中已生成的 assistant/reasoning 文本随错误原文
 //! 进 trace.jsonl 与 stdout）；`ApiErrorResponse` 透传服务端 message

@@ -11,7 +11,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { api, type RunRecordView } from "../api";
 import { RunButton, partialTitle } from "../components/RunButton";
-import { RunTrackerProvider, useRunTracker } from "../components/RunTracker";
+import {
+  RunTrackerProvider,
+  TERMINAL_STATES,
+  useRunTracker,
+} from "../components/RunTracker";
 
 function makeRecord(over: Partial<RunRecordView>): RunRecordView {
   return {
@@ -56,7 +60,9 @@ function harness() {
     return (
       <div>
         <button onClick={() => tracker.track("r-1")}>track</button>
+        <button onClick={() => tracker.track("r-2")}>track-b</button>
         <span data-testid="run-id">{tracker.runId ?? "none"}</span>
+        <span data-testid="active">{String(tracker.active)}</span>
         <RunButton />
       </div>
     );
@@ -158,5 +164,58 @@ describe("RunTracker 共享追踪", () => {
     const record = makeRecord({ status: "done", partial: true });
     expect(partialTitle(record)).toContain("观众级失败");
     expect(partialTitle({ ...record, partial: false })).not.toContain("观众级失败");
+  });
+
+  // W3/r1-F2：终态集合是跨语双真源（server RUN_STATES 末两位 ↔ web）——字面钉防漂移。
+  it("TERMINAL_STATES 与 server registry::RUN_STATES 末两位字面同源", () => {
+    expect(TERMINAL_STATES).toEqual(["done", "failed"]);
+  });
+
+  // W3/r5-F8：track 清空旧帧——新 run 未回首轮轮询前，上段终态帧不得顶进渲染。
+  it("track 新 run 前回报一拍内不得闪显旧 run 的终态徽标", async () => {
+    stubFetchPlan({
+      "/api/runs/r-1": [{ status: 200, body: JSON.stringify(makeRecord({ status: "done" })) }],
+      // r-2 永不回：钉的是「回报前」窗口，回包再快也算时序污染——直接不回更干净。
+    });
+    harness();
+    fireEvent.click(screen.getByText("track"));
+    await waitFor(() => expect(screen.getByText("done")).toBeTruthy());
+    fireEvent.click(screen.getByText("track-b"));
+    expect(screen.getByTestId("run-id").textContent).toBe("r-2");
+    expect(screen.queryByText("done")).toBeNull();
+    expect(screen.queryByText("collecting")).toBeNull();
+  });
+
+  // W3/r5-F2：丢失后 active 必须为 false——lastRecord 在飞帧不得把主钮顶成永久「运行中…」。
+  it("轮询 404 丢失后主钮恢复可点（active=false，lastRecord 不顶账）", async () => {
+    stubFetchPlan({
+      "/api/runs/r-1": [
+        { status: 200, body: JSON.stringify(makeRecord({ status: "collecting" })) },
+        { status: 404, body: JSON.stringify({ error: "run r-1 不存在" }) },
+      ],
+    });
+    harness();
+    fireEvent.click(screen.getByText("track"));
+    await waitFor(() => expect(screen.getByTestId("active").textContent).toBe("true"));
+    await waitFor(() => expect(screen.getByText(/run 记录已丢失/)).toBeTruthy(), {
+      timeout: 4000,
+    });
+    expect(screen.getByTestId("active").textContent).toBe("false");
+    const trigger = screen.getByRole("button", { name: "触发全量感知" }) as HTMLButtonElement;
+    expect(trigger.disabled).toBe(false);
+    // 且丢失提示有可见 ×（dismiss 不靠悬停 tooltip 藏）。
+    expect(screen.getByText(/run 记录已丢失.*×/)).toBeTruthy();
+  });
+
+  // W3/r1-F3：demo 快照徽标必须明示合成——与真实 done 同形即「合成诡装真实」。
+  it("kind===demo 的终态徽标带合成字样", async () => {
+    stubFetchPlan({
+      "/api/runs/r-1": [
+        { status: 200, body: JSON.stringify(makeRecord({ kind: "demo", status: "done" })) },
+      ],
+    });
+    harness();
+    fireEvent.click(screen.getByText("track"));
+    await waitFor(() => expect(screen.getByText(/synthetic_demo 合成演示/)).toBeTruthy());
   });
 });

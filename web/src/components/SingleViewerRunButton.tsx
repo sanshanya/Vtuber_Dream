@@ -30,7 +30,7 @@ export function SingleViewerRunButton({ vid, label }: { vid: string; label?: str
   return (
     <span className="run-trigger" data-testid={`single-run-${vid}`}>
       <button disabled={pending || submitted !== null} onClick={() => void trigger()}>
-        {submitted !== null ? "已提交（进度见右上角徽标）" : (label ?? "触发该观众单查")}
+        {submitted !== null ? "已提交（进度见页头徽标）" : (label ?? "触发该观众单查")}
       </button>
       {error && <span className="badge danger">{error}</span>}
     </span>

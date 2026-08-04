@@ -2,10 +2,10 @@
 //!
 //! - `write_json`：父目录建齐 + 同名 `.tmp` 文件原子替换（中断不留半截 JSON）。
 //! - `archive_current_snapshot`：采集前把现状复制到 `history/snapshots/<UTC戳>`；
-//!   `graph/` 与 `history/` 永不归档、永不删除（长期时序记忆，AGENTS.md §7）。
+//!   `graph/` 与 `history/` 永不归档、永不删除（长期时序记忆，AGENTS.md 时序优先）。
 //! - `reset_output`：清 viewers/site/shared/ai 与顶层 JSON，同样保留 graph/history。
 //!
-//! 错误一律显式返回（字符串形态），绝不静默（AGENTS.md §11）。
+//! 错误一律显式返回（字符串形态），绝不静默（AGENTS.md 完成定义）。
 
 use std::path::{Path, PathBuf};
 

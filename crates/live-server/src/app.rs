@@ -1,9 +1,14 @@
 //! axum 装配与端点（D1/D3/D9 + B1 切：rooms + config + 静态面）。
 //!
 //! 与安全面相干的所有魔数就地命名（kickoff 完成定义 5）。
+//!
+//! 体积备书（r8-F2/ag8-F3）：780 行贴 800 线——端点表面是单房间小 API（十条路由），
+//! 共享同一套 DTO/错误形态/闸限；拆出 handler 子卷会把「端点表 ↔ 路由表」一眼对照
+//! 打散。出现第二房间形态（多房间真实依赖）时按 rooms/config/runs 三卷拆分。
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 use axum::Router;
 use axum::extract::DefaultBodyLimit;
@@ -44,6 +49,9 @@ pub struct AppState {
     pub data_root: Option<PathBuf>,
     /// 测试接缝：POST runs → spawn 的 Bilibili 根地址注入（生产 None → 官方端点）。
     pub bilibili_hosts: Option<(String, String)>,
+    /// W1/r2-F3：config 写互斥——并发 PUT 的 read-modify-write 会互相覆盖丢更新。
+    /// write_keys 是同步原子写（tmp+rename），持锁窗口不含 await，std Mutex 足够。
+    pub config_write_lock: Arc<Mutex<()>>,
 }
 
 /// 统一错误包装记类型：状态码 + {"error": 文案}（D3 形态）。
@@ -149,7 +157,7 @@ async fn build_guide() -> Response {
          place-items:center;height:100vh;margin:0'>\
          <div><h2>前端尚未构建</h2><p>在本仓库 <code>web/</code> 下执行：\
          <pre style='background:#181b24;padding:12px 16px;border-radius:6px'>\
-npm install\nnpm run build</pre>后重启 serve 即可。</div></body>",
+npm ci\nnpm run build</pre>后重启 serve 即可。</div></body>",
     )
         .into_response()
 }
@@ -296,8 +304,14 @@ fn write_keys(
                 .and(live_core::config::validate_for_ai(&config).map_err(|error| error.to_string()))
         });
     match verdict {
-        Ok(()) => std::fs::rename(&tmp_path, config_path)
-            .map_err(|error| format!("落位失败（原配置未动，见 {tmp_path:?}）：{error}")),
+        Ok(()) => match std::fs::rename(&tmp_path, config_path) {
+            Ok(()) => Ok(()),
+            Err(error) => {
+                // W1/r2-F2：rename 失败同样清走 tmp；错文不透服务器绝对路径。
+                let _ = std::fs::remove_file(&tmp_path);
+                Err(format!("落位失败（原配置未动）：{error}"))
+            }
+        },
         Err(error) => {
             let _ = std::fs::remove_file(&tmp_path);
             Err(format!("写入后校验未通过，配置未改动：{error}"))
@@ -361,6 +375,12 @@ async fn config_put(
     if patch.is_empty() {
         return Ok(Json(json!({"status": "unchanged"})));
     }
+    // W1/r2-F3：read-modify-write 全程持锁，并发 PUT 不得相互覆盖。write_keys 是同步块，
+    // 持锁窗口不跨 await；锁中毒 = 上一次持锁者已 panic，用 expect 露头而非封锁修复。
+    let _write_guard = state
+        .config_write_lock
+        .lock()
+        .expect("config write lock poisoned");
     // 校验已并入 write_keys 的 tmp 阶段（ag2-F3）：失败 → 422 且原文件分毫未动。
     if let Err(error) = write_keys(&state.config_path, &patch) {
         return Err(fail_box(StatusCode::UNPROCESSABLE_ENTITY, &error));
@@ -407,13 +427,16 @@ async fn runs_post(
     let viewer_uid = match object.get("viewer_uid") {
         None | Some(Value::Null) => None,
         Some(Value::String(uid)) if !uid.trim().is_empty() => {
-            if uid.trim().chars().count() > MAX_VIEWER_UID_CHARS {
+            let trimmed = uid.trim();
+            // r2-F1：写侧穿透——collector 容错链以 input uid 落盘 viewers/{uid}.json，
+            // 字符集守卫必须与 vid_guard 同集（`, %2F → /` 皆在此拒）。
+            if !uid_charset_legal(trimmed, MAX_VIEWER_UID_CHARS) {
                 return Err(fail(
                     StatusCode::UNPROCESSABLE_ENTITY,
-                    &format!("viewer_uid 超出长度上限 {MAX_VIEWER_UID_CHARS}"),
+                    &format!("viewer_uid 非法：限 1..={MAX_VIEWER_UID_CHARS} 位 [A-Za-z0-9_-]"),
                 ));
             }
-            Some(uid.trim().to_string())
+            Some(trimmed.to_string())
         }
         _ => {
             return Err(fail(
@@ -485,15 +508,19 @@ async fn run_get(State(state): State<AppState>, Path(id): Path<String>) -> AppRe
 
 /// D9：路径参数中观众 vid 的消毒限值（长度顶与 POST 同一口径：64 宽限值上限）。
 pub const MAX_VID_PATH_CHARS: usize = 64;
-/// D9：vid 合法字符集（alnum + "_" + "-"）。B 站 uid 是数字串，demo uid 走
-/// 「demo-N」形——制表与连字符之外的一律视作穿透恶意（%2F 经 axum 解码后落此）。
-fn vid_guard(vid: &str) -> AppResult<()> {
-    let legal = !vid.is_empty()
-        && vid.len() <= MAX_VID_PATH_CHARS
-        && vid
+/// D9/W1：vid/viewer_uid 共用合法字符集——alnum + "_" + "-"。B 站 uid 是数字串，
+/// demo uid 走「demo-N」形——制表与连字符之外一律视作穿透恶意（%2F 经 axum
+/// 解码后落此；写侧 pane 同集守卫是 r2-F1 的纵深一对）。
+pub fn uid_charset_legal(id: &str, max_len: usize) -> bool {
+    !id.is_empty()
+        && id.len() <= max_len
+        && id
             .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-');
-    if !legal {
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
+fn vid_guard(vid: &str) -> AppResult<()> {
+    if !uid_charset_legal(vid, MAX_VID_PATH_CHARS) {
         return Err(fail(StatusCode::NOT_FOUND, &format!("观众 {vid} 不存在")));
     }
     Ok(())
@@ -740,6 +767,7 @@ pub fn serve(options: StartOptions) -> Result<(), String> {
             demo: options.demo,
             data_root: options.data_root,
             bilibili_hosts: options.bilibili_hosts,
+            config_write_lock: Default::default(),
         };
         let addr = SocketAddr::from(([127, 0, 0, 1], options.port));
         let listener = tokio::net::TcpListener::bind(addr)

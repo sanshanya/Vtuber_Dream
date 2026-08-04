@@ -1,5 +1,5 @@
-//! integration-test 共享剧本基建（评审5-n2：两份复制的漂移源收口）。
-//! agent_runtime.rs / agent_golden.rs 通过 `mod common;` 共用。
+//! integration-test 共享剧本基建（旧两份复制的漂移源收口）。
+//! 各集成测试文件经 `mod common;` 链入——head 注不列消费名单（列了就漂）。
 
 #![allow(dead_code)]
 

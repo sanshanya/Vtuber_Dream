@@ -188,6 +188,7 @@ async fn overview_delta_after_second_complete_run_is_non_baseline() {
         demo: true,
         data_root: Some(demo_root.clone()),
         bilibili_hosts: None,
+        config_write_lock: Default::default(),
     });
     let (status, overview) = get(&app, "/api/rooms/983/overview").await;
     assert_eq!(status, 200, "{overview}");

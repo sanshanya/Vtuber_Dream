@@ -1,8 +1,8 @@
 //! M6-A YAML_TEMPLATE 共享化：5 份测试复本单一真源（挂账消化 4）。
 //!
 //! 参数面经逐文件 diff 实测：project/name、model、cookie、api_key、base_url、
-//! 文件头注释共六处可变（见 docs/2026-08-05-m6-kickoff.md M6-A）；其余键值全同。
-//! 不建通用测试框架——仅这一份 template 生成函数（AGENTS §4）。
+//! 文件头注释共六处可变（M6-A 共享化批登记）；其余键值全同。
+//! 不建通用测试框架——仅这一份 template 生成函数（AGENTS.md 代码简化规则）。
 
 /// 单一真源模板（v6 基准，键序与 config.example.yaml 同构最小集）。
 /// 占位符：`OUTPUT_DIR` 由调用方替换成临时目录（与历史复本一致）。

@@ -60,20 +60,56 @@ pub struct Registry {
     inner: Arc<Mutex<RegistryInner>>,
 }
 
+/// W1/r3-F2：登记簿保留上限——run 记录是进程内短时热数据，常驻只增不删会缓慢膨胀；
+/// 终态记录按 started_at 从旧到新剔除至不越顶（在飞 run 永远保留，demo 快照被剔时也
+/// 不影响幂等——demo_snapshot_id 兜底重栽，见 demo_snapshot）。
+pub const RUN_RECORDS_CAP: usize = 64;
+
 impl Registry {
     pub fn new() -> Self {
         Self::default()
     }
 
     pub fn register(&self, record: RunRecord) -> Arc<Mutex<RunRecord>> {
+        // r3-F2：与 set_status/finalize 同一家纪律——状态字面只许出自 RUN_STATES。
+        debug_assert!(
+            RUN_STATES.contains(&record.status.as_str()),
+            "未登记的 run 状态字面：{}（请补入 RUN_STATES）",
+            record.status
+        );
+        let mut inner = self.inner.lock().expect("registry poisoned");
+        Self::insert_locked(&mut inner, record)
+    }
+
+    /// 已持 inner 锁的登记通道：demo_snapshot / spawn_run 的复合判定+登记共享这一根。
+    fn insert_locked(inner: &mut RegistryInner, record: RunRecord) -> Arc<Mutex<RunRecord>> {
         let shared = Arc::new(Mutex::new(record));
         let key = shared.lock().expect("record poisoned").run_id.clone();
-        self.inner
-            .lock()
-            .expect("registry poisoned")
-            .records
-            .insert(key, shared.clone());
+        inner.records.insert(key, shared.clone());
+        Self::gc_locked(inner);
         shared
+    }
+
+    /// 终态记录从旧到新剔除至不越 RUN_RECORDS_CAP；在飞 run 不参与剔除。
+    fn gc_locked(inner: &mut RegistryInner) {
+        if inner.records.len() <= RUN_RECORDS_CAP {
+            return;
+        }
+        let mut terminal: Vec<(String, String)> = inner
+            .records
+            .values()
+            .filter_map(|record| {
+                let record = record.lock().expect("record poisoned");
+                matches!(record.status.as_str(), "done" | "failed")
+                    .then(|| (record.started_at.clone(), record.run_id.clone()))
+            })
+            .collect();
+        // ISO 时间戳同形：字符串序 == 时间序。
+        terminal.sort();
+        let overflow = inner.records.len() - RUN_RECORDS_CAP;
+        for (_, run_id) in terminal.into_iter().take(overflow) {
+            inner.records.remove(&run_id);
+        }
     }
 
     pub fn get(&self, run_id: &str) -> Option<Arc<Mutex<RunRecord>>> {
@@ -83,6 +119,11 @@ impl Registry {
             .records
             .get(run_id)
             .cloned()
+    }
+
+    /// 记录总数（钉面：POST 校验副作用对账、GC 兑现验证）。
+    pub fn record_count(&self) -> usize {
+        self.inner.lock().expect("registry poisoned").records.len()
     }
 
     pub fn set_status(&self, run_id: &str, status: &str) {
@@ -113,35 +154,38 @@ impl Registry {
     }
 
     /// demo 静态快照（G3 裁决）：合成、无网络、幂等——重复 POST /api/runs 返回同一记录。
+    ///
+    /// W1/r2-F4/r3-F3：查/栽/回填必须同锁——旧实现先查后栽，两个并发 POST 能各自栽出
+    /// 一份快照并把 demo_snapshot_id 互相踩掉。快照记录若被 GC 剔走，id 兜底重栽。
     pub fn demo_snapshot(&self, outcome: Value) -> Arc<Mutex<RunRecord>> {
-        let existing = {
-            let inner = self.inner.lock().expect("registry poisoned");
-            inner.demo_snapshot_id.clone()
-        };
-        if let Some(id) = existing {
-            return self.get(&id).expect("demo snapshot registered");
+        let mut inner = self.inner.lock().expect("registry poisoned");
+        if let Some(record) = inner
+            .demo_snapshot_id
+            .as_ref()
+            .and_then(|id| inner.records.get(id))
+        {
+            return record.clone();
         }
-        let record = self.register(RunRecord {
-            run_id: format!("demo-{}", uuid::Uuid::new_v4()),
-            kind: "demo".to_string(),
-            viewer_uid: None,
-            force: false,
-            status: "done".to_string(),
-            started_at: utc_now(),
-            finished_at: Some(utc_now()),
-            outcome: Some(json!({
-                "synthetic_demo": true,
-                "state": outcome,
-            })),
-            partial: false,
-            events: Arc::new(RunEvents::new()),
-        });
-        let id = record.lock().expect("record poisoned").run_id.clone();
-        self.inner
-            .lock()
-            .expect("registry poisoned")
-            .demo_snapshot_id = Some(id);
-        record
+        let shared = Self::insert_locked(
+            &mut inner,
+            RunRecord {
+                run_id: format!("demo-{}", uuid::Uuid::new_v4()),
+                kind: "demo".to_string(),
+                viewer_uid: None,
+                force: false,
+                status: "done".to_string(),
+                started_at: utc_now(),
+                finished_at: Some(utc_now()),
+                outcome: Some(json!({
+                    "synthetic_demo": true,
+                    "state": outcome,
+                })),
+                partial: false,
+                events: Arc::new(RunEvents::new()),
+            },
+        );
+        inner.demo_snapshot_id = Some(shared.lock().expect("record poisoned").run_id.clone());
+        shared
     }
 
     /// 触发真实运行：spawn 一个普通线程（collect 是同步、pipeline 内有自身 runtime）。
@@ -169,23 +213,26 @@ impl Registry {
             }) {
                 return Err(active);
             }
-            let shared = Arc::new(Mutex::new(RunRecord {
-                run_id: uuid::Uuid::new_v4().to_string(),
-                kind: kind.to_string(),
-                viewer_uid: viewer_uid.clone(),
-                force,
-                status: "queued".to_string(),
-                started_at: utc_now(),
-                finished_at: None,
-                outcome: None,
-                partial: false,
-                events: events.clone(),
-            }));
-            let key = shared.lock().expect("record poisoned").run_id.clone();
-            inner.records.insert(key, shared.clone());
-            shared
+            Self::insert_locked(
+                &mut inner,
+                RunRecord {
+                    run_id: uuid::Uuid::new_v4().to_string(),
+                    kind: kind.to_string(),
+                    viewer_uid: viewer_uid.clone(),
+                    force,
+                    status: "queued".to_string(),
+                    started_at: utc_now(),
+                    finished_at: None,
+                    outcome: None,
+                    partial: false,
+                    events: events.clone(),
+                },
+            )
         };
-        let run_id = shared.lock().expect("record poisoned").run_id.clone();
+        let (run_id, started_at) = {
+            let record = shared.lock().expect("record poisoned");
+            (record.run_id.clone(), record.started_at.clone())
+        };
         events.push("[runs] 已经进入队列…");
 
         let registry = registry.clone();
@@ -296,7 +343,10 @@ impl Registry {
                         // partial 的数据源是 pipeline 契约键 viewer_stage_status（ag3-F1）。
                         // 注意 collect 期失败时上一轮 state 已被 collector 归档进
                         // history/snapshots，此处读到缺文件 → false，是正确语义。
-                        let stage_complete = viewer_stage_complete(&state_dir);
+                        // W1/r2-F5 时间闸：updated_at 早于本轮 started_at 的 complete
+                        // 是旧轮次底票，不算本轮数据面（baseline/pipeline 期失败时
+                        // collect 的旧 state 不再回来，窗口真实存在）。
+                        let stage_complete = viewer_stage_complete_since(&state_dir, &started_at);
                         registry.finalize(
                             &run_id,
                             "failed",
@@ -337,6 +387,25 @@ pub fn viewer_stage_complete(state_path: &std::path::Path) -> bool {
         .and_then(|state| state["viewer_stage_status"].as_str().map(str::to_string))
         .as_deref()
         == Some("complete")
+}
+
+/// W1/r2-F5：partial 判定的时间闸——state.json 的 complete 必须是「本轮」的。
+/// baseline/pipeline 期失败时 collect 前留下的旧 state.json 可能在原地侥幸带
+/// viewer_stage_status=complete；`updated_at < started_at` 即旧票，不算本轮数据面。
+/// ISO 时间戳同形：字符串序 == 时间序；缺 updated_at 按旧票处理（保守 false）。
+pub fn viewer_stage_complete_since(state_path: &std::path::Path, started_at: &str) -> bool {
+    let Some(state) = std::fs::read_to_string(state_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+    else {
+        return false;
+    };
+    if state["viewer_stage_status"].as_str() != Some("complete") {
+        return false;
+    }
+    state["updated_at"]
+        .as_str()
+        .is_some_and(|updated_at| updated_at >= started_at)
 }
 
 /// GET /api/runs/{id} 的回返形状（D3：轮询载体）。

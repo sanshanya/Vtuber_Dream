@@ -10,7 +10,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace
 ```
 
-Web 三件套（`web/` 目录）：
+Web 四件（1 安装 + 3 门；`web/` 目录）：
 
 ```bash
 npm ci
@@ -39,7 +39,14 @@ npm run build
 - 事实/推断/状态/行动四层分离——badge 调色、DTO、graph source_kind 同语言。
 - 魔数命名 + 钉（默认值、用途、测试三件套）。
 - 小步提交；修复 Bug 必须先有能复现的测试。
-- 模块边界以 AGENTS.md §5 表为准；单文件 >500 行需理由，>800 行应拆。
+- 模块边界（Rust 现状，本句自足、不外指）：
+  - `crates/live-core`：engine——采集/B 站适配/Episode/Agent 协议/图谱存储，
+    不依赖任何 HTTP server 框架；
+  - `crates/live-server`：host——axum 装配、CLI、run 注册表，消费 live-core；
+  - `web/`：React 面板，只读服务端 `/api` DTO，无第二条数据通道。
+  - 依赖方向单向：web → server → core；core 不得上吸 server/web 类型。
+  - 单文件 >500 行需在头注写明理由；>800 行同样以头注备书（拆分锚点写明），
+    没有真实依赖驱动的拆分不许为了对齐行数硬切。
 
 ## 文档边界
 

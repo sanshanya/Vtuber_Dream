@@ -47,8 +47,10 @@ export function Situ({ analysis, synthetic = false }: { analysis: SituAnalysis; 
   };
   return (
     <>
+      {/* W2/r1-F1：合成标记是「反事实」元信息，不穿 fact 层色——裸 badge 无层色。
+          四层调色只服务 事实/推断/状态/行动 的内容分层，元标记不入层。 */}
       {synthetic && (
-        <span className="badge fact" data-testid="situ-synthetic">
+        <span className="badge" data-testid="situ-synthetic">
           synthetic_demo 合成演示数据
         </span>
       )}
@@ -71,7 +73,8 @@ export function Situ({ analysis, synthetic = false }: { analysis: SituAnalysis; 
           {communities.map((item, i) => (
             <li key={`c${i}`}>
               <strong>{text(item.name, "?")}</strong>
-              <span className="badge state" style={{ margin: "0 6px" }}>
+              {/* W2/r1-F5：communities 是 audience 提交的 AI 群体推断产物 → 推断层色。 */}
+              <span className="badge ai" style={{ margin: "0 6px" }}>
                 {`观众 ${Array.isArray(item.viewer_ids) ? item.viewer_ids.length : 0}`}
               </span>
               <span className="muted">{text(item.description)}</span>

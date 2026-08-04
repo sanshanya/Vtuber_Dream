@@ -3,7 +3,7 @@
 //! 与 Python 的行为差异**仅有明示项**：
 //! 1. 不设内建重试：Python 旧实现本无重试，S0 实测 449 请求 0 风控；
 //!    延迟节流（request_delay_seconds）+ 预算记账即现有策略，重试策略待真实故障数据再议
-//!    （design M2 曾提 reqwest-retry，属预先抽象，记录后搁置——AGENTS.md §4）。
+//!    （design M2 曾提 reqwest-retry，属预先抽象，记录后搁置——AGENTS.md 代码简化规则）。
 //! 2. 测试接缝：`with_origin` 注入假根地址（生产等价路径用 `new` 直连真地址）；wiremock
 //!    负例见同目录测试。
 //!

@@ -43,4 +43,39 @@ describe("Dashboard 空态判别（ag5-F6）", () => {
     await waitFor(() => expect(screen.getByText(/磁盘只读/)).toBeTruthy());
     expect(screen.queryByText(/还没有采集数据/)).toBeNull();
   });
+
+  // W3/X2补丁钉：synthetic 徽标判定是 collection/ai/situation 任一分段析取——
+  // 单点 id=true 即亮（写位随工件周期漂移，前端不许绑定单一来源位）。
+  it("synthetic 任一分段析取：仅 ai.synthetic_demo=true 也出徽标", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        collection: { status: "complete", finished_at: "2026-08-05T00:00:00+00:00" },
+        ai: { status: "complete", synthetic_demo: true },
+        situation: {
+          status: "complete",
+          analysis: { executive_summary: "合成态势", interest_graph: [] },
+        },
+      }),
+    );
+    renderDashboard();
+    await waitFor(() => expect(screen.getByTestId("situ-synthetic")).toBeTruthy());
+  });
+
+  it("synthetic 三分段全缺席 → 不臆造徽标", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        collection: { status: "complete", finished_at: "2026-08-05T00:00:00+00:00" },
+        ai: { status: "complete" },
+        situation: {
+          status: "complete",
+          analysis: { executive_summary: "真实态势", interest_graph: [] },
+        },
+      }),
+    );
+    renderDashboard();
+    await waitFor(() => expect(screen.getByText("真实态势")).toBeTruthy());
+    expect(screen.queryByTestId("situ-synthetic")).toBeNull();
+  });
 });

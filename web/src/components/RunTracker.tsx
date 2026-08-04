@@ -74,6 +74,10 @@ export function RunTrackerProvider({ children }: { children: ReactNode }) {
     if (record.data !== undefined) setLastRecord(record.data);
   }, [record.data]);
 
+  // W2/r4-F2：active 只能反映「正在追踪」的 run——丢失后 runId=null，lastRecord
+  // 可能还停在 in-flight 帧，不能把旧帧的进行中状态当现实。
+  const active = runId !== null && isRunActive(data);
+
   // ag4-F3/ag5-F1：轮询错误显形——404 语义 = 服务重启丢 registry。
   useEffect(() => {
     if (runId !== null && record.isError) {
@@ -100,9 +104,12 @@ export function RunTrackerProvider({ children }: { children: ReactNode }) {
     }
   }, [status, queryClient]);
 
+  // W2/r4-F1：新 run 接管时旧帧必须清场——否则 record.data 未就位的那一拍，
+  // 徽标会把上一个 run 的终局帧贴到新 run 头上。
   const track = useCallback((next: string) => {
     previousStatus.current = undefined;
     setLost(null);
+    setLastRecord(undefined);
     setRunId(next);
   }, []);
   const dismissLost = useCallback(() => {
@@ -111,8 +118,8 @@ export function RunTrackerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const value = useMemo<RunTrackerValue>(
-    () => ({ runId, record: data, active: isRunActive(data), lost, track, dismissLost }),
-    [runId, data, lost, track, dismissLost],
+    () => ({ runId, record: data, active, lost, track, dismissLost }),
+    [runId, data, active, lost, track, dismissLost],
   );
   return <RunTrackerContext.Provider value={value}>{children}</RunTrackerContext.Provider>;
 }

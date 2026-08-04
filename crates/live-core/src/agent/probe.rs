@@ -117,7 +117,7 @@ const EXPECTED_TOOL_SEQUENCE: [&str; 3] = [
 /// Python `run_agent_check_async`（runtime.py:276）逐键 parity：真实端点验收——
 /// 探针定向工具序列 + 终局 Tool Call 值校验（a=7/b=14/total=21）+ 结果摘要。
 /// 调用面只许 env-gated 入口（live-audience agent-check 需 VTD_AGENT_CHECK=1，
-/// AGENTS.md §8 真实端点 opt-in）。
+/// AGENTS.md 质量门禁·真实端点 opt-in）。
 pub async fn run_agent_check_async(config: &Config) -> Result<Value, AgentRuntimeError> {
     let runtime = AgentRuntime::from_ai_config(&config.ai)?;
     let mut spec = probe_spec();

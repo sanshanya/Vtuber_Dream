@@ -1,5 +1,9 @@
 //! Agent 运行时（移植 Python `agent/runtime.py`，design §M3 协议红线）。
 //!
+//! 体积备书（r8-F2）：808 行贴 800 线——协议合约是一整块概念（终局/重试/回放/trace
+//! 四段环环相扣），按子协议拆卷会把一份协议契约撕成四散面；出 850 或协议不变量解体
+//! 时再议拆分，自然缝 = 传输层（chat 通道） vs 合约层（终局/重试状态机）。
+//!
 //! 协议契约（逐条对照 Python `run_toolcall_agent`）：
 //! - 唯一终局工具：`ctx.slot().value` 被接受即终止（final_output="accepted"）；
 //! - 普通文本提前结束 → 保留全部历史（system/user/assistant 草稿/工具调用与结果），

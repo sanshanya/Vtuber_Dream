@@ -6,7 +6,7 @@
 //! - followings/videos/dynamics/bangumi/games 走 `call_source`（1 请求/源）。
 //! - favorites 嵌套预算：folders 列表 1 请求 + 每个公开收藏夹 items 各 1 请求，逐次记账。
 //! - 错误隔离：单源失败只落 `source.status`（hidden/error），不中断观众与整体采集
-//!   （失败只影响当前工作单元，AGENTS.md §3）。
+//!   （失败只影响当前工作单元，AGENTS.md 哲学核心）。
 
 use std::collections::BTreeMap;
 use std::collections::BTreeSet;
@@ -28,6 +28,18 @@ pub(crate) mod viewer;
 use leads::{consume_approved_leads, fetch_lead_yield};
 
 pub(crate) use enrich::*;
+
+/// W1/r2-F1 文件名 uid 白名单字符集（与 live-server `uid_charset_legal` 同集，
+/// 这里独立成一条是因为 live-core 不依赖 live-server；两实现同源记事于本头注）。
+/// 单笔工作单元合法性阈值：几乎不会变的常理上界 128（大于 B 站现 uid 域与一个身位）。
+pub(crate) fn uid_file_name_legal(uid: &str) -> bool {
+    const MAX_UID_FILE_NAME_CHARS: usize = 128;
+    !uid.is_empty()
+        && uid.len() <= MAX_UID_FILE_NAME_CHARS
+        && uid
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
 pub(crate) use room::*;
 pub(crate) use viewer::*;
 
@@ -268,6 +280,13 @@ fn collect_inner(
     for (index, (_, base)) in seeds.iter().enumerate() {
         let viewer = collect_viewer(client, base, config);
         let uid = pystr(viewer.pointer("/viewer/id"));
+        // W1/r2-F1 纵深防御：落盘文件名 uid 必须是白名单字符集 [A-Za-z0-9_-]，
+        // 否则拒绝本单元（即便 server 层已拦截，collect 本身不得裸写穿透）。
+        if !uid_file_name_legal(&uid) {
+            return Err(CollectError::Message(format!(
+                "viewer id 非法（限 [A-Za-z0-9_-]）：{uid:?}"
+            )));
+        }
         storage::write_json(
             &config
                 .output_dir
@@ -387,5 +406,19 @@ mod tests {
         assert_eq!(or_chain(&[&zero, &name]), "名称");
         assert_eq!(or_chain(&[&bull, &empty, &zero]), "");
         assert_eq!(or_chain(&[&json!(2.0), &name]), "2.0"); // Python str(2.0)="2.0"
+    }
+
+    /// W1/r2-F1 文件名守卫钉：落盘 uid 只许白名单字符集——
+    /// dot-dot/内嵌斜杠/空串/超长/非 ASCII 一律拒（与 live-server uid_charset_legal 同族）。
+    #[test]
+    fn uid_file_name_legal_rejects_path_traversal() {
+        assert!(uid_file_name_legal("1003"));
+        assert!(uid_file_name_legal("demo-123_test"));
+        assert!(!uid_file_name_legal(".."));
+        assert!(!uid_file_name_legal("../escape"));
+        assert!(!uid_file_name_legal("a/b"));
+        assert!(!uid_file_name_legal("USP-中"));
+        assert!(!uid_file_name_legal(""));
+        assert!(!uid_file_name_legal(&"x".repeat(129)));
     }
 }

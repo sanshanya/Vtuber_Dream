@@ -1,6 +1,6 @@
 //! live-audience CLI（M5-B：serve + run --demo 双模式）。
 //!
-//! 参数解析与命令分发 only（AGENTS.md §5 cli.py 边界）；手写最小解析——
+//! 参数解析与命令分发 only（AGENTS.md 目标模块边界）；手写最小解析——
 //! 四个子命令（demo/agent-check/serve/run），选项集不同，不值得引入 clap。
 
 use std::path::PathBuf;
@@ -8,7 +8,7 @@ use std::process::ExitCode;
 
 const USAGE: &str = "用法: live-audience <命令>\n  demo [-c|--config <config.yaml>] [--output <目录>]  合成数据 Demo\n  agent-check [-c|--config <config.yaml>]              真实端点探针验收（opt-in：需环境变量 VTD_AGENT_CHECK=1）\n  serve [-c|--config <config.yaml>] [--port <n>]         本地服务（默认 3781）\n  run --demo [-c|--config <config.yaml>] [--port <n>]    先构建合成 Demo，再以其结果起服";
 
-/// 真实端点验收的显式开关值（AGENTS.md §8：真实端点必须 opt-in）。只认 "1"。
+/// 真实端点验收的显式开关值（AGENTS.md 质量门禁：真实端点必须 opt-in）。只认 "1"。
 pub const AGENT_CHECK_ENV: &str = "VTD_AGENT_CHECK";
 
 enum Parse {
@@ -156,7 +156,7 @@ fn main() -> ExitCode {
                 })
         }),
         Parse::AgentCheck { config } => {
-            // env 门先行：未 opt-in 时连 config 都不读（AGENTS.md §8 真实端点条款；
+            // env 门先行：未 opt-in 时连 config 都不读（AGENTS.md 质量门禁·真实端点条款；
             // 钉：agent_check_cli.rs 拒门用例给了不存在的配置路径仍报门）。
             if std::env::var(AGENT_CHECK_ENV).ok().as_deref() != Some("1") {
                 eprintln!(

@@ -15,7 +15,7 @@ use tower::ServiceExt;
 mod common;
 
 use live_server::app::{AppState, MAX_REQUEST_BODY_BYTES, MAX_VIEWER_UID_CHARS, build_app};
-use live_server::registry::{Registry, RunRecord};
+use live_server::registry::{RUN_RECORDS_CAP, Registry, RunRecord};
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -52,6 +52,7 @@ fn fixture(demo: bool, bilibili_hosts: Option<(String, String)>) -> Fixture {
         demo,
         data_root: None,
         bilibili_hosts,
+        config_write_lock: Default::default(),
     });
     Fixture {
         _tmp: tmp,
@@ -118,8 +119,34 @@ async fn runs_post_validation_battery_422() {
             "{body}"
         );
     }
-    // 校验电池不得有副作用：一个 run 都没登记。
-    assert!(fx.registry.get("nope").is_none());
+    // W3/r6 对账：副作用断言必须是「零登记」对账，不是选一个不存在的键自嗨。
+    assert_eq!(fx.registry.record_count(), 0, "校验电池不得登记任何 run");
+}
+
+/// W1/r2-F1：viewer_uid 穿透必须短路在 422 且绝不落盘——
+/// 字符集白名单 [A-Za-z0-9_-]，dot-dot/内嵌斜杠/非 ASCII 一律拒（r6 「不落盘」是证据主位）。
+#[tokio::test(flavor = "multi_thread")]
+async fn runs_post_rejects_malicious_viewer_uid_without_side_effects() {
+    let fx = fixture(false, None);
+    for uid in ["..", "../escape", "12/34", "USP-中"] {
+        let (status, body) = oneshot(
+            &fx.app,
+            "POST",
+            "/api/runs",
+            Some(json!({"kind": "viewer", "viewer_uid": uid})),
+        )
+        .await;
+        assert_eq!(status, 422, "uid={uid} → {body}");
+        assert!(
+            body["error"].as_str().unwrap_or_default().contains("非法"),
+            "错文须指向字符集守卫：{body}"
+        );
+    }
+    assert_eq!(fx.registry.record_count(), 0, "穿透拒不得登记 run");
+    assert!(
+        !fx._tmp.path().join("out").join("viewers").exists(),
+        "穿透拒不得落盘任何观众文件"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -302,6 +329,94 @@ fn viewer_stage_complete_reads_contract_key() {
         !live_server::registry::viewer_stage_complete(&state),
         "老死键幻觉姿势 → false（老读法假阳性之复现）"
     );
+}
+
+/// W1/r2-F5 时间闸钉：viewer_stage_status=complete 但 updated_at 早于本轮
+/// started_at 的是旧轮次底票——不算本轮数据面；缺 updated_at 同按旧票处理（保守）。
+#[test]
+fn viewer_stage_complete_since_rejects_stale_ticket() {
+    let tmp = tempfile::tempdir().unwrap();
+    let state = tmp.path().join("state.json");
+    std::fs::write(
+        &state,
+        r#"{"viewer_stage_status":"complete","updated_at":"2026-08-01T00:00:00+00:00"}"#,
+    )
+    .unwrap();
+    assert!(
+        !live_server::registry::viewer_stage_complete_since(&state, "2026-08-01T00:00:01+00:00"),
+        "updated_at 早于 started_at → 旧票拒"
+    );
+    assert!(
+        live_server::registry::viewer_stage_complete_since(&state, "2026-07-31T23:59:59+00:00"),
+        "updated_at 晚于 started_at → 本轮新面"
+    );
+    std::fs::write(&state, r#"{"viewer_stage_status":"complete"}"#).unwrap();
+    assert!(
+        !live_server::registry::viewer_stage_complete_since(&state, "2026-07-31T23:59:59+00:00"),
+        "缺 updated_at 按旧票处理"
+    );
+}
+
+/// W1/r3-F2：登记簿 GC——终态记录从旧到新剔除至 RUN_RECORDS_CAP；在飞记录永不剔。
+#[test]
+fn registry_gc_evicts_oldest_terminal_records_to_cap() {
+    let registry = Registry::new();
+    let seed = |suffix: &str, status: &str, started_at: &str| RunRecord {
+        run_id: format!("run-gc-{suffix}"),
+        kind: "full".to_string(),
+        viewer_uid: None,
+        force: false,
+        status: status.to_string(),
+        started_at: started_at.to_string(),
+        finished_at: None,
+        outcome: None,
+        partial: false,
+        events: Arc::new(live_core::events::RunEvents::new()),
+    };
+    registry.register(seed(
+        "old-in-flight",
+        "collecting",
+        "2026-01-01T00:00:00+00:00",
+    ));
+    let last = RUN_RECORDS_CAP + 2;
+    for index in 0..=last {
+        registry.register(seed(
+            &format!("{index:02}"),
+            "done",
+            &format!("2026-02-01T01:{:02}:{:02}+00:00", index / 60, index % 60),
+        ));
+    }
+    assert_eq!(registry.record_count(), RUN_RECORDS_CAP);
+    assert!(
+        registry.get("run-gc-old-in-flight").is_some(),
+        "在飞记录永不被剔除"
+    );
+    assert!(registry.get("run-gc-00").is_none(), "最旧终态记录被剔除");
+    assert!(
+        registry.get(&format!("run-gc-{last:02}")).is_some(),
+        "最新登记必须在场"
+    );
+}
+
+/// W1/r2-F4：demo 快照查/栽必须同锁——8 线程同时按门，落点唯一、登记一帧。
+#[test]
+fn demo_snapshot_collapses_concurrent_callers_to_one_record() {
+    let registry = Registry::new();
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let registry = registry.clone();
+            std::thread::spawn(move || registry.demo_snapshot(json!({})))
+        })
+        .collect();
+    let mut ids: Vec<String> = handles
+        .into_iter()
+        .map(|handle| handle.join().expect("thread join"))
+        .map(|record| record.lock().expect("record poisoned").run_id.clone())
+        .collect();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(ids.len(), 1, "并发 demo_snapshot 必须唯一落点：{ids:?}");
+    assert_eq!(registry.record_count(), 1);
 }
 
 /// collect 期失败时上一轮的 ai/state.json 已被 collector 归档进

@@ -25,7 +25,7 @@ export function Dashboard({ roomId }: { roomId: string }) {
       <section className="section card">
         <h2>房间面板</h2>
         <div className="notice">
-          {missing ? "还没有采集数据——用页面右上角的「触发全量感知」跑一轮：" : message}
+          {missing ? "还没有采集数据——用页面顶部页头的「触发全量感知」跑一轮。" : message}
         </div>
       </section>
     );
@@ -63,7 +63,7 @@ export function Dashboard({ roomId }: { roomId: string }) {
         {cost !== null && (
           <p className="muted small">
             最近运行估算花费：{fmtCny(cost)}（上限估算：按缓存未命中费率折算，见
-            <code>src/constants.ts</code> 价目）· LLM 请求 {fmtInt(usage?.llm_requests)} 次 ·
+            <code>web/src/constants.ts</code> 价目）· LLM 请求 {fmtInt(usage?.llm_requests)} 次 ·
             工具调用 {fmtInt(usage?.tool_calls)} 次
           </p>
         )}

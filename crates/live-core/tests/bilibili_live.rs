@@ -1,4 +1,4 @@
-//! 真实端点 opt-in smoke（AGENTS.md §8：真实端点测试必须显式 opt-in，
+//! 真实端点 opt-in smoke（AGENTS.md 质量门禁：真实端点测试必须显式 opt-in，
 //! 永不进入 `cargo test --workspace` 默认门禁——本文件全部用例 `#[ignore]`）。
 //!
 //! 运行：

@@ -44,12 +44,28 @@ describe("Situ 四层 badge（ag1-F1：计数与逐项同层）", () => {
     expect(block.textContent).toContain("观众 2");
   });
 
+  it("W3/r1-F5：communities 是 AI 群体推断产物——计数徽标类名钉 badge ai", () => {
+    render(<Situ analysis={ANALYSIS} />);
+    const block = screen.getByTestId("situ-communities");
+    const countBadge = block.querySelector("span.badge");
+    expect(countBadge?.className).toBe("badge ai");
+  });
+
   it("synthetic=true → synthetic_demo 徽标显形；默认不显", () => {
     const { unmount } = render(<Situ analysis={ANALYSIS} />);
     expect(screen.queryByTestId("situ-synthetic")).toBeNull();
     unmount();
     render(<Situ analysis={ANALYSIS} synthetic />);
     expect(screen.getByTestId("situ-synthetic").textContent).toContain("synthetic_demo");
+  });
+
+  it("W3/r1-F1：合成标记是反事实元信息——裸 badge 不带四层类名", () => {
+    render(<Situ analysis={ANALYSIS} synthetic />);
+    const badge = screen.getByTestId("situ-synthetic");
+    expect(badge.className).toBe("badge");
+    for (const layer of ["fact", "ai", "state", "action"]) {
+      expect(badge.className).not.toContain(layer);
+    }
   });
 
   it("ag4-F6：键值漂移成对象不炸，落在护栏默认位", () => {

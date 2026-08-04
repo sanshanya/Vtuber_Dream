@@ -5,7 +5,7 @@
 //! 本节只到：**normalize 集 + _status/_content_id/_brief/collect_text**（负扫描：`profile` 误差完全不加掩盖上限，
 //! `games` 无 id 规律化，Python 索引函数 `if_empty(index)` 保留英文化英文）。
 //!
-//! 哲学红线（AGENTS.md §2.1）：AI 毒探搜索委托给 `bilibili.rs`/`runtime.rs`，本模块只做**原样重组**
+//! 哲学红线（AGENTS.md「AI-first，但不是 AI-only」）：AI 毒探搜索委托给 `bilibili.rs`/`runtime.rs`，本模块只做**原样重组**
 //! 公开字段，不进行任何语义推断。
 
 use serde_json::Value;

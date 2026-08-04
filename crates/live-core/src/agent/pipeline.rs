@@ -1,5 +1,9 @@
 //! AudienceAnalysisAgent 编排（移植 `agent/pipeline.py`；Peer 链挂 G2）。
 //!
+//! 体积备书（r8-F2）：1439 行超 800 行拆分线——但本卷是 Python parity 逐段对照面，
+//! golden 对账按段定位（M4-A..M4-D 段标题与 tests/fixtures 同名），拆卷会打断
+//! 「Python 旧实现即预言机」的坐标系。G2/后议再拆，拆分锚 = Python 顶层函数边界。
+//!
 //! M4-A 先落输入小件：`stable_hash` / `aggregate_runtime_usage` / `viewer_input_bundle` /
 //! `compact_interest_state` / `build_audience_input`（两级封顶闸门）。
 //! golden 对账：tests/pipeline_inputs.rs × tests-fixtures/m4a/（Python 实算）。

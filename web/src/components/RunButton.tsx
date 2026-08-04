@@ -51,15 +51,18 @@ export function RunButton() {
         <span className={`badge run-status-${data.status}`} title={partialTitle(data)}>
           {data.status}
           {data.partial ? "(partial)" : ""}
+          {/* W2/r1-F3：demo 快照与真实 done 逐像素同形是合成诡装真实——明示合成。 */}
+          {data.kind === "demo" ? "（synthetic_demo 合成演示）" : ""}
         </span>
       )}
       {tracker.lost && (
+        // W2/r5-F2：dismiss 不能靠悬停 tooltip 藏——可见 × 是丢链的唯一显式出路。
         <button
           className="badge danger"
-          title="点击消除"
+          title="点击消除提示"
           onClick={() => tracker.dismissLost()}
         >
-          {tracker.lost}
+          {tracker.lost} ×
         </button>
       )}
       {outcomeError && <span className="badge danger">{outcomeError}</span>}

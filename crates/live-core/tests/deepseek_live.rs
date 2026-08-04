@@ -1,5 +1,5 @@
 //! M3-D 真实端点 smoke（显式 opt-in）：不设 `VTD_DEEPSEEK_KEY` 即跳过，绝不成为
-//! 普通单元测试依赖（AGENTS.md §8 真实端点条款）。
+//! 普通单元测试依赖（AGENTS.md 质量门禁·真实端点条款）。
 //!
 //! 剧本 = Python agent-check 同型：probe 三工具（seed→multiply→terminal submit）。
 //! 断言面：终局接受 a=7/b=14/total=21。reasoning 回放的请求体字段级钉在 wiremock
