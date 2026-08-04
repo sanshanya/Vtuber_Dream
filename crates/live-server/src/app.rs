@@ -2,9 +2,10 @@
 //!
 //! 与安全面相干的所有魔数就地命名（kickoff 完成定义 5）。
 //!
-//! 体积备书（r8-F2/ag8-F3）：780 行贴 800 线——端点表面是单房间小 API（十条路由），
-//! 共享同一套 DTO/错误形态/闸限；拆出 handler 子卷会把「端点表 ↔ 路由表」一眼对照
-//! 打散。出现第二房间形态（多房间真实依赖）时按 rooms/config/runs 三卷拆分。
+//! 体积备书（r8-F2/ag8-F3，G1 维护缝后约 1040 行已破 800 线）：端点表面是单房间
+//! 小 API（十二条路由），共享同一套 DTO/错误形态/闸限；拆出 handler 子卷会把
+//! 「端点表 ↔ 路由表」一眼对照打散。出现第二房间形态（多房间真实依赖）时按
+//! rooms/config/runs 三卷拆分——maintenance 两路由是同房间形态，不触发拆分。
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -129,6 +130,14 @@ pub fn build_app(state: AppState) -> Router {
         .route("/rooms/:uid/viewers/:vid/graph", get(viewer_graph))
         .route("/rooms/:uid/graph", get(room_graph))
         .route("/rooms/:uid/leads/:lead_id/approve", post(lead_approve))
+        .route(
+            "/rooms/:uid/maintenance/entity_split",
+            post(maintenance_entity_split),
+        )
+        .route(
+            "/rooms/:uid/maintenance/entity_merge",
+            post(maintenance_entity_merge),
+        )
         .route("/config", get(config_get).put(config_put))
         .route("/runs", axum::routing::post(runs_post))
         .route("/runs/:id", get(run_get))
@@ -588,10 +597,21 @@ async fn room_overview(
     if collection.get("leads_consumed").is_none() {
         collection["leads_consumed"] = json!(0);
     }
-    let rows = live_core::leads::read_ledger(&live_core::leads::ledger_path(&root));
+    let store = open_graph(&root);
+    // G2 表形态（design §9.2 行 254）：leads 读面唯一源 = discovery_leads 表。
+    // 库在而旧 JSONL 仍在 → 此处一次性入库归档（幂等迁移的读面触点；守卫失败
+    // 即 500 响铃，绝不带病半账出面）。无库 → 空集合（M4.x 无账本的同义面）。
+    let rows = match &store {
+        Some(store) => {
+            live_core::leads::migrate_jsonl(store, &root)
+                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
+            live_core::leads::read_rows(store)
+                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?
+        }
+        None => Vec::new(),
+    };
     let count =
         |status: live_core::leads::LeadStatus| rows.iter().filter(|r| r.status == status).count();
-    let store = open_graph(&root);
     let delta = match &store {
         Some(store) => live_core::graph::query::run_pair_delta(store)
             .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
@@ -754,13 +774,15 @@ async fn room_graph(
 
 /// `lead_id` = 账本行 `dedupe_key`（身份：`(type, locator)` 的 hash；16hex）。
 ///
+/// G2 表形态（design §9.2 行 254）：账面 = discovery_leads 表；先一次性把旧
+/// JSONL 账本入库归档（幂等迁移的写面触点），随后全链路只碰表。
 /// 状态机单行道 `pending_approval → approved`（live_core::leads::approve_transition
 /// 唯一裁决点）：
-/// - 正常翻转：守卫读 → 改行 → `rewrite_ledger` tmp+rename 受控落盘；
-/// - 幂等重放：已 approved → 200 相同终态，账本字节不动（不重写不增行）；
+/// - 正常翻转：读行 → 改状态 → `update_lead_row` 受控落库；
+/// - 幂等重放：已 approved → 200 相同终态，表行不动；
 /// - 不存在（lead_id 未知 / 房间错 / 穿透形 id）→ 404（D3 错误形态）；
 /// - 非法迁移（consumed/rejected/deferred 源态）→ 422，错文讲规则 + 当前状态；
-/// - MXA-1 延伸：账本含坏行（守卫读 Err）→ 500 响铃，绝不带病重写。
+/// - MXA-1 延伸：账本迁移守卫失败（旧 JSONL 含坏行）→ 500 响铃，绝不带病写。
 async fn lead_approve(
     State(state): State<AppState>,
     Path((uid, lead_id)): Path<(String, String)>,
@@ -775,26 +797,186 @@ async fn lead_approve(
         ));
     }
     let root = data_root(&state)?;
-    let mut rows = live_core::leads::read_ledger_guarded(&live_core::leads::ledger_path(&root))
+    // 写面端点：图库缺席则建仓（首触即 v7 schema；与纯读路径的「不建文件」纪律分野）。
+    let store_path = root.join("graph").join("perception.sqlite3");
+    let store = live_core::graph::store::Store::open(&store_path)
         .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
-    let Some(index) = rows.iter().position(|row| row.dedupe_key == lead_id) else {
+    live_core::leads::migrate_jsonl(&store, &root)
+        .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
+    let Some(mut row) = store
+        .lead_row(&lead_id)
+        .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?
+    else {
         return Err(fail(
             StatusCode::NOT_FOUND,
             &format!("lead {lead_id} 不存在"),
         ));
     };
-    let changed = live_core::leads::approve_transition(rows[index].status)
+    let changed = live_core::leads::approve_transition(row.status)
         .map_err(|message| fail(StatusCode::UNPROCESSABLE_ENTITY, &message))?;
     if changed {
-        rows[index].status = live_core::leads::LeadStatus::Approved;
-        live_core::leads::rewrite_ledger(&root, &rows)
+        row.status = live_core::leads::LeadStatus::Approved;
+        store
+            .update_lead_row(&row)
             .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
     }
     Ok(Json(json!({
-        "dedupe_key": rows[index].dedupe_key,
-        "status": live_core::leads::status_name(rows[index].status),
+        "dedupe_key": row.dedupe_key,
+        "status": live_core::leads::status_name(row.status),
         // 为幂等重放留可观测位：终态（dedupe_key/status）恒定，仅动作位分野。
         "changed": changed,
+    })))
+}
+
+// ---------------------------------------------------------------------------
+// 图维护缝（G1 / design §8.6 行 224-229）：
+// POST /api/rooms/:uid/maintenance/entity_split|entity_merge
+// ---------------------------------------------------------------------------
+
+use live_core::graph::store::{MaintenanceError, Store as GraphStore};
+
+/// 维护缝的开库点：无图 = 404（写路径不得靠 Store::open 顺手建空库）。
+fn maintenance_store(root: &std::path::Path) -> AppResult<GraphStore> {
+    open_graph(root).ok_or_else(|| {
+        fail(
+            StatusCode::NOT_FOUND,
+            "图尚未落盘——先跑过 Audience 阶段再维护",
+        )
+    })
+}
+
+/// MaintenanceError → D3 错误形态：未知实体/mention=404，参数/归属语义=422，落库=500。
+fn maintenance_fail(error: MaintenanceError) -> AppFail {
+    match error {
+        MaintenanceError::NotFound(message) => fail(StatusCode::NOT_FOUND, &message),
+        MaintenanceError::Invalid(message) => fail(StatusCode::UNPROCESSABLE_ENTITY, &message),
+        MaintenanceError::Store(error) => {
+            fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
+        }
+    }
+}
+
+/// 必带非空字符串成员（缺键/空串/非字符串 → 422）。
+fn required_str<'a>(object: &'a serde_json::Map<String, Value>, key: &str) -> AppResult<&'a str> {
+    match object.get(key).and_then(Value::as_str).map(str::trim) {
+        Some(value) if !value.is_empty() => Ok(value),
+        _ => Err(fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &format!("{key} 必须是非空字符串"),
+        )),
+    }
+}
+
+/// 必带非空字符串数组（缺键/非数组/空数组/成员不是非空字符串 → 422）。
+fn required_str_list(object: &serde_json::Map<String, Value>, key: &str) -> AppResult<Vec<String>> {
+    let Some(array) = object.get(key).and_then(Value::as_array) else {
+        return Err(fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &format!("{key} 必须是非空字符串数组"),
+        ));
+    };
+    if array.is_empty() {
+        return Err(fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &format!("{key} 不能为空数组"),
+        ));
+    }
+    let mut out = Vec::with_capacity(array.len());
+    for item in array {
+        match item.as_str().map(str::trim) {
+            Some(value) if !value.is_empty() => out.push(value.to_string()),
+            _ => {
+                return Err(fail(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    &format!("{key} 的每一项必须是非空字符串"),
+                ));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// 响应幂等键的回显与 store 的 canon 同齿（排序去重；审计与重放以集合为身份）。
+fn echo_canon(mut ids: Vec<String>) -> Vec<String> {
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+/// run_id 空串 = 重放且原账不可考（理论面：detail 扫描脱靶）——响应对外为 null。
+fn run_id_json(run_id: &str) -> Value {
+    if run_id.is_empty() {
+        Value::Null
+    } else {
+        Value::String(run_id.to_string())
+    }
+}
+
+/// `POST /api/rooms/:uid/maintenance/entity_split`
+/// 体：`{"entity_id": "...", "mention_ids": ["...", ...]}`。
+/// 幂等（§8.6 行 229）：同参重放 = 同终态（changed=false、run_id 指回原始维护
+/// run、不增生账）；不属该实体的 mention 显式 422，未知实体/mention 404。
+async fn maintenance_entity_split(
+    State(state): State<AppState>,
+    Path(uid): Path<String>,
+    JsonBody(body): JsonBody<Value>,
+) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    let store = maintenance_store(&data_root(&state)?)?;
+    let object = body.as_object().ok_or_else(|| {
+        fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "维护操作体必须是 JSON 对象",
+        )
+    })?;
+    let entity_id = required_str(object, "entity_id")?;
+    let mention_ids = required_str_list(object, "mention_ids")?;
+    let outcome = store
+        .entity_split(entity_id, &mention_ids)
+        .map_err(maintenance_fail)?;
+    Ok(Json(json!({
+        "op": "entity_split",
+        "entity_id": entity_id,
+        "mention_ids": echo_canon(mention_ids),
+        "new_entity_id": outcome.new_entity_id,
+        "moved_mentions": outcome.moved_mentions,
+        "closed_edges": outcome.closed_edges,
+        "changed": outcome.changed,
+        "run_id": run_id_json(&outcome.run_id),
+    })))
+}
+
+/// `POST /api/rooms/:uid/maintenance/entity_merge`
+/// 体：`{"source_ids": ["..."], "target_id": "..."}`。幂等同 split 缝。
+async fn maintenance_entity_merge(
+    State(state): State<AppState>,
+    Path(uid): Path<String>,
+    JsonBody(body): JsonBody<Value>,
+) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    let store = maintenance_store(&data_root(&state)?)?;
+    let object = body.as_object().ok_or_else(|| {
+        fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "维护操作体必须是 JSON 对象",
+        )
+    })?;
+    let source_ids = required_str_list(object, "source_ids")?;
+    let target_id = required_str(object, "target_id")?;
+    let outcome = store
+        .entity_merge(&source_ids, target_id)
+        .map_err(maintenance_fail)?;
+    Ok(Json(json!({
+        "op": "entity_merge",
+        "source_ids": echo_canon(source_ids),
+        "target_id": target_id,
+        "repointed_edges": outcome.repointed_edges,
+        "folded_edges": outcome.folded_edges,
+        "merged_aliases": outcome.merged_aliases,
+        "changed": outcome.changed,
+        "run_id": run_id_json(&outcome.run_id),
     })))
 }
 

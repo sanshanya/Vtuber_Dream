@@ -512,11 +512,12 @@ fn write_state(path: &Path, fields: Value) -> Result<(), PipelineError> {
     storage::write_json(path, &fields).map_err(PipelineError::Storage)
 }
 
-/// M4.x kickoff D4：leads 账本摘要注入用户消息（hash 之外——账本漂移不是
-/// Python parity 的输入身份，缓存有效性不因此失效；登记 design-Δ）。
-/// 账本为空则零面世（首跑提示面与 M4 逐字节一致）。
-fn ledger_annex(output_dir: &Path, viewer: Option<&str>, prompt: String) -> String {
-    let rows = leads::read_ledger(&leads::ledger_path(output_dir));
+/// M4.x kickoff D4 → G2 表形态（design §9.2 行 254）：leads 账本摘要注入用户消息
+///（hash 之外——账本漂移不是 Python parity 的输入身份，缓存有效性不因此失效；
+/// 登记 design-Δ）。数据源 = discovery_leads 表；账本为空则零面世（首跑提示面
+/// 与 M4 逐字节一致）。读库失败 → 吞纳零面世（annex 是上下文增益面，不绊管线）。
+fn ledger_annex(store: &Store, viewer: Option<&str>, prompt: String) -> String {
+    let rows = leads::read_rows(store).unwrap_or_default();
     if rows.is_empty() {
         return prompt;
     }
@@ -727,11 +728,7 @@ async fn run_one_viewer(
         "submit_viewer_perception",
         "live_core::models::ViewerPerceptionSubmission",
     );
-    let prompt = ledger_annex(
-        &config.output_dir,
-        Some(&uid),
-        viewer_user_prompt(&input_payload),
-    );
+    let prompt = ledger_annex(&store, Some(&uid), viewer_user_prompt(&input_payload));
     let mut ctx = ViewerAgentCtx {
         viewer_data: context_data,
         episodes,
@@ -924,6 +921,7 @@ async fn run_audience_stage(
         Ok(store) => store,
         Err(err) => return (Err(PipelineError::Store(err)), research),
     };
+    let prompt = ledger_annex(&store, None, audience_user_prompt(&input));
     let mut ctx = AudienceAgentCtx {
         viewer_analyses: viewer_map.clone(),
         research,
@@ -931,7 +929,6 @@ async fn run_audience_stage(
         graph_run_id: None,
         slot: Default::default(),
     };
-    let prompt = ledger_annex(&config.output_dir, None, audience_user_prompt(&input));
     let started = std::time::Instant::now();
     let outcome = run_toolcall_agent::<AudienceAgentCtx, AudienceSituationSubmission>(
         runtime,
@@ -1239,6 +1236,11 @@ async fn run_pipeline_inner(
         Ok(store) => store,
         Err(err) => bail!(PipelineError::Store(err)),
     };
+    // G2（design §9.2 行 254）：M4.x JSONL 账本一次性入库 + 归档 .bak（幂等；
+    // 守卫失败响铃不绊管线——publish 读取面以表为准，迁移下轮再试。
+    if let Err(err) = leads::migrate_jsonl(&store, &config.output_dir) {
+        progress_say(knobs, &format!("[LEADS] 旧 JSONL 账本入库迁移失败：{err}"));
+    }
     let run_id = match store.begin_run(&config.ai.model) {
         Ok(run_id) => run_id,
         Err(err) => bail!(PipelineError::Store(err)),
@@ -1390,15 +1392,10 @@ async fn run_pipeline_inner(
         viewer_submissions.insert(uid.clone(), analysis);
         // M4.x kickoff D3：Ok/Reused 双臂在 apply 成功点汇流——账本补写幂等，
         // 缓存命中路径同样补账（首跑中断后恢复不丢账）。
+        // G2 表形态（design §9.2）：dedication 表 OR IGNORE 幂等，唯一键即 dedupe_key。
         // MXA-4（r6 驳 D7「无通道」前提）：fail-open 保持但响铃——
         // 线索无痕蒸发 ≠ 豁免项。
-        if let Err(err) = leads::record_leads(
-            &config.output_dir,
-            uid,
-            &run_id,
-            &utc_now(),
-            &submission.leads,
-        ) {
+        if let Err(err) = leads::record_leads(&store, uid, &run_id, &utc_now(), &submission.leads) {
             progress_say(knobs, &format!("[LEADS] 观众 {uid} 账本写入失败：{err}"));
         }
         if let Some(checkpoint) = knobs.checkpoint.as_deref_mut() {
@@ -1541,10 +1538,10 @@ async fn run_pipeline_inner(
         if let Err(err) = build::apply_audience_submission(&store, &run_id, &audience_submission) {
             bail!(PipelineError::Store(err));
         }
-        // M4.x：audience leads 以 AUDIENCE_VIEWER_ID 入账（apply 成功后，同 viewer 纪律）。
-        // MXA-4：fail-open 保持但响铃。
+        // M4.x → G2 表形态：audience leads 以 AUDIENCE_VIEWER_ID 入账
+        //（apply 成功后，同 viewer 纪律）。MXA-4：fail-open 保持但响铃。
         if let Err(err) = leads::record_leads(
-            &config.output_dir,
+            &store,
             leads::AUDIENCE_VIEWER_ID,
             &run_id,
             &utc_now(),

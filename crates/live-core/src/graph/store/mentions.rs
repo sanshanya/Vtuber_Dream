@@ -11,6 +11,17 @@ impl Store {
     // --------------------------------------------------------------- episode
 
     pub fn upsert_episode(&self, episode: &Episode) -> Result<()> {
+        self.upsert_episode_inner(episode, None)
+    }
+
+    /// G2（design §8.4/§9.2）：线索出产的 Episode 带 lead_id（→discovery_leads
+    /// 外键，溯源链「线索 → episode」）。非线索出产照旧 None——episodes.lead_id
+    /// 列 NULL。幂等复检臂（同 id 同 hash 只刷 last_seen）绝不触碰既有挂链。
+    pub fn upsert_episode_with_lead(&self, episode: &Episode, lead_id: Option<&str>) -> Result<()> {
+        self.upsert_episode_inner(episode, lead_id)
+    }
+
+    fn upsert_episode_inner(&self, episode: &Episode, lead_id: Option<&str>) -> Result<()> {
         let now = self.now();
         let fields_value = Value::Array(episode.fields.iter().map(EpisodeField::to_json).collect());
         let content_hash = hash_parts(
@@ -51,8 +62,8 @@ impl Store {
         self.conn.execute(
             "INSERT INTO episodes(\
                episode_id,viewer_id,source,event_type,observed_at,published_at,title,url,bvid,\
-               fields_json,platform_facts_json,content_hash,first_seen_at,last_seen_at) \
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+               fields_json,platform_facts_json,content_hash,first_seen_at,last_seen_at,lead_id) \
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
             params![
                 episode.episode_id,
                 episode.viewer_id,
@@ -67,7 +78,8 @@ impl Store {
                 json_canon(&episode.platform_facts),
                 content_hash,
                 now,
-                now
+                now,
+                lead_id
             ],
         )?;
         Ok(())

@@ -94,11 +94,15 @@ fn project_demo_matches_python_golden() {
         .as_object_mut()
         .unwrap()
         .remove("stats_clock_field");
-    // 豁免清单（kickoff 风险 ②）：时钟字段；schema_version 是 M1 既定修订
-    // （Python 库 v5 / Rust v6 属并行 bump，非导出行为差异——钉 Rust 恒发 6）。
+    // 豁免清单（kickoff 风险 ②）：时钟字段；schema_version 是并行 bump
+    //（Python 库 v5 / Rust GRAPH_SCHEMA_VERSION 属版本面，非导出行为差异）——
+    // 钉 Rust 恒发当前 schema 版（读面与库内常量合轴，不刻字面）。
     built["generated_at"] = Value::Null;
     expected["generated_at"] = Value::Null;
-    assert_eq!(built["schema_version"], Value::from(6));
+    assert_eq!(
+        built["schema_version"],
+        Value::from(live_core::graph::GRAPH_SCHEMA_VERSION)
+    );
     expected["schema_version"] = Value::Null;
     built["schema_version"] = Value::Null;
     // 分节对比 + 首节内首个差异项定位（全量 diff 输出不可读）。

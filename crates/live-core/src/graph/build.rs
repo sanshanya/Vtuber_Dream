@@ -11,7 +11,7 @@
 use serde_json::{Map, Value};
 
 use crate::episodes::{Episode, hash_parts, json_canon, py_str_int};
-use crate::graph::store::{Result, Store, StoreError, mention_id_of};
+use crate::graph::store::{Result, Store, StoreError, mention_id_of, with_savepoint};
 use crate::models::{
     AudienceSituationSubmission, ViewerPerceptionSubmission, confidence_word_score,
 };
@@ -300,29 +300,6 @@ fn resolve_evidence(
 // ---------------------------------------------------------------------------
 // 观众提交应用
 // ---------------------------------------------------------------------------
-
-/// SAVEPOINT 包裹一次提交：成功 RELEASE（autocommit 顶层即 COMMIT）；
-/// 失败 ROLLBACK TO + RELEASE，中断只影响当前提交单元，重跑幂等（模块头注释口径）。
-fn with_savepoint(name: &str, store: &Store, apply: impl FnOnce() -> Result<()>) -> Result<()> {
-    store.conn.execute_batch(&format!("SAVEPOINT {name}"))?;
-    match apply() {
-        Ok(()) => {
-            store
-                .conn
-                .execute_batch(&format!("RELEASE SAVEPOINT {name}"))?;
-            Ok(())
-        }
-        Err(err) => {
-            let _ = store
-                .conn
-                .execute_batch(&format!("ROLLBACK TO SAVEPOINT {name}"));
-            let _ = store
-                .conn
-                .execute_batch(&format!("RELEASE SAVEPOINT {name}"));
-            Err(err)
-        }
-    }
-}
 
 pub fn apply_viewer_submission(
     store: &Store,

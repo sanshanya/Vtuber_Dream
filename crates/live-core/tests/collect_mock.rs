@@ -693,9 +693,10 @@ async fn single_viewer_failure_preserves_collection_json_gate() {
     );
 }
 
-/// R2-F 的尾段消费闸回归钉：单查模式不得消费已批准线索——无论
-/// lead_fetch_budget_per_run 多大，pre-planted approved 行字节级原样，
-/// 搜索消费端点零请求，summary 不面世 leads_consumed。
+/// R2-F 的尾段消费闸回归钉（G2 表形态）：单查模式不得消费已批准线索——无论
+/// lead_fetch_budget_per_run 多大，表中 pre-planted approved 行逐字段原样，
+/// 搜索消费端点零请求，summary 不面世 leads_consumed；旧 JSONL 账本同样
+/// 不被迁移触碰（单查不动账本是闸门级纪律）。
 #[tokio::test(flavor = "multi_thread")]
 async fn single_viewer_does_not_consume_leads() {
     let server = MockServer::start().await;
@@ -711,7 +712,7 @@ async fn single_viewer_does_not_consume_leads() {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
 
-    // 预置账本：1 条 approved（单查不应碰）
+    // 预置表账：1 条 approved（单查不应碰）
     let row = live_core::leads::LedgerRow {
         dedupe_key: "key-single-no-consum".into(),
         lead_type: "search".into(),
@@ -727,6 +728,12 @@ async fn single_viewer_does_not_consume_leads() {
         yield_count: 0,
         resolution_note: String::new(),
     };
+    let store =
+        live_core::graph::store::Store::open(&root.join("graph/perception.sqlite3")).unwrap();
+    store.begin_run_fixed("run:a", "t0", "m").unwrap();
+    store.insert_lead_rows(&[&row], true).unwrap();
+    drop(store);
+    // 预置旧 JSONL 账本（同一行内容）：单查不得触发迁移（R2-F3 闸门——不动账本）
     let ledger_text = format!("{}\n", serde_json::to_string(&row).unwrap());
     std::fs::write(root.join("leads.jsonl"), &ledger_text).unwrap();
 
@@ -746,12 +753,21 @@ async fn single_viewer_does_not_consume_leads() {
     .expect("task join")
     .expect("collect ok");
 
-    // 账本字节级原样：approved 行未被消费
+    // 表账逐字段原样：approved 行未被消费
+    let store =
+        live_core::graph::store::Store::open(&root.join("graph/perception.sqlite3")).unwrap();
+    assert_eq!(
+        live_core::leads::read_rows(&store).unwrap(),
+        vec![row.clone()],
+        "单查不得消费已批准线索（预算>0 也要停火）"
+    );
+    // 旧 JSONL 原样：迁移与归档都不发生
     assert_eq!(
         std::fs::read_to_string(root.join("leads.jsonl")).unwrap(),
         ledger_text,
-        "单查不得消费已批准线索（预算>0 也要停火）"
+        "单查不得触碰旧账本（迁移闸门同纪律）"
     );
+    assert!(!root.join("leads.jsonl.bak").exists(), "单查不得归档账本");
     // summary/collection 均不面世 leads_consumed
     assert!(
         summary.get("leads_consumed").is_none(),
@@ -839,7 +855,31 @@ async fn room_comment_budget_zero_disables_points_without_requests() {
 // MXA-10（r3-F3 / r5-F2 / r7-环-1）：M4.x 消费环集成钉——approved 账本 +
 // budget=1 + wiremock 假搜索面 → 尾段消费写回 + leads_consumed 键 +
 // request_count 不漏报。
+// G2 表形态（design §9.2 行 254）：账本 = discovery_leads 表；旧 JSONL 在
+// collect 尾段一次性 migrate_jsonl 入库 + 归档 .bak。
 // ---------------------------------------------------------------------------
+
+/// 旧 JSONL 形态置账（含 first_seen_run_id 外键锚的最小事实面）。
+fn seed_legacy_jsonl(root: &Path, rows: &[live_core::leads::LedgerRow]) {
+    let store = live_core::graph::store::Store::open(&root.join("graph/perception.sqlite3"))
+        .expect("store opens");
+    store.begin_run_fixed("run:a", "t0", "m").unwrap();
+    drop(store);
+    let text = rows
+        .iter()
+        .map(|r| serde_json::to_string(r).unwrap())
+        .collect::<Vec<_>>()
+        .join("\n")
+        + "\n";
+    std::fs::write(live_core::leads::ledger_path(root), text).unwrap();
+}
+
+/// 表形态读回（写账序）。
+fn table_rows(root: &Path) -> Vec<live_core::leads::LedgerRow> {
+    let store = live_core::graph::store::Store::open(&root.join("graph/perception.sqlite3"))
+        .expect("store opens");
+    live_core::leads::read_rows(&store).expect("rows read")
+}
 
 #[tokio::test(flavor = "multi_thread")]
 async fn collect_tail_consumes_approved_leads_and_recounts_requests() {
@@ -877,22 +917,21 @@ async fn collect_tail_consumes_approved_leads_and_recounts_requests() {
             resolution_note: String::new(),
         }
     };
-    let ledger_text = format!(
-        "{}\n{}\n",
-        serde_json::to_string(&mk_row(
-            "search",
-            "异环 实机",
-            live_core::leads::LeadStatus::Approved
-        ))
-        .unwrap(),
-        serde_json::to_string(&mk_row(
-            "video",
-            "BVpending",
-            live_core::leads::LeadStatus::PendingApproval
-        ))
-        .unwrap()
+    seed_legacy_jsonl(
+        root,
+        &[
+            mk_row(
+                "search",
+                "异环 实机",
+                live_core::leads::LeadStatus::Approved,
+            ),
+            mk_row(
+                "video",
+                "BVpending",
+                live_core::leads::LeadStatus::PendingApproval,
+            ),
+        ],
     );
-    std::fs::write(root.join("leads.jsonl"), ledger_text).unwrap();
 
     let base = server.uri();
     let mut config = test_config(root, 12);
@@ -915,8 +954,15 @@ async fn collect_tail_consumes_approved_leads_and_recounts_requests() {
         "消费请求必须计入 request_count"
     );
 
+    // 迁移确证：旧 JSONL 已一次性入库并归档（可回滚本在场）
+    assert!(
+        !live_core::leads::ledger_path(root).exists(),
+        "collect 尾段须完成一次性迁移"
+    );
+    assert!(root.join("leads.jsonl.bak").exists(), "归档 .bak 必须在场");
+
     // 账本写回：approved → consumed（yield=3）；pending 行原样不动
-    let rows = live_core::leads::read_ledger(&root.join("leads.jsonl"));
+    let rows = table_rows(root);
     assert_eq!(rows.len(), 2, "账本行数不变");
     let consumed_row = rows
         .iter()
@@ -981,25 +1027,21 @@ async fn l1_autonomy_auto_approves_and_consumes_new_creator() {
     mount_baseline(&server).await;
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    std::fs::write(
-        root.join("leads.jsonl"),
-        format!(
-            "{}\n{}\n",
-            serde_json::to_string(&leads_row(
+    seed_legacy_jsonl(
+        root,
+        &[
+            leads_row(
                 "creator",
                 "3001",
-                live_core::leads::LeadStatus::PendingApproval
-            ))
-            .unwrap(),
-            serde_json::to_string(&leads_row(
+                live_core::leads::LeadStatus::PendingApproval,
+            ),
+            leads_row(
                 "video",
                 "BVpending",
-                live_core::leads::LeadStatus::PendingApproval
-            ))
-            .unwrap()
-        ),
-    )
-    .unwrap();
+                live_core::leads::LeadStatus::PendingApproval,
+            ),
+        ],
+    );
 
     let base = server.uri();
     let mut config = test_config(root, 12);
@@ -1018,7 +1060,7 @@ async fn l1_autonomy_auto_approves_and_consumes_new_creator() {
 
     // 链闭合：自动批准 → 预算消费 → consumed + yield 落袋
     assert_eq!(summary["leads_consumed"], 1, "{summary}");
-    let rows = live_core::leads::read_ledger(&root.join("leads.jsonl"));
+    let rows = table_rows(root);
     assert_eq!(rows.len(), 2, "账本行数不变");
     let creator = rows
         .iter()
@@ -1062,7 +1104,8 @@ async fn l1_autonomy_auto_approves_and_consumes_new_creator() {
 }
 
 /// L0 一字不动：默认 autonomy=0（不显式设置）即使预算>0，pending 行也原样
-/// 保留、零消费请求、summary 不面世 leads_consumed、账本字节级不动。
+/// 保留、零消费请求、summary 不面世 leads_consumed。表形态下 L0 的「不动」
+/// 指状态机面——一次性 JSONL→表迁移是迁移器职责，与自治位正交（归档照常）。
 #[tokio::test(flavor = "multi_thread")]
 async fn l0_autonomy_default_pending_never_auto_approved() {
     let server = MockServer::start().await;
@@ -1074,8 +1117,7 @@ async fn l0_autonomy_default_pending_never_auto_approved() {
         "3001",
         live_core::leads::LeadStatus::PendingApproval,
     );
-    let ledger_text = format!("{}\n", serde_json::to_string(&row).unwrap());
-    std::fs::write(root.join("leads.jsonl"), &ledger_text).unwrap();
+    seed_legacy_jsonl(root, std::slice::from_ref(&row));
 
     let base = server.uri();
     let mut config = test_config(root, 12);
@@ -1088,10 +1130,11 @@ async fn l0_autonomy_default_pending_never_auto_approved() {
     .expect("task join")
     .expect("collect ok");
 
+    let rows = table_rows(root);
     assert_eq!(
-        std::fs::read_to_string(root.join("leads.jsonl")).unwrap(),
-        ledger_text,
-        "L0 账本字节级不动（无消费也无自动批准）"
+        rows,
+        vec![row],
+        "L0 状态机面逐字段不动（无消费也无自动批准）"
     );
     assert!(
         summary.get("leads_consumed").is_none(),

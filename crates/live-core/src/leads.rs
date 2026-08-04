@@ -1,23 +1,28 @@
-//! M4.x 薄切线索环：JSONL 账本（design §16「M4.x」；私仓 kickoff 2026-08-05）。
+//! 线索账本（design §8.4 + §9.2 行 254 G2 JSONL→表迁移）。
 //!
-//! - 账本 = `output_dir/leads.jsonl`，每行 JSON 一个 lead；身份 = (type, locator)
-//!   的 `dedupe_key`（hash_parts 同源 sha1·16hex），同键任意状态再写入 → 跳行（幂等）。
-//! - 状态机：pending_approval →（审批缝端点 / L1 自治 / 人工改行）approved →
+//! - 账面 = graph store 的 `discovery_leads` 表；身份 = (type, locator) 的
+//!   `dedupe_key`（hash_parts 同源 sha1·16hex），表主键即幂等唯一键——
+//!   同键任意状态再入账 → OR IGNORE 跳行（幂等）。
+//! - 状态机：pending_approval →（审批缝端点 / L1 自治）approved →
 //!   （collect 尾段按预算消费）consumed + yield_count；人工可改 rejected；
-//!   适配器无映射的类型写 deferred。禁倒退路径。
-//! - fail-open（kickoff D7）：账本失败 = 丢账目不丢感知——`read_*` 对不存在/
-//!   不可读文件返回空集、坏行静默跳；`record_*` 的 Err 由调用方 `let _ =` 吞。
-//! - 摘要段是下轮 AI 上下文唯一消费者（移除实验体：不在则死）。
+//!   适配器无映射的类型写 deferred。禁倒退路径（approve_transition 唯一裁决点）。
+//! - 迁移：`migrate_jsonl` 把 M4.x 的 `output_dir/leads.jsonl` 一次性导入表
+//!   （守卫解析——坏行响铃不动文件；dedupe_key OR IGNORE 使重导入零新行），
+//!   随后把文件归档为 `leads.jsonl.bak`（不删除，可回滚；再撞名加序号）。
+//!   JSONL 读面兼容层**不留**——读本领只走表。
+//! - fail-open 血脉（kickoff D7 的表形态）：入账/写回失败以 Err 面世，调用方
+//!   （pipeline/collect 尾段）响铃吞错——丢账目不丢感知，但绝不静默。
+//! - 摘要段 `summary_line` 是下轮 AI 上下文唯一消费者（移除实验体：不在则死）。
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::episodes::hash_parts;
+use crate::graph::store::{Store, StoreError};
 use crate::models::Lead;
 
-/// 账本文件名（kickoff D1：现布局单房间产物根，`rooms/{uid}` 在 M5 多房间时映射）。
+/// M4.x 账本文件名（迁移期源文件；现布局单房间产物根）。
 pub const LEDGER_FILE_NAME: &str = "leads.jsonl";
 /// `dedupe_key` recipe 域前缀（`_hash` 第一槽）。
 pub const DEDUPE_KEY_PREFIX: &str = "m4x-lead";
@@ -25,13 +30,13 @@ pub const DEDUPE_KEY_PREFIX: &str = "m4x-lead";
 pub const DEDUPE_KEY_LEN: usize = 16;
 /// 摘要段 latest_consumed 最多回放的消费行数（kickoff 契约）。
 pub const LATEST_CONSUMED_CAP: usize = 3;
-/// 消费留痕 `resolution_note` 的长度上限（账本行可人工浏览，不打爆单行）。
+/// 消费留痕 `resolution_note` 的长度上限（summary/端点面可人工浏览，不打爆单行）。
 pub const RESOLUTION_NOTE_CAP: usize = 240;
 /// audience 侧账本行 viewer_id 占位（leads 来自整体态势终局提交）。
 pub const AUDIENCE_VIEWER_ID: &str = "audience";
 /// 四型白名单的唯一真源（validators.rs 的 LEAD_TYPE_WHITELIST 指认此处）。
 pub const LEAD_TYPES: [&str; 4] = ["search", "creator", "video", "room"];
-/// annex 摘要里 latest_consumed 的 locator 展示宽度（账本手编面可入长串）。
+/// annex 摘要里 latest_consumed 的 locator 展示宽度。
 pub const ANNEX_LOCATOR_CAP: usize = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -44,7 +49,7 @@ pub enum LeadStatus {
     Deferred,
 }
 
-/// 账本行（kickoff 契约冻结列；人工可读可编辑，字段序即书写序）。
+/// 账本行（字段 = M4.x JSONL 冻结契约与 discovery_leads 列集的共同真源）。
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LedgerRow {
     pub dedupe_key: String,
@@ -95,35 +100,36 @@ fn pending_row(lead: &Lead, viewer_id: &str, run_id: &str, now: &str) -> LedgerR
     }
 }
 
+/// M4.x 账本路径（迁移期唯一用途；读面不再经此取数）。
 pub fn ledger_path(output_dir: &Path) -> PathBuf {
     output_dir.join(LEDGER_FILE_NAME)
 }
 
-/// fail-open 读：不存在/不可读 → 空集；坏行（非 JSON / 缺键）静默跳过。
-/// 只喂**读面**（annex/摘要）；写面必须用 `read_ledger_guarded`（MXA-1 防线）。
-pub fn read_ledger(path: &Path) -> Vec<LedgerRow> {
-    let Ok(text) = std::fs::read_to_string(path) else {
-        return Vec::new();
-    };
-    text.lines()
-        .filter_map(|line| {
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                return None;
-            }
-            serde_json::from_str::<LedgerRow>(trimmed).ok()
-        })
-        .collect()
+/// 入账新线索（幂等）：同 dedupe_key 任意状态已存在则跳行。返回实际入库行数。
+/// Err 面世（FK 违约 / 库不可写），由调用方响铃吞纳。
+pub fn record_leads(
+    store: &Store,
+    viewer_id: &str,
+    run_id: &str,
+    now: &str,
+    leads: &[Lead],
+) -> Result<usize, StoreError> {
+    let rows: Vec<LedgerRow> = leads
+        .iter()
+        .map(|lead| pending_row(lead, viewer_id, run_id, now))
+        .collect();
+    let refs: Vec<&LedgerRow> = rows.iter().collect();
+    store.insert_lead_rows(&refs, false)
 }
 
-/// 守卫读（MXA-1）：不存在 → 空集；存在但任何一行不可解析 → Err。
-/// 防「fail-open 读损集合被写面误当全景 → 同键重复追加」（验收「重跑不增行」防线）。
-pub fn read_ledger_guarded(path: &Path) -> std::io::Result<Vec<LedgerRow>> {
-    let text = match std::fs::read_to_string(path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(err) => return Err(err),
-    };
+/// 全账读面（写账序）——annex / overview / 审批缝的唯一数据源。
+pub fn read_rows(store: &Store) -> Result<Vec<LedgerRow>, StoreError> {
+    store.lead_rows()
+}
+
+/// M4.x JSONL 文本的守卫解析：任何一行不可解析即 Err（行号入错文）——
+/// 迁移器与 parity 钉共同的真源（坏行绝不带病入库）。
+pub fn parse_ledger_text(text: &str) -> std::io::Result<Vec<LedgerRow>> {
     let mut rows = Vec::new();
     for (index, line) in text.lines().enumerate() {
         let trimmed = line.trim();
@@ -141,43 +147,44 @@ pub fn read_ledger_guarded(path: &Path) -> std::io::Result<Vec<LedgerRow>> {
     Ok(rows)
 }
 
-/// 追加新线索（幂等）：同 dedupe_key 任意状态已存在则跳行。返回实际追加行数。
-pub fn record_leads(
-    output_dir: &Path,
-    viewer_id: &str,
-    run_id: &str,
-    now: &str,
-    leads: &[Lead],
-) -> std::io::Result<usize> {
+/// 归档文件名：`leads.jsonl.bak`；撞名加序号（.bak.1 .bak.2…——多轮迁移不毁旧回滚本）。
+fn archive_target(output_dir: &Path) -> PathBuf {
+    let mut candidate = output_dir.join(format!("{LEDGER_FILE_NAME}.bak"));
+    let mut serial = 1_u32;
+    while candidate.exists() {
+        candidate = output_dir.join(format!("{LEDGER_FILE_NAME}.bak.{serial}"));
+        serial += 1;
+    }
+    candidate
+}
+
+/// G2 JSONL→表迁移（design §9.2 行 254）：把 `output_dir/leads.jsonl` 一次性导入
+/// discovery_leads 表（dedupe_key OR IGNORE → 重导入零新行，幂等），随后把源文件
+/// 归档为 `.bak`（不删除，可回滚）。
+///
+/// - 无账本文件 → Ok(0)（零副作用）；
+/// - 文件存在但任一行不可解析 → Err 响铃，**文件原地不动、表不导半份**（MXA-1 同族守卫）；
+/// - 入库失败（FK 违约等）→ Err，文件不归档，下轮重试面自愈合。
+pub fn migrate_jsonl(store: &Store, output_dir: &Path) -> Result<usize, StoreError> {
     let path = ledger_path(output_dir);
-    // MXA-1：写面用守卫读——读损即 Err（调用方响铃），绝不带病重复追加。
-    let existing: std::collections::HashSet<String> = read_ledger_guarded(&path)?
-        .into_iter()
-        .map(|row| row.dedupe_key)
-        .collect();
-    let fresh: Vec<LedgerRow> = leads
-        .iter()
-        .map(|lead| pending_row(lead, viewer_id, run_id, now))
-        .filter(|row| !existing.contains(&row.dedupe_key))
-        .collect();
-    if fresh.is_empty() {
-        return Ok(0);
-    }
-    std::fs::create_dir_all(output_dir)?;
-    let mut file = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)?;
-    for row in &fresh {
-        let line = serde_json::to_string(row).expect("账本行可序列化");
-        writeln!(file, "{line}")?;
-    }
-    Ok(fresh.len())
+    let text = match std::fs::read_to_string(&path) {
+        Ok(text) => text,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(err) => return Err(StoreError::Repo(format!("leads 账本读取失败：{err}"))),
+    };
+    let rows = parse_ledger_text(&text)
+        .map_err(|err| StoreError::Repo(format!("leads 账本迁移守卫停火：{err}")))?;
+    let refs: Vec<&LedgerRow> = rows.iter().collect();
+    let inserted = store.insert_lead_rows(&refs, false)?;
+    let target = archive_target(output_dir);
+    std::fs::rename(&path, &target)
+        .map_err(|err| StoreError::Repo(format!("leads 账本归档失败：{err}")))?;
+    Ok(inserted)
 }
 
 /// G2-B 审批缝状态机辅助：`pending_approval → approved` 是 approve 通道唯一合法
 /// 迁移（禁倒退纪律的程序面）。返回值 = 是否需要落盘改写：
-/// - approved 重放 → Ok(false)：幂等，终态相同、账本不动；
+/// - approved 重放 → Ok(false)：幂等，终态相同、表不动；
 /// - consumed/rejected/deferred 源态 → Err（422 面错文：规则 + 当前源态）。
 pub fn approve_transition(status: LeadStatus) -> Result<bool, String> {
     match status {
@@ -185,13 +192,13 @@ pub fn approve_transition(status: LeadStatus) -> Result<bool, String> {
         LeadStatus::Approved => Ok(false),
         other => Err(format!(
             "状态机只许 pending_approval → approved；\
-             当前状态 {}，不允许此迁移（人工可编辑账本行另改）",
+             当前状态 {}，不允许此迁移",
             status_name(other)
         )),
     }
 }
 
-/// 状态名的 serde snake_case 字面（错文/日志面唯一拼写源）。
+/// 状态名的 serde snake_case 字面（错文/日志/表 status 列的唯一拼写源）。
 pub fn status_name(status: LeadStatus) -> &'static str {
     match status {
         LeadStatus::PendingApproval => "pending_approval",
@@ -202,19 +209,16 @@ pub fn status_name(status: LeadStatus) -> &'static str {
     }
 }
 
-/// 整账本重写（消费写回用；tmp+rename 与 storage 原子替换同款纪律）。
-pub fn rewrite_ledger(output_dir: &Path, rows: &[LedgerRow]) -> std::io::Result<()> {
-    let path = ledger_path(output_dir);
-    let tmp = path.with_extension("jsonl.tmp");
-    {
-        let mut file = std::fs::File::create(&tmp)?;
-        for row in rows {
-            let line = serde_json::to_string(row).expect("账本行可序列化");
-            writeln!(file, "{line}")?;
-        }
+/// status 列字面 → 状态机枚举（表读面的唯一还原点）。
+pub fn status_from_name(name: &str) -> Option<LeadStatus> {
+    match name {
+        "pending_approval" => Some(LeadStatus::PendingApproval),
+        "approved" => Some(LeadStatus::Approved),
+        "consumed" => Some(LeadStatus::Consumed),
+        "rejected" => Some(LeadStatus::Rejected),
+        "deferred" => Some(LeadStatus::Deferred),
+        _ => None,
     }
-    std::fs::rename(&tmp, &path)?;
-    Ok(())
 }
 
 /// kickoff 契约摘要段。`viewer=None` → 全局行；`Some(v)` → 前缀 `viewer=… own_pending=…`。
@@ -291,11 +295,22 @@ mod tests {
         }
     }
 
-    fn tmp_dir(tag: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!("m4x-leads-{}-{tag}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        dir
+    fn row(key: &str, lead_type: &str, status: LeadStatus) -> LedgerRow {
+        LedgerRow {
+            dedupe_key: key.into(),
+            lead_type: lead_type.into(),
+            locator: format!("loc-{key}"),
+            motivation: "m".into(),
+            expected_signal: "s".into(),
+            priority: "high".into(),
+            evidence_ids: vec![],
+            viewer_id: "u".into(),
+            first_seen_run_id: "run:a".into(),
+            created_at: "t".into(),
+            status,
+            yield_count: 0,
+            resolution_note: String::new(),
+        }
     }
 
     /// 契约：dedupe_key = hash_parts(["m4x-lead", type, locator], 16)。
@@ -327,65 +342,8 @@ mod tests {
         assert_ne!(dedupe_key(&row), dedupe_key(&other));
     }
 
-    #[test]
-    fn record_then_rerun_appends_zero_rows() {
-        let dir = tmp_dir("idem");
-        let leads = vec![lead("video", "BV1"), lead("search", "恋恋红莲华")];
-        let first = record_leads(&dir, "u", "run:a", "2026-08-05T00:00:00+00:00", &leads).unwrap();
-        assert_eq!(first, 2);
-        // 同输入重跑（缓存命中路径补写）：行数恒定、追加 0
-        let again = record_leads(&dir, "u", "run:b", "2026-08-05T01:00:00+00:00", &leads).unwrap();
-        assert_eq!(again, 0);
-        let rows = read_ledger(&ledger_path(&dir));
-        assert_eq!(rows.len(), 2);
-        assert_eq!(rows[0].status, LeadStatus::PendingApproval);
-        assert_eq!(rows[0].first_seen_run_id, "run:a");
-        assert_eq!(rows[0].yield_count, 0);
-        // 新增不同 locator 才追加
-        let plus = record_leads(
-            &dir,
-            "u",
-            "run:c",
-            "2026-08-05T02:00:00+00:00",
-            &[lead("video", "BV2")],
-        )
-        .unwrap();
-        assert_eq!(plus, 1);
-        assert_eq!(read_ledger(&ledger_path(&dir)).len(), 3);
-    }
-
-    /// MXA-5（r4 G-2 禁倒退负边）：同键行无论处于 Approved/Consumed/Rejected，record
-    /// 都跳行 —— 幂等身份先于状态，绝不靠「回到 pending」复制行。
-    #[test]
-    fn record_skips_existing_keys_at_any_state() {
-        let dir = tmp_dir("nostate");
-        let leads = vec![lead("video", "BV1"), lead("search", "异环 实机")];
-        record_leads(&dir, "u", "run:a", "t", &leads).unwrap();
-        for (index, status) in [
-            LeadStatus::Approved,
-            LeadStatus::Consumed,
-            LeadStatus::Rejected,
-            LeadStatus::Deferred,
-        ]
-        .iter()
-        .enumerate()
-        {
-            let mut rows = read_ledger_guarded(&ledger_path(&dir)).unwrap();
-            rows[0].status = *status;
-            rewrite_ledger(&dir, &rows).unwrap();
-            let appended = record_leads(&dir, "u", "run:b", "t2", &leads).unwrap();
-            assert_eq!(appended, 0, "第 {index} 状态 {status:?} 回下 dedupe 跳行");
-            assert_eq!(read_ledger(&ledger_path(&dir)).len(), 2);
-            // 状态不被回写清洗（账本是人审工作队列，record 无权改动状态机）
-            assert_eq!(
-                read_ledger_guarded(&ledger_path(&dir)).unwrap()[0].status,
-                *status
-            );
-        }
-    }
-
-    /// MXA-11（r5-F6）：JSONL 行字段序 = 冻结契约书写序（serde 声明序隐式
-    /// 保证过域，不做断言则一次字段重排即静默违约——账本被线下工具消费）。
+    /// MXA-11（r5-F6）：JSONL/.bak 行字段序 = 冻结契约书写序（serde 声明序隐式
+    /// 保证过域，不做断言则一次字段重排即静默违约——归档本被线下工具消费）。
     #[test]
     fn ledger_row_field_order_pinned() {
         let row = pending_row(&lead("video", "BV1"), "u", "run:a", "t");
@@ -424,111 +382,63 @@ mod tests {
         );
     }
 
+    /// 守卫解析：好行进出全等；坏行载行号 Err（迁移停火面的措辞钉）。
     #[test]
-    fn read_ledger_skips_malformed_lines() {
-        let dir = tmp_dir("bad");
-        let path = ledger_path(&dir);
-        let good = pending_row(&lead("video", "BV1"), "u", "run:a", "t");
-        let text = format!(
-            "{}\n{{\"dedupe_key\": \"x\"}}\nnot json at all\n\n",
-            serde_json::to_string(&good).unwrap()
-        );
-        std::fs::write(&path, text).unwrap();
-        let rows = read_ledger(&path);
-        assert_eq!(rows.len(), 1);
-        assert_eq!(rows[0].dedupe_key, good.dedupe_key);
-        assert!(read_ledger(&dir.join("不存在.jsonl")).is_empty());
-    }
-
-    /// MXA-1（r1-F1 负钉）：账本存在但含不可解析行 → record 拒绝写入（同键不能重复
-    /// 追加的风险高于丢一笔新线），账本原文不动。
-    #[test]
-    fn record_refuses_when_ledger_has_bad_line() {
-        let dir = tmp_dir("guarded");
-        let good = pending_row(&lead("video", "BV1"), "u", "run:a", "t");
-        let text = format!(
-            "{}\nnot json at all\n",
-            serde_json::to_string(&good).unwrap()
-        );
-        let path = ledger_path(&dir);
-        std::fs::write(&path, &text).unwrap();
-        let leads = vec![lead("video", "BV2")];
-        let result = record_leads(&dir, "u", "run:b", "t2", &leads);
-        assert!(result.is_err(), "读损账本必须拒绝追加，防重复写");
-        assert_eq!(
-            std::fs::read_to_string(&path).unwrap(),
-            text,
-            "拒绝时账本文本逐字节不动"
-        );
-        // 读面（fail-open）不受影响：annex/摘要仍拿得到好的那一行
-        assert_eq!(read_ledger(&path).len(), 1);
-    }
-
-    /// kickoff D7：写入面失败以 Err 返回（调用方 let _ 吞），绝不 panic。
-    #[test]
-    fn record_failure_surfaces_err_not_panic() {
-        let dir = tmp_dir("fail");
-        let blocker = dir.join("是文件");
-        std::fs::write(&blocker, "x").unwrap();
-        let result = record_leads(&blocker, "u", "run:a", "t", &[lead("video", "BV1")]);
-        assert!(result.is_err());
+    fn parse_ledger_text_guarded() {
+        let good = row("k1", "video", LeadStatus::PendingApproval);
+        let text = format!("{}\n\n", serde_json::to_string(&good).unwrap());
+        assert_eq!(parse_ledger_text(&text).unwrap(), vec![good]);
+        let bad = "{\"dedupe_key\": \"x\"}\nnot json at all\n";
+        let err = parse_ledger_text(bad).unwrap_err();
+        assert!(err.to_string().contains("第1行不可解析"), "{err}");
     }
 
     #[test]
     fn summary_line_matches_frozen_contract() {
-        let dir = tmp_dir("sum");
-        record_leads(
-            &dir,
-            "u",
-            "run:a",
-            "t",
-            &[lead("video", "BV1"), lead("video", "BV2")],
-        )
-        .unwrap();
-        record_leads(&dir, "v", "run:a", "t", &[lead("creator", "42")]).unwrap();
-        let mut rows = read_ledger(&ledger_path(&dir));
+        let mut rows = vec![
+            row("k1", "video", LeadStatus::PendingApproval),
+            row("k2", "video", LeadStatus::PendingApproval),
+            row("k3", "creator", LeadStatus::PendingApproval),
+        ];
         rows[1].status = LeadStatus::Approved;
-        // 人本消费：BV1 → consumed yield 5
         rows[0].status = LeadStatus::Consumed;
         rows[0].yield_count = 5;
         let global = summary_line(&rows, None);
         assert_eq!(
             global,
             "[lead_ledger] pending=1 approved=1 consumed=1 rejected=0 deferred=0 \
-             by_type={creator: 1, video: 2} yield_total=5 latest_consumed=[{\"type\":\"video\",\"locator\":\"BV1\",\"yield_count\":5}]"
+             by_type={creator: 1, video: 2} yield_total=5 latest_consumed=[{\"type\":\"video\",\"locator\":\"loc-k1\",\"yield_count\":5}]"
         );
         let scoped = summary_line(&rows, Some("u"));
         assert!(
-            scoped.starts_with("[lead_ledger] viewer=u own_pending=0 | pending=1 approved=1"),
+            scoped.starts_with("[lead_ledger] viewer=u own_pending=1 | pending=1 approved=1"),
             "{scoped}"
         );
-        // rows[1]=BV2、rows[2]=creator：rejected(BV2) 不进 by_type；deferred(creator) 计入
+        // rejected 不进 by_type；deferred 计入
         rows[1].status = LeadStatus::Rejected;
         rows[2].status = LeadStatus::Deferred;
         let line = summary_line(&rows, None);
         assert_eq!(
             line,
             "[lead_ledger] pending=0 approved=0 consumed=1 rejected=1 deferred=1 \
-             by_type={creator: 1, video: 1} yield_total=5 latest_consumed=[{\"type\":\"video\",\"locator\":\"BV1\",\"yield_count\":5}]"
+             by_type={creator: 1, video: 1} yield_total=5 latest_consumed=[{\"type\":\"video\",\"locator\":\"loc-k1\",\"yield_count\":5}]"
         );
     }
 
     #[test]
     fn latest_consumed_capped_at_three() {
-        let dir = tmp_dir("cap");
-        for i in 0..5 {
-            record_leads(&dir, "u", "run:a", "t", &[lead("video", &format!("BV{i}"))]).unwrap();
-        }
-        let mut rows = read_ledger(&ledger_path(&dir));
-        for (i, row) in rows.iter_mut().enumerate() {
-            row.status = LeadStatus::Consumed;
-            row.yield_count = i as i64;
+        let mut rows: Vec<LedgerRow> = (0..5)
+            .map(|i| row(&format!("k{i}"), "video", LeadStatus::PendingApproval))
+            .collect();
+        for (i, entry) in rows.iter_mut().enumerate() {
+            entry.status = LeadStatus::Consumed;
+            entry.yield_count = i as i64;
         }
         let line = summary_line(&rows, None);
-        // file 序倒取 3：BV4→BV3→BV2
+        // 写账序倒取 3：k4→k3→k2（= 旧文件序的表同构物）
         assert!(
             line.contains(
-                "latest_consumed=[{\"type\":\"video\",\"locator\":\"BV4\",\"yield_count\":4},{\"type\":\"video\",\"locator\":\"BV3\",\"yield_count\":3},{\"type\":\"video\",\"locator\":\"BV2\",\"yield_count\":2}]"
+                "latest_consumed=[{\"type\":\"video\",\"locator\":\"loc-k4\",\"yield_count\":4},{\"type\":\"video\",\"locator\":\"loc-k3\",\"yield_count\":3},{\"type\":\"video\",\"locator\":\"loc-k2\",\"yield_count\":2}]"
             ),
             "{line}"
         );
@@ -539,17 +449,14 @@ mod tests {
     /// "other" 桶；长 locator 在 latest 里截断到上限。
     #[test]
     fn annex_folds_unknown_types_and_caps_locator() {
-        let dir = tmp_dir("annex");
-        record_leads(&dir, "u", "run:a", "t", &[lead("video", "BV1")]).unwrap();
-        let mut rows = read_ledger_guarded(&ledger_path(&dir)).unwrap();
-        rows[0].lead_type = "w;&#}%@注入".to_string();
-        rows[0].status = LeadStatus::Consumed;
-        rows[0].locator = "L".repeat(200);
-        rows[0].yield_count = 1;
-        let line = summary_line(&rows, None);
+        let mut poisoned = row("k1", "video", LeadStatus::Consumed);
+        poisoned.lead_type = "w;&#}%@注入".to_string();
+        poisoned.locator = "L".repeat(200);
+        poisoned.yield_count = 1;
+        let line = summary_line(&[poisoned.clone()], None);
         assert!(line.contains("by_type={other: 1}"), "{line}");
         assert!(!line.contains("注入"), "{line}");
-        let displayed = &rows[0]
+        let displayed = &poisoned
             .locator
             .chars()
             .take(ANNEX_LOCATOR_CAP)
@@ -564,5 +471,20 @@ mod tests {
     #[test]
     fn lead_types_single_source_pinned() {
         assert_eq!(crate::agent::validators::LEAD_TYPE_WHITELIST, LEAD_TYPES);
+    }
+
+    /// status 面双拼写源：name ⇄ 枚举 全往返（表 status 列与 serde 的同源钉）。
+    #[test]
+    fn status_name_roundtrip_pinned() {
+        for status in [
+            LeadStatus::PendingApproval,
+            LeadStatus::Approved,
+            LeadStatus::Consumed,
+            LeadStatus::Rejected,
+            LeadStatus::Deferred,
+        ] {
+            assert_eq!(status_from_name(status_name(status)), Some(status));
+        }
+        assert_eq!(status_from_name("nonsense"), None);
     }
 }

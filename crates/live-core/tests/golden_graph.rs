@@ -91,6 +91,11 @@ fn export_table(store: &Store, table: &str) -> Vec<String> {
                 if table == "edges" && column == "viewer_id" {
                     continue;
                 }
+                // episodes.lead_id 是 v7 溯源列（G2；黄金样本为 v6 世代数据恒 NULL），
+                // 不入 Python v5/v6 世代的导出对照集。
+                if table == "episodes" && column == "lead_id" {
+                    continue;
+                }
                 let value: rusqlite::types::Value = row.get(index)?;
                 let json = match value {
                     rusqlite::types::Value::Null => Value::Null,

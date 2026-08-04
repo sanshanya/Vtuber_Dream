@@ -5,17 +5,33 @@
 //!    entity_aliases→entities）；
 //! 2. edges 增加 `viewer_id` 列（close_missing_viewer_semantic_edges 的行为判定键，
 //!    等价 v5 的 json_extract；properties_json 原样保留，仓库字节兼容）；
-//! 3. TARGETS/ABOUT 等 action 边必带 confidence（见 build.rs）；
-//! 4. user_version = 6，旧库沿用“删除重跑”政策，不做迁移。
+//! 3. TARGETS/ABOUT 等 action 边必带 confidence（见 build.rs）。
+//!
+//! schema v7（设计文档 §9.2 行 254，G2 JSONL→表迁移）：
+//! 1. 新增 `discovery_leads` 表——M4.x `leads.jsonl` 账本字段照抄 +
+//!    `first_seen_run_id` 真外键（→graph_runs），`dedupe_key` 主键即唯一键；
+//! 2. episodes 增加 `lead_id` 列（→discovery_leads 外键，线索出产的溯源链）；
+//! 3. v6→v7 是**首个就地升级**：纯增量（加表加列）无损迁移，user_version 升格，
+//!    v6 以下旧库仍沿用“删除重跑”政策。
+//!
+//! schema v8（设计文档 §8.6 图维护操作）：
+//! 1. graph_runs 增 `kind`（pipeline|maintenance）与 `detail_json`（维护操作全参数，
+//!    可回放审计）——run「类型」此前只有隐式单类（pipeline），§8.6 的 MAINTENANCE
+//!    run 是第二个类型，按规格出生；
+//! 2. v7→v8 纯增量就地升级（graph_runs 补两列），沿用升格通道；
+//!    v6 连锁两段（v6→v7→v8），v6 以下仍吃“删除重跑”政策。
 //!
 //! 幂等语义与 v5 一致：节点属性合并保鲜、活跃边查重-合并、evidence 合并且去重保序、
 //! confidence 取 max、first_seen 不变。
 //!
-//! 文件拆分：本文件 = schema v6 / 连接与事务 / 运行段 / 共享辅助；
-//! nodes.rs / edges.rs / entities.rs / mentions.rs 各自一类受控写入。
+//! 文件拆分：本文件 = schema v8 / 连接与事务 / 运行段 / 共享辅助；
+//! nodes.rs / edges.rs / entities.rs / mentions.rs / leads_tbl.rs / maintenance.rs
+//! 各自一类受控写入。
 
 mod edges;
 mod entities;
+mod leads_tbl;
+mod maintenance;
 mod mentions;
 mod nodes;
 
@@ -26,9 +42,12 @@ use serde_json::{Map, Value};
 
 use crate::episodes::json_canon;
 
+pub use maintenance::{MaintenanceError, MergeOutcome, SplitOutcome};
 pub use mentions::mention_id_of;
 
-pub const GRAPH_SCHEMA_VERSION: i64 = 6;
+pub const GRAPH_SCHEMA_VERSION: i64 = 8;
+/// 最低可就地升级的源版本（v6 连锁两段到 v8；纯增量迁移）；更低的版本仍吃「删除重跑」政策。
+pub const GRAPH_SCHEMA_VERSION_MIGRATABLE: i64 = 6;
 /// Python GRAPH_QUERY_LIMIT：任何查询返回上限。
 pub const GRAPH_QUERY_LIMIT: i64 = 500;
 
@@ -44,6 +63,34 @@ pub type Result<T> = std::result::Result<T, StoreError>;
 
 fn repo_err<T>(message: impl Into<String>) -> Result<T> {
     Err(StoreError::Repo(message.into()))
+}
+
+/// SAVEPOINT 包裹一个受控写入单元：成功 RELEASE（autocommit 顶层即 COMMIT）；
+/// 失败 ROLLBACK TO + RELEASE，中断只影响当前单元，重跑幂等。build.rs 的 apply_*
+/// 与 maintenance.rs 的维护操作共用此一处实现（错误型泛化——两族错误各自就位）。
+pub(crate) fn with_savepoint<T, E: From<rusqlite::Error>>(
+    name: &str,
+    store: &Store,
+    apply: impl FnOnce() -> std::result::Result<T, E>,
+) -> std::result::Result<T, E> {
+    store.conn.execute_batch(&format!("SAVEPOINT {name}"))?;
+    match apply() {
+        Ok(value) => {
+            store
+                .conn
+                .execute_batch(&format!("RELEASE SAVEPOINT {name}"))?;
+            Ok(value)
+        }
+        Err(err) => {
+            let _ = store
+                .conn
+                .execute_batch(&format!("ROLLBACK TO SAVEPOINT {name}"));
+            let _ = store
+                .conn
+                .execute_batch(&format!("RELEASE SAVEPOINT {name}"));
+            Err(err)
+        }
+    }
 }
 
 /// Python `old.update(new)` 语义：旧属性并入新 Map，新值覆盖同键；
@@ -64,7 +111,9 @@ CREATE TABLE IF NOT EXISTS graph_runs (
     completed_at TEXT,
     failed_at TEXT,
     failure_json TEXT,
-    model TEXT
+    model TEXT,
+    kind TEXT NOT NULL DEFAULT 'pipeline',
+    detail_json TEXT
 );
 
 CREATE TABLE IF NOT EXISTS nodes (
@@ -108,7 +157,27 @@ CREATE TABLE IF NOT EXISTS episodes (
     platform_facts_json TEXT NOT NULL,
     content_hash TEXT NOT NULL,
     first_seen_at TEXT NOT NULL,
-    last_seen_at TEXT NOT NULL
+    last_seen_at TEXT NOT NULL,
+    lead_id TEXT REFERENCES discovery_leads(dedupe_key)
+);
+
+-- G2（design §9.2 行 254）：M4.x leads.jsonl 账本的表形态——字段照抄 LedgerRow
+-- （evidence_ids 落 JSON 文本列），dedupe_key 主键即幂等唯一键，
+-- first_seen_run_id 真外键钉溯源锚点；status 面是 leads::status_name 的蛇形字面。
+CREATE TABLE IF NOT EXISTS discovery_leads (
+    dedupe_key TEXT PRIMARY KEY,
+    lead_type TEXT NOT NULL,
+    locator TEXT NOT NULL,
+    motivation TEXT NOT NULL,
+    expected_signal TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+    viewer_id TEXT NOT NULL,
+    first_seen_run_id TEXT NOT NULL REFERENCES graph_runs(run_id),
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    yield_count INTEGER NOT NULL DEFAULT 0,
+    resolution_note TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS mentions (
@@ -159,6 +228,35 @@ CREATE INDEX IF NOT EXISTS idx_episodes_viewer ON episodes(viewer_id, observed_a
 CREATE INDEX IF NOT EXISTS idx_mentions_episode ON mentions(episode_id);
 CREATE INDEX IF NOT EXISTS idx_entities_norm ON entities(normalized_name, entity_type);
 CREATE INDEX IF NOT EXISTS idx_alias_key ON entity_aliases(alias_key);
+CREATE INDEX IF NOT EXISTS idx_discovery_leads_status ON discovery_leads(status, first_seen_run_id);
+CREATE INDEX IF NOT EXISTS idx_graph_runs_kind ON graph_runs(kind, completed_at);
+"#;
+
+/// v6→v7 就地升级的迁移段（SCHEMA_SQL 的增量面；新库两种路径殊途同归——
+/// 本迁移用 IF NOT EXISTS / 列存在性探测保证两段 SQL 叠加幂等）。
+const MIGRATE_V6_TO_V7_SQL: &str = r#"
+CREATE TABLE IF NOT EXISTS discovery_leads (
+    dedupe_key TEXT PRIMARY KEY,
+    lead_type TEXT NOT NULL,
+    locator TEXT NOT NULL,
+    motivation TEXT NOT NULL,
+    expected_signal TEXT NOT NULL,
+    priority TEXT NOT NULL,
+    evidence_ids_json TEXT NOT NULL DEFAULT '[]',
+    viewer_id TEXT NOT NULL,
+    first_seen_run_id TEXT NOT NULL REFERENCES graph_runs(run_id),
+    created_at TEXT NOT NULL,
+    status TEXT NOT NULL,
+    yield_count INTEGER NOT NULL DEFAULT 0,
+    resolution_note TEXT NOT NULL DEFAULT ''
+);
+CREATE INDEX IF NOT EXISTS idx_discovery_leads_status ON discovery_leads(status, first_seen_run_id);
+"#;
+
+/// v7→v8 就地升级段（§8.6）：graph_runs 补 kind/detail_json 两列 + kind 索引。
+/// ALTER 段不幂等，列级存在性探测在 migrate_to_current 里逐列把门。
+const MIGRATE_V7_TO_V8_SQL: &str = r#"
+CREATE INDEX IF NOT EXISTS idx_graph_runs_kind ON graph_runs(kind, completed_at);
 "#;
 
 /// 活跃边的最小行（INTERESTED_IN 幂等与应用层关闭用）。
@@ -220,9 +318,14 @@ impl Store {
                 .conn
                 .pragma_query_value(None, "user_version", |row| row.get(0))?;
             if version != GRAPH_SCHEMA_VERSION {
-                return repo_err(format!(
-                    "outdated graph database; delete the store and rerun (user_version={version})"
-                ));
+                // 就地升级通道：v6/v7（纯增量源版）连锁到当前版；更低旧版照旧政策吃报错。
+                if (GRAPH_SCHEMA_VERSION_MIGRATABLE..GRAPH_SCHEMA_VERSION).contains(&version) {
+                    self.migrate_to_current()?;
+                } else {
+                    return repo_err(format!(
+                        "outdated graph database; delete the store and rerun (user_version={version})"
+                    ));
+                }
             }
         }
         self.conn.execute_batch(SCHEMA_SQL)?;
@@ -231,7 +334,52 @@ impl Store {
         Ok(())
     }
 
+    /// 连锁就地升级：v6→v7（discovery_leads 建表 + episodes 补 lead_id）→
+    /// v8（graph_runs 补 kind/detail_json）。各段均幂等（IF NOT EXISTS + 列探测），
+    /// v6 源库两段连跑殊途同归；纯增量、不动既有行——「删除重跑」政策对纯增量
+    /// 版本升格让位（数据零成本保全）。
+    fn migrate_to_current(&self) -> Result<()> {
+        self.conn.execute_batch(MIGRATE_V6_TO_V7_SQL)?;
+        for (table, column, alter) in [
+            (
+                "episodes",
+                "lead_id",
+                "ALTER TABLE episodes ADD COLUMN lead_id TEXT REFERENCES discovery_leads(dedupe_key)",
+            ),
+            (
+                "graph_runs",
+                "kind",
+                "ALTER TABLE graph_runs ADD COLUMN kind TEXT NOT NULL DEFAULT 'pipeline'",
+            ),
+            (
+                "graph_runs",
+                "detail_json",
+                "ALTER TABLE graph_runs ADD COLUMN detail_json TEXT",
+            ),
+        ] {
+            let exists: Option<i64> = self
+                .conn
+                .query_row(
+                    &format!("SELECT 1 FROM pragma_table_info('{table}') WHERE name=?"),
+                    [column],
+                    |row| row.get(0),
+                )
+                .optional()?;
+            if exists.is_none() {
+                self.conn.execute_batch(alter)?;
+            }
+        }
+        self.conn.execute_batch(MIGRATE_V7_TO_V8_SQL)?;
+        Ok(())
+    }
+
     // ------------------------------------------------------------------ runs
+
+    /// run 类型面（§8.6）：常规管线 run。graph_runs 历史只有这一个隐式类型。
+    pub const RUN_KIND_PIPELINE: &str = "pipeline";
+    /// run 类型面（§8.6 行 228/231）：entity_split / entity_merge 维护操作必记
+    /// 一条 MAINTENANCE run（detail_json 载全参数，可回放审计）。
+    pub const RUN_KIND_MAINTENANCE: &str = "maintenance";
 
     pub fn begin_run(&self, model: &str) -> Result<String> {
         let run_id = format!("run:{}", uuid::Uuid::new_v4().simple());
@@ -241,9 +389,22 @@ impl Store {
 
     /// 注入式 begin_run：黄金样本对账与回放测试用。
     pub fn begin_run_fixed(&self, run_id: &str, started_at: &str, model: &str) -> Result<()> {
+        self.begin_run_typed(run_id, started_at, model, Self::RUN_KIND_PIPELINE, None)
+    }
+
+    /// 带类型与审计明细的 run 开账（v8 kind/detail_json 列的唯一写门）。
+    pub fn begin_run_typed(
+        &self,
+        run_id: &str,
+        started_at: &str,
+        model: &str,
+        kind: &str,
+        detail_json: Option<&str>,
+    ) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO graph_runs(run_id, started_at, model) VALUES(?,?,?)",
-            params![run_id, started_at, model],
+            "INSERT INTO graph_runs(run_id, started_at, model, kind, detail_json) \
+             VALUES(?,?,?,?,?)",
+            params![run_id, started_at, model, kind, detail_json],
         )?;
         Ok(())
     }

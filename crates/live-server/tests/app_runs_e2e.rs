@@ -1153,7 +1153,13 @@ async fn single_viewer_run_audience_failure_marks_partial_true() {
 /// 哈希命中、缓存全复用）。
 #[tokio::test(flavor = "multi_thread")]
 async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
-    use live_core::leads::{LeadStatus, ledger_path, read_ledger, read_ledger_guarded};
+    use live_core::leads::LeadStatus;
+    // G2 表形态（design §9.2 行 254）：读取面唯一源 = discovery_leads 表。
+    let ledger_rows = |out_dir: &std::path::Path| -> Vec<live_core::leads::LedgerRow> {
+        let store = live_core::graph::store::Store::open(&out_dir.join("graph/perception.sqlite3"))
+            .expect("store opens");
+        live_core::leads::read_rows(&store).expect("rows read")
+    };
 
     let bilibili = MockServer::start().await;
     mount_bilibili_baseline(&bilibili).await;
@@ -1232,7 +1238,7 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
     assert_eq!(snapshot["partial"], false, "{snapshot}");
 
     // 账本出现 1 条 pending_approval（audience 侧、creator/3001）。
-    let rows = read_ledger(&ledger_path(&out_dir));
+    let rows = ledger_rows(&out_dir);
     assert_eq!(rows.len(), 1, "audience lead 应恰好 1 条账本行：{rows:?}");
     assert_eq!(rows[0].lead_type, "creator");
     assert_eq!(rows[0].locator, "3001");
@@ -1252,24 +1258,20 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
 
     // ── 审批（G2-B 审批缝，原 seam 红线已端点化）：
     // POST /api/rooms/:uid/leads/:lead_id/approve 翻转 pending → approved；
-    // 幂等重放同终态、账本字节不动 ──
+    // 幂等重放同终态、表行逐字段不动 ──
     let approve_path = format!("/api/rooms/983/leads/{}/approve", rows[0].dedupe_key);
     let (status, body) = oneshot(&app, "POST", &approve_path, None).await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(body["status"], "approved", "{body}");
     assert_eq!(body["changed"], true, "{body}");
-    let settled_ledger = std::fs::read_to_string(ledger_path(&out_dir)).unwrap();
+    let settled_ledger = ledger_rows(&out_dir);
     let (status, replay) = oneshot(&app, "POST", &approve_path, None).await;
     assert_eq!(status, 200, "{replay}");
     assert_eq!(replay["status"], "approved", "重放返回相同终态：{replay}");
     assert_eq!(replay["changed"], false, "{replay}");
+    assert_eq!(ledger_rows(&out_dir), settled_ledger, "幂等重放不得写账本");
     assert_eq!(
-        std::fs::read_to_string(ledger_path(&out_dir)).unwrap(),
-        settled_ledger,
-        "幂等重放不得写账本"
-    );
-    assert_eq!(
-        read_ledger_guarded(&ledger_path(&out_dir)).unwrap()[0].status,
+        settled_ledger[0].status,
         LeadStatus::Approved,
         "审批缝翻转已落账本"
     );
@@ -1305,7 +1307,7 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
     assert_eq!(snapshot["outcome"]["status"], "complete", "{snapshot}");
 
     // 对账①：creator 行 consumed + yield_count>0。
-    let rows = read_ledger(&ledger_path(&out_dir));
+    let rows = ledger_rows(&out_dir);
     let consumed = rows
         .iter()
         .find(|r| r.lead_type == "creator" && r.locator == "3001")

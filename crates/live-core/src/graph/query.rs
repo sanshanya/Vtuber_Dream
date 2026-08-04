@@ -192,14 +192,21 @@ pub fn references(
 }
 
 pub fn episodes(store: &Store, viewer_id: &str, limit: Option<i64>) -> Result<Vec<Value>> {
+    // v7 起 episodes 带 lead_id 溯源列（G2）——显式列清单把它挡在读面之外
+    //（本列尚无读面消费者；黄金对账与 tree 端点字段集保持原形状）。
+    const EPISODE_COLUMNS: &str = "episode_id,viewer_id,source,event_type,observed_at,\
+         published_at,title,url,bvid,fields_json,platform_facts_json,content_hash,\
+         first_seen_at,last_seen_at";
     let (sql, args) = if viewer_id.is_empty() {
         (
-            "SELECT * FROM episodes ORDER BY observed_at DESC".to_string(),
+            format!("SELECT {EPISODE_COLUMNS} FROM episodes ORDER BY observed_at DESC"),
             Vec::new(),
         )
     } else {
         (
-            "SELECT * FROM episodes WHERE viewer_id=? ORDER BY observed_at DESC".to_string(),
+            format!(
+                "SELECT {EPISODE_COLUMNS} FROM episodes WHERE viewer_id=? ORDER BY observed_at DESC"
+            ),
             vec![viewer_id.to_string().into()],
         )
     };

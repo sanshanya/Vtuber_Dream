@@ -147,32 +147,16 @@ pub fn collect_with_client(
 
     match collect_inner(&mut client, config, &mode, emit, &started_at, started) {
         Ok(mut summary) => {
-            // M4.x kickoff D5/D6：尾段消费账本（预算 0 秒返=默认休眠；消费失败
-            // 不杀 collection（薄切 fail-open 亲属的对应面）。
-            // R2-F3：单查（SingleViewer）不消费已批准线索——线索消费是把当前
-            // 账本已批准行整体烧尽的 batch 动作，单查是 single-point 增量检查，
-            // 不该动账本（lead_fetch_budget_per_run > 0 也不放行）。
+            // M4.x kickoff D5/D6 → G2 表形态（design §9.2 行 254）：尾段消费
+            // discovery_leads 表（预算 0 秒返=默认休眠；消费失败不杀 collection，
+            // 薄切 fail-open 亲属的对应面）。
+            // R2-F3：单查（SingleViewer）不碰账本——线索消费是把当前账本已批准行
+            // 整体烧尽的 batch 动作，单查是 single-point 增量检查，不该动账本
+            //（lead_fetch_budget_per_run > 0 也不放行；旧 JSONL 迁移同样不触发）。
             let consumed = if single_viewer {
                 0
             } else {
-                // G2-B 自治 L1：消费前先把谓词合格的 pending 行自动迁 approved
-                //（autonomy=0 → 秒返 0，L0 现状纯人工一字不动；R2-F3 单查同样
-                // 不进此闸——单查不动账本是闸门级纪律）。
-                let auto = leads::auto_approve_pending_leads(
-                    &root,
-                    &room_roster(&root, config),
-                    config.collection.leads_autonomy,
-                    emit,
-                );
-                if auto > 0 {
-                    emit(&format!("[LEADS] L1 自动批准 {auto} 条待审线索"));
-                }
-                consume_approved_leads(
-                    &root,
-                    config.collection.lead_fetch_budget_per_run,
-                    &mut |row| fetch_lead_yield(&mut client, row),
-                    emit,
-                )
+                consume_lead_table(&root, config, &mut client, emit)
             };
             if consumed > 0 {
                 emit(&format!("[LEADS] 本轮消费 {consumed} 条已批准线索"));
@@ -232,6 +216,64 @@ pub fn collect_with_client(
             Err(err)
         }
     }
+}
+
+/// G2 尾段账本动作一体化的表形态（design §9.2 行 254）：
+/// 1. 图库不存在且旧 JSONL 账本也不存在 → 秒返 0（鲜房零副作用——不建空库，
+///    Z3 缺图空态不被消费通道提前翻牌）；
+/// 2. 库在（或旧账本需在库）→ 开库 → `migrate_jsonl` 一次性把 M4.x JSONL 导入表并
+///    归档 .bak（幂等；守卫失败响铃+本轮账本停火，MXA-1 同族）；
+/// 3. G2-B 自治 L1 先翻页 → 预算内消费 approved 行。
+///
+/// 全程失败响铃吞纳（返回 0）：账本失败不杀 collection（薄切 fail-open 血脉）。
+fn consume_lead_table(
+    root: &std::path::Path,
+    config: &Config,
+    client: &mut BilibiliClient,
+    emit: &mut dyn FnMut(&str),
+) -> usize {
+    let store_path = root.join("graph").join("perception.sqlite3");
+    let ledger_present = crate::leads::ledger_path(root).exists();
+    if !store_path.exists() && !ledger_present {
+        return 0;
+    }
+    let store = match crate::graph::store::Store::open(&store_path) {
+        Ok(store) => store,
+        Err(err) => {
+            emit(&format!("[LEADS] 图库不可开，本轮账本动作停火：{err}"));
+            return 0;
+        }
+    };
+    match crate::leads::migrate_jsonl(&store, root) {
+        Ok(n) => {
+            if n > 0 {
+                emit(&format!(
+                    "[LEADS] 旧 JSONL 账本入库 {n} 行（原文件归档为 leads.jsonl.bak）"
+                ));
+            }
+        }
+        Err(err) => {
+            emit(&format!("[LEADS] 账本迁移失败，本轮账本动作停火：{err}"));
+            return 0;
+        }
+    }
+    // G2-B 自治 L1：消费前先把谓词合格的 pending 行自动迁 approved
+    //（autonomy=0 → 秒返 0，L0 现状纯人工一字不动）。
+    let auto = leads::auto_approve_pending_leads(
+        &store,
+        &room_roster(root, config),
+        config.collection.leads_autonomy,
+        emit,
+    );
+    if auto > 0 {
+        emit(&format!("[LEADS] L1 自动批准 {auto} 条待审线索"));
+    }
+    consume_approved_leads(
+        &store,
+        config.collection.lead_fetch_budget_per_run,
+        &mut |row| fetch_lead_yield(client, row),
+        emit,
+    )
 }
 
 /// G2-B：本房间既有名册 = viewers/*.json 文件名 ∪ 主播 uid——L1 自动批准的

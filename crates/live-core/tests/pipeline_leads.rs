@@ -1,6 +1,6 @@
-//! M4.x-B 验收（kickoff G3）：线索→账本→下轮上下文摘要（viewer/audience 双注入面），
-//! 同输入重跑账本不增行，强制重跑作用域 annex。
-//! 剧本基座 = tests-fixtures/m4a/viewer_root（两观众），与 pipeline_run.rs 同族。
+//! M4.x-B 验收（kickoff G3）的 G2 表形态（design §9.2 行 254）：线索→discovery_leads
+//! 表→下轮上下文摘要（viewer/audience 双注入面），同输入重跑账本不增行，强制重跑
+//! 作用域 annex。剧本基座 = tests-fixtures/m4a/viewer_root（两观众），与 pipeline_run.rs 同族。
 mod common;
 
 use std::path::Path;
@@ -107,6 +107,12 @@ fn test_config(root: &Path, uri: &str) -> Config {
         },
         report_title: "t".into(),
     }
+}
+
+/// G2 表形态：读取面唯一源 = discovery_leads 表（写账序）。
+fn table_rows(root: &Path) -> Vec<leads::LedgerRow> {
+    let store = Store::open(&root.join("graph/perception.sqlite3")).expect("store opens");
+    leads::read_rows(&store).expect("lead rows read")
 }
 
 fn ep_id(root: &Path, uid: &str) -> String {
@@ -364,7 +370,7 @@ async fn leads_end_to_end_and_rerun_ledger_stable() {
     assert_eq!(result["status"], "complete");
 
     // ── 账本行：两条（viewer 一条 + audience 一条，MXA-6），字段按 kickoff 契约 ──
-    let rows = leads::read_ledger(&leads::ledger_path(tmp.path()));
+    let rows = table_rows(tmp.path());
     assert_eq!(rows.len(), 2);
     let row = &rows[0];
     assert_eq!(row.lead_type, "video");
@@ -420,13 +426,15 @@ async fn leads_end_to_end_and_rerun_ledger_stable() {
         .expect("viewer g1 prompt");
     assert!(!g1_body.contains("[lead_ledger]"), "{g1_body}");
 
-    // ── MXA-5 探针 ②：账本漂移（行状态被人工翻动 + 删账本毁掉幂等锚）
-    // 不影响缓存命中：In「同输入 + 漂移账本」下 run2 不得发 LLM ──
-    let ledger_file = leads::ledger_path(tmp.path());
+    // ── MXA-5 探针 ②（表形态）：账本漂移（行状态被人工翻动 + 删账毁掉幂等锚）
+    // 不影响缓存命中：在「同输入 + 漂移账本」下 run2 不得发 LLM ──
     let mut drifted = rows.clone();
     drifted[0].status = leads::LeadStatus::Approved;
     drifted[0].yield_count = 3;
-    leads::rewrite_ledger(tmp.path(), &drifted).expect("rewrite ok");
+    {
+        let store = Store::open(&tmp.path().join("graph/perception.sqlite3")).unwrap();
+        store.update_lead_row(&drifted[0]).expect("drift ok");
+    }
 
     let llm_count = server.received_requests().await.expect("requests").len();
     let mut knobs = PipelineKnobs::default();
@@ -439,19 +447,33 @@ async fn leads_end_to_end_and_rerun_ledger_stable() {
     .await
     .expect("run2 cache-hit complete");
     assert_eq!(result["status"], "complete");
+    let drifted_back = table_rows(tmp.path());
     assert_eq!(
-        leads::read_ledger(&ledger_file).len(),
+        drifted_back.len(),
         2,
         "账本漂移 dedupe：状态行保留 + 同键不增生"
     );
+    assert_eq!(
+        drifted_back[0].status,
+        leads::LeadStatus::Approved,
+        "人工翻动状态不被 record 回写清洗"
+    );
+    assert_eq!(drifted_back[0].yield_count, 3);
     assert_eq!(
         server.received_requests().await.expect("requests").len(),
         llm_count,
         "缓存命中轮不应再发 LLM 请求（账本漂移不失效 input_hash）"
     );
 
-    // ── MXA-5 探针 ①：删账本后缓存命中重跑 → 账本被**重写回来**（补写真的发生）──
-    std::fs::remove_file(&ledger_file).expect("remove ledger");
+    // ── MXA-5 探针 ①（表形态）：删账后缓存命中重跑 → 账本被**重写回来**（补写真的发生）──
+    {
+        let store = Store::open(&tmp.path().join("graph/perception.sqlite3")).unwrap();
+        store
+            .conn
+            .execute("DELETE FROM discovery_leads", [])
+            .expect("wipe ledger");
+    }
+    assert_eq!(table_rows(tmp.path()).len(), 0, "删账前置态");
     let mut knobs = PipelineKnobs::default();
     let result = run_pipeline(
         test_config(tmp.path(), &server.uri()),
@@ -462,11 +484,11 @@ async fn leads_end_to_end_and_rerun_ledger_stable() {
     .await
     .expect("run3 cache-hit complete");
     assert_eq!(result["status"], "complete");
-    let rebuilt = leads::read_ledger(&ledger_file);
+    let rebuilt = table_rows(tmp.path());
     assert_eq!(rebuilt.len(), 2, "账本被缓存命中路径补写回来");
     assert_eq!(rebuilt[0].dedupe_key, rows[0].dedupe_key);
     assert_eq!(rebuilt[1].dedupe_key, rows[1].dedupe_key);
-    // 补写的行是新一轮 pending_approval（漂移状态并未硬保：账本删除=重新开局）
+    // 补写的行是新一轮 pending_approval（漂移状态并未硬保：删账=重新开局）
     assert_eq!(rebuilt[0].status, leads::LeadStatus::PendingApproval);
 }
 
@@ -495,7 +517,7 @@ async fn force_rerun_scoped_annex_and_ledger_deduped() {
     assert_eq!(result["status"], "complete");
 
     // dedupe：强制重跑（viewer+audience 重跑 + leads 重复写入）→ 账本仍 2 行
-    assert_eq!(leads::read_ledger(&leads::ledger_path(tmp.path())).len(), 2);
+    assert_eq!(table_rows(tmp.path()).len(), 2);
 
     // 作用域 annex：g1 看 own_pending=1、g2 看 0；audience 全局 annex 再次在场
     let bodies = prompt_bodies(&server).await;
