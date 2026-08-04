@@ -73,7 +73,14 @@ export default function App() {
     <>
       <header className="hero">
         <div className="container">
-          <h1>{rooms.data?.[0]?.project_name ?? "live-audience"}</h1>
+          {/* 英雄区名字 = 主播本人（C 端面向）；工程代号退到角落徽标（overview 尚未返回
+              或 streamer 缺档时，名字栏回退工程代号——不会悬出空 hero）。 */}
+          <h1>
+            {typeof overviewData.streamer?.name === "string" && overviewData.streamer.name
+              ? overviewData.streamer.name
+              : (rooms.data?.[0]?.project_name ?? "live-audience")}
+            <span className="badge hero-project">{rooms.data?.[0]?.project_name ?? ""}</span>
+          </h1>
           {/* Z3 定稿序：主播介绍（首页）→ 舰长列表 → 直播数据 → 线索账本（末位）→ 图谱 → 设置。 */}
           <nav className="nav">
             <a href="#/">主播介绍</a>

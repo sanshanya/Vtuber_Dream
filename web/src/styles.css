@@ -89,3 +89,6 @@ table.data-table td{vertical-align:middle}
 .avatar-fallback{align-items:center}
 .viewer-cell{display:flex;align-items:center;gap:8px}
 .guard-chip strong{flex:1;min-width:0}
+
+/* 英雄区项目代号徽标：半透明白，附于主播名后，不显抢。 */
+.badge.hero-project{margin-left:12px;color:rgba(255,255,255,.72);background:rgba(255,255,255,.10);border-color:transparent;font-weight:400;vertical-align:middle}
