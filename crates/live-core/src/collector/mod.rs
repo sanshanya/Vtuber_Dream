@@ -1,9 +1,8 @@
 //! Collector 编排基底（移植 Python `collector.py` 的 normalize 集）。
 //!
 //! 移植策略（design M2）：normalize 集直连 Python 锚 fixture（tests-fixtures/m2/normalize.json）。
-//! 编排层（collect_viewer 预算循环 / enrich 一次写盘 / collect() 主入口）拆到 `run.rs`。
-//! 本节只到：**normalize 集 + _status/_content_id/_brief/collect_text**（负扫描：`profile` 误差完全不加掩盖上限，
-//! `games` 无 id 规律化，Python 索引函数 `if_empty(index)` 保留英文化英文）。
+//! 编排层（collect_viewer 预算循环 / enrich 逐文件写回（仅动变更文件）/ collect() 主入口）拆到 `run/`。
+//! 本节只到：**normalize 集 + _status/_content_id/_brief/collect_text**。
 //!
 //! 哲学红线（AGENTS.md「AI-first，但不是 AI-only」）：AI 毒探搜索委托给 `bilibili.rs`/`runtime.rs`，本模块只做**原样重组**
 //! 公开字段，不进行任何语义推断。

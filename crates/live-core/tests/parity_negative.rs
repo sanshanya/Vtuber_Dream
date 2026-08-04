@@ -654,3 +654,142 @@ fn duplicate_active_edges_no_folding_documented() {
     // 权重累加（0.9+0.1=1.0）下仍然正常合并为单社区——分叉点在聚合数值而非崩溃。
     assert_eq!(graph["communities"].as_array().unwrap().len(), 1);
 }
+
+// ---------------------------------------------------------------------------
+// 13. tests-fixtures/viewers/edge_cases.json 边界样本：
+//     (a) 空 sources 全链不 panic 且恰产 0 条 episode；
+//     (b) 超长动态文本按「字符」截断后先进字段、再进 content_version，
+//         截断边界用 validate_span 双向钉死。
+// ---------------------------------------------------------------------------
+
+/// 加载 tests-fixtures/viewers/edge_cases.json（顶层 {"note", "viewers": [...]}）。
+fn load_edge_cases_fixture() -> Value {
+    serde_json::from_str(
+        &std::fs::read_to_string(
+            Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("../../tests-fixtures/viewers/edge_cases.json"),
+        )
+        .unwrap(),
+    )
+    .unwrap()
+}
+
+/// edge_cases.json 的单条包装是 {"viewer", "sources": {"profile", ...}}——profile
+/// 嵌在 sources 内。build_viewer_episodes 实际消费的是 demo-1.json 形态：顶层
+/// {"viewer", "collected_at", "profile", "sources"}（evidence.rs:94/97 分别读
+/// viewer["viewer"]/viewer["profile"]）。此处就地抬升为等价 Value，不动 fixture 本体。
+fn edge_case_viewer_value(blob: &Value, sources: Value) -> Value {
+    json!({
+        "viewer": blob["viewer"].clone(),
+        "collected_at": FIXED_NOW,
+        "profile": blob["sources"]["profile"].clone(),
+        "sources": sources,
+    })
+}
+
+#[test]
+fn edge_case_empty_sources_build_no_panic_and_expected_count() {
+    // 钉什么：全空 sources 的观众走 build_viewer_episodes 全链不 panic，且恰好 0 条 episode。
+    // 不钉出什么事：profile 状态元数据若被误当内容产出幽灵 episode、或空 items 触发
+    // 索引/切片 panic，episode 集合与 episode_id 会静默畸变并污染下游图谱。
+    let fixture = load_edge_cases_fixture();
+    let blob = &fixture["viewers"][0];
+    assert_eq!(blob["viewer"]["id"].as_str().unwrap(), "edge-1");
+    let viewer = edge_case_viewer_value(blob, blob["sources"].clone());
+    let episodes = build_viewer_episodes(&viewer, 1000);
+    // 期望 0 条，推理出处（非回填魔法数）：
+    // - profile：evidence.rs:99-106 仅当 sign(4_000)/official_title(2_000) 截断拼接后
+    //   非空才产候选；edge-1 的 profile 只有 {"status","count","detail"} 元数据、无文本
+    //   → 0 候选；
+    // - dynamics/videos/favorites：items 为空数组，evidence.rs:157-160 拿到空 Vec，
+    //   内层 for 空转 → 各 0 候选；
+    // - followings/bangumi/games：键缺失 → get_value 回 Value::Null，非数组直接 continue；
+    // - 0 候选 → build.rs:210-219 episodes_from_context 对空数组 map → 0 条 Episode。
+    assert_eq!(
+        episodes.len(),
+        0,
+        "edge-1 全空 sources 不得产出任何 episode"
+    );
+}
+
+#[test]
+fn edge_case_long_dynamic_text_truncated_before_content_version() {
+    // 钉什么：超过 20_000 字符的 DYNAMIC_TYPE_WORD 长文，必须先按「字符」截断到
+    // description 字段（20_000 双闸门：evidence.rs:206 的 source_text + build.rs:47-52
+    // 的 make_field），截断后的文本再进 content_version → episode_id。
+    // 不钉出什么事：截断出现 off-by-one（多/少一个字符，或按字节而非字符截）时，
+    // version_doc 里的 fields 文本变动 → content_version → episode_id 全链静默漂移，
+    // 且下游 span 校验会对错误的文本基准给出假阳性。
+    let fixture = load_edge_cases_fixture();
+    let blob = &fixture["viewers"][1];
+    assert_eq!(blob["viewer"]["id"].as_str().unwrap(), "edge-2");
+    // fixture 原文路径 viewers[1].sources.dynamics.items[0].text（实测 1402 字符，
+    // 本身不超限）。viewer_evidence 只消费 raw["description"]（evidence.rs:206）、
+    // 不读 "text" 键，故测试内把原文放大 15 倍（21030 字符 > 20_000）栽到
+    // description 槽位；原 "text" 键原样保留，fixture 文件不动。
+    let base_text = blob["sources"]["dynamics"]["items"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let long_text = base_text.repeat(15);
+    assert!(
+        long_text.chars().count() > 20_000,
+        "栽入文本必须超过 20_000 字符才能观测截断"
+    );
+    let sources = json!({
+        "dynamics": {
+            "status": "ok",
+            "count": 1,
+            "items": [{
+                "id": "long-1",
+                "type": "DYNAMIC_TYPE_WORD",
+                "text": base_text,
+                "description": long_text,
+            }]
+        }
+    });
+    let viewer = edge_case_viewer_value(blob, sources);
+    let episodes = build_viewer_episodes(&viewer, 1000);
+    // dynamics 恰一条 item → 恰 1 条 episode（profile 同为元数据块、无 sign 不出候选）。
+    assert_eq!(episodes.len(), 1, "edge-2 应恰好产出 1 条 dynamic episode");
+    let episode = &episodes[0];
+    assert_eq!(episode.viewer_id, "edge-2");
+    assert!(episode.episode_id.starts_with("episode:edge-2:"));
+
+    // 承载长文本的字段：episode field "description"
+    // （raw.description → episode.fields[path="description"]，build.rs:47-52）。
+    let desc = episode
+        .field_text("description")
+        .expect("description 字段必须存在");
+    let desc_len = desc.chars().count();
+    // 任务钉：承载字段字符数 ≤ limit 20_000。
+    assert!(desc_len <= 20_000, "description 不得超过 20_000 字符");
+    // 更强钉：21030 字符栽入 → 恰截到 20_000（chars 单位，非字节、非 20_000±1）。
+    assert_eq!(desc_len, 20_000, "description 必须按字符恰截到 20_000");
+
+    // validate_span 偏移单位为「字符」（seeds.rs:143-150，char_len/char_slice），
+    // 校验基准是 episode 内存的截断后文本。
+    // 尾部合法区间 [len-10, len) 必须被接受（返回 None）。
+    let tail: String = desc.chars().skip(desc_len - 10).collect();
+    assert_eq!(
+        validate_span(
+            episode,
+            "description",
+            &tail,
+            (desc_len - 10) as i64,
+            desc_len as i64,
+        ),
+        None,
+        "截断后文本尾部 [len-10, len) 的 span 必须被接受"
+    );
+    // 越出截断边界：起点 = truncated_len + 1 的 span 必须被拒（end > total → invalid offsets）。
+    let rejected = validate_span(
+        episode,
+        "description",
+        "发布会很精彩。",
+        desc_len as i64 + 1,
+        desc_len as i64 + 2,
+    )
+    .expect("越过截断边界的 span 必须返回错误");
+    assert!(rejected.contains("invalid offsets"), "{rejected}");
+}
