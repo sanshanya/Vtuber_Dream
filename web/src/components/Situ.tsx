@@ -63,8 +63,9 @@ export function Situ({ analysis, synthetic = false }: { analysis: SituAnalysis; 
         {/* W2/r1-F1：合成标记是「反事实」元信息，不穿 fact 层色——裸 badge 无层色。
             四层调色只服务 事实/推断/状态/行动 的内容分层，元标记不入层。 */}
         {synthetic && (
+          // FE-F2/R1#8：键名不贴屏——徽标只留人话（样式类名仍裸 badge，元标记不入层）。
           <span className="badge" data-testid="situ-synthetic">
-            synthetic_demo 合成演示数据
+            合成演示数据
           </span>
         )}
         {summary.length > 0 && <Markdown text={summary} />}

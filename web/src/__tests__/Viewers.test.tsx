@@ -127,4 +127,20 @@ describe("Viewers 单查入口的单飞互斥契约（R3-F1）：409 → 转入�
     await waitFor(() => expect(screen.getByText(/转为跟随其进度/)).toBeTruthy());
     expect(screen.queryByText(/单查提交被拒/)).toBeNull();
   });
+
+  // R3#3：拒单错是错误面——走 badge danger；.notice 只留非错提示。
+  it("422 拒单 →「单查提交被拒」以 badge danger 呈现（不占 notice 非错面）", async () => {
+    stubFetchPlan({
+      "/api/rooms/983/viewers": [{ status: 200, body: "[]" }],
+      "/api/runs": [{ status: 422, body: JSON.stringify({ error: "viewer_uid 非法" }) }],
+    });
+    renderViewers();
+    await waitFor(() => expect(screen.getByTestId("empty-pool-hint")).toBeTruthy());
+    fireEvent.change(screen.getByLabelText("单查观众 uid"), { target: { value: "1003" } });
+    fireEvent.click(screen.getByRole("button", { name: "单查该观众" }));
+    const badge = await waitFor(() => screen.getByText(/单查提交被拒：viewer_uid 非法/));
+    expect(badge.className).toContain("badge");
+    expect(badge.className).toContain("danger");
+    expect(badge.className).not.toContain("notice");
+  });
 });

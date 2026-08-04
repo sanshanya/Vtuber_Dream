@@ -1,6 +1,7 @@
 import { useState } from "react";
 
-import { activeRunIdFrom, api, RUN_KIND_LABELS, type RunKind } from "../api";
+import { RUN_KIND_LABELS, type RunKind } from "../api";
+import { useStartRun } from "../hooks/useStartRun";
 import { useRunTracker } from "./RunTracker";
 
 /** Z4 动作平面：四个分层 kind（full 走谨慎 RunButton；viewer 走舰长表单）。 */
@@ -20,28 +21,27 @@ interface RunMessage {
  */
 export function KindRunButton({ kind, note }: { kind: StagedKind; note?: string }) {
   const tracker = useRunTracker();
-  const [message, setMessage] = useState<RunMessage | null>(null);
+  const { start, error, clearError, followedId } = useStartRun();
+  const [submitted, setSubmitted] = useState<string | null>(null);
 
   async function trigger() {
-    setMessage(null);
-    try {
-      const { run_id } = await api.startRun({ kind });
-      tracker.track(run_id);
-      setMessage({
-        tone: "muted",
-        text: `已提交 ${run_id.slice(0, 8)}…进度见页头徽标，完成后本页自动刷新`,
-      });
-    } catch (error) {
-      const text = String(error instanceof Error ? error.message : error);
-      const active = activeRunIdFrom(text);
-      if (active) {
-        tracker.track(active);
-        setMessage({ tone: "muted", text: "已有进行中的 run——页头徽标转为跟随其进度" });
-      } else {
-        setMessage({ tone: "danger", text });
-      }
-    }
+    clearError();
+    setSubmitted(null);
+    const runId = await start({ kind });
+    if (runId !== null) setSubmitted(runId);
   }
+
+  // 消息面三分（Z4 文案不变）：跟随 > 首发 > 就地拒单错。
+  const message: RunMessage | null = followedId
+    ? { tone: "muted", text: "已有进行中的 run——页头徽标转为跟随其进度" }
+    : submitted
+      ? {
+          tone: "muted",
+          text: `已提交 ${submitted.slice(0, 8)}…进度见页头徽标，完成后本页自动刷新`,
+        }
+      : error
+        ? { tone: "danger", text: error }
+        : null;
 
   return (
     <span className="kind-run" data-testid={`kind-run-${kind}`}>

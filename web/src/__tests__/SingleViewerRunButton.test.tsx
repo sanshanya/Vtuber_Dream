@@ -3,11 +3,13 @@
  * - 成功：submit 登记进全局 RunTracker（与 Viewers 单查同源）；
  * - 409：错文里的在飞 run_id 提取后转为跟随，入口翻成跟随态（同 KindRunButton 契约），
  *   不就地裸报错。
+ * R3#4：submitted 不是永久锁——tracker 见到 tracked run 终态后释放，入口恢复可再发。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { type RunRecordView } from "../api";
 import { SingleViewerRunButton } from "../components/SingleViewerRunButton";
 import { RunTrackerProvider, useRunTracker } from "../components/RunTracker";
 
@@ -32,6 +34,23 @@ function stubFetchPlan(plan: FetchPlan) {
       } as Response;
     }),
   );
+}
+
+/** run 轮询帧（shape 同 RunTracker.test 的 makeRecord：渲染面只读 status/events 等键）。 */
+function makeRecord(over: Partial<RunRecordView>): RunRecordView {
+  return {
+    run_id: "beef1234aa",
+    kind: "viewer",
+    viewer_uid: "1001",
+    force: false,
+    status: "collecting",
+    started_at: "2026-08-04T00:00:00+00:00",
+    finished_at: null,
+    partial: false,
+    outcome: null,
+    events: [],
+    ...over,
+  };
 }
 
 function harness(node: React.ReactNode) {
@@ -83,5 +102,27 @@ describe("SingleViewerRunButton 单查触发钮（kind=viewer 单飞互斥契约
     // 入口状态翻转为跟随态（已提交 → 进度由页头徽标接管），且无错误徽标。
     await waitFor(() => expect(screen.getByRole("button", { name: /已提交/ })).toBeTruthy());
     expect(screen.queryByText(/409/)).toBeNull();
+  });
+
+  it("R3#4：在飞中禁发；tracker 见终态后释放 submitted，入口恢复可再发", async () => {
+    stubFetchPlan({
+      "/api/runs": [{ status: 202, body: JSON.stringify({ run_id: "beef1234aa" }) }],
+      // 第一帧在飞（collecting），第二帧终态（done）——RUN_POLL_INTERVAL_MS=1500 一拍翻终。
+      "/api/runs/beef1234aa": [
+        { status: 200, body: JSON.stringify(makeRecord({ status: "collecting" })) },
+        { status: 200, body: JSON.stringify(makeRecord({ status: "done" })) },
+      ],
+    });
+    harness(<SingleViewerRunButton vid="1001" />);
+    fireEvent.click(screen.getByRole("button", { name: "触发该观众单查" }));
+    // 在飞中：入口翻转「已提交」且禁发。
+    const submitted = await waitFor(() => screen.getByRole("button", { name: /已提交/ }));
+    expect((submitted as HTMLButtonElement).disabled).toBe(true);
+    // 终态拍到达 → submitted 释放 → 入口回「触发该观众单查」且可再发。
+    const rearmed = await waitFor(
+      () => screen.getByRole("button", { name: "触发该观众单查" }),
+      { timeout: 4000 },
+    );
+    expect((rearmed as HTMLButtonElement).disabled).toBe(false);
   });
 });

@@ -43,7 +43,8 @@ export function Leads({ roomId }: { roomId: string }) {
       </section>
     );
   }
-  const autonomy = overview.data.leads?.autonomy === 1;
+  // F3：overview 接口收紧后 pending 变体 data 类型含 undefined（F3 单宽限；他单重做消费面时收回）。
+  const autonomy = overview.data?.leads?.autonomy === 1;
   return (
     <section className="section card">
       <div className="section-title">
@@ -58,7 +59,7 @@ export function Leads({ roomId }: { roomId: string }) {
         </span>
       )}
       <LeadsBlock
-        leads={overview.data.leads ?? {}}
+        leads={overview.data?.leads ?? {}}
         onApprove={(leadId) => approve.mutate(leadId)}
         busyLeadId={busyLeadId}
       />

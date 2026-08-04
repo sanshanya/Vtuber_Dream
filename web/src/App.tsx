@@ -1,15 +1,63 @@
 import { useQuery } from "@tanstack/react-query";
+import { lazy, Suspense } from "react";
 
-import { api } from "./api";
+import { api, type OverviewView } from "./api";
 import { RunStatusBadge } from "./components/RunButton";
-import { GraphPage } from "./pages/GraphPage";
 import { Leads } from "./pages/Leads";
 import { Live } from "./pages/Live";
 import { Settings } from "./pages/Settings";
 import { Streamer } from "./pages/Streamer";
 import { ViewerTree } from "./pages/ViewerTree";
 import { Viewers } from "./pages/Viewers";
-import { useHashPath } from "./router";
+import { matchRoute, useHashPath, type PageId } from "./router";
+
+/** R4-F1：图谱页（cytoscape 是重组件）拆 chunk——生产构建出独立分包，首屏不背图。 */
+const GraphPage = lazy(() =>
+  import("./pages/GraphPage").then((module) => ({ default: module.GraphPage })),
+);
+
+/**
+ * footer synthetic 徽标的析取口径（W2/r5-F3，R3#6 单源）：collection/ai/situation
+ * 任一 synthetic_demo=true → 亮；三分段全缺席/全 false → 不亮（合成标示宁可缺席，
+ * 不许凭失败/缺省臆造）。注：Streamer/Situ 内的同源口径是他单辖区，保留不动。
+ */
+export function isSyntheticRun(overview: OverviewView | undefined): boolean {
+  return (
+    overview?.collection?.synthetic_demo === true ||
+    overview?.ai?.synthetic_demo === true ||
+    overview?.situation?.synthetic_demo === true
+  );
+}
+
+/** 页面键 → 组件实体装配（ROUTES 数据表在 router.tsx；懒加载缝只开图谱两路）。 */
+function renderPage(page: PageId, params: string[], roomId: string) {
+  switch (page) {
+    case "streamer":
+      return <Streamer roomId={roomId} />;
+    case "viewers":
+      return <Viewers roomId={roomId} />;
+    case "viewer-tree":
+      return <ViewerTree roomId={roomId} vid={params[0]} />;
+    case "viewer-graph":
+      return (
+        <Suspense fallback={<div className="empty">载入图谱…</div>}>
+          <GraphPage roomId={roomId} vid={params[0]} />
+        </Suspense>
+      );
+    case "graph":
+      return (
+        <Suspense fallback={<div className="empty">载入图谱…</div>}>
+          <GraphPage roomId={roomId} />
+        </Suspense>
+      );
+    case "live":
+      return <Live roomId={roomId} />;
+    case "leads":
+      return <Leads roomId={roomId} />;
+    case "settings":
+      return <Settings />;
+  }
+}
 
 export default function App() {
   const segments = useHashPath();
@@ -17,18 +65,16 @@ export default function App() {
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const roomId = rooms.data?.[0]?.id;
   // W2/r5-F3：synthetic_demo 全局明示（README「页面以徽标明示」承诺兑现）。
-  // 数据面沿用 Streamer 的 collection/ai/situation 任一析取口径；overview 失败
-  // 静默缺省——合成标示宁可缺席，不许凭失败臆造。
+  // overview 失败静默缺省——合成标示宁可缺席，不许凭失败臆造。
   const overview = useQuery({
     queryKey: ["overview", roomId],
     queryFn: () => api.overview(roomId!),
     enabled: roomId !== undefined,
   });
-  const overviewData = overview.data ?? {};
-  const syntheticDemo =
-    overviewData.collection?.synthetic_demo === true ||
-    overviewData.ai?.synthetic_demo === true ||
-    overviewData.situation?.synthetic_demo === true;
+  const syntheticDemo = isSyntheticRun(overview.data);
+  // hero 房间名：streamer.name 优先（房间 = 主播），缺档回落项目名。
+  const streamerName = overview.data?.streamer?.name;
+  const route = matchRoute(segments);
 
   let page;
   if (rooms.isError) {
@@ -42,23 +88,7 @@ export default function App() {
   } else if (!roomId) {
     // ag4-F7：查询成功但空数组不得悬挂「正在连接」——显式空态。
     page = <div className="notice">服务端未配置任何房间（/api/rooms 返回空）。</div>;
-  } else if (segments.length === 0) {
-    page = <Streamer roomId={roomId} />;
-  } else if (segments[0] === "viewers" && segments.length === 1) {
-    page = <Viewers roomId={roomId} />;
-  } else if (segments[0] === "viewers" && segments.length === 3 && segments[2] === "tree") {
-    page = <ViewerTree roomId={roomId} vid={segments[1]} />;
-  } else if (segments[0] === "viewers" && segments.length === 3 && segments[2] === "graph") {
-    page = <GraphPage roomId={roomId} vid={segments[1]} />;
-  } else if (segments[0] === "live" && segments.length === 1) {
-    page = <Live roomId={roomId} />;
-  } else if (segments[0] === "leads" && segments.length === 1) {
-    page = <Leads roomId={roomId} />;
-  } else if (segments[0] === "graph" && segments.length === 1) {
-    page = <GraphPage roomId={roomId} />;
-  } else if (segments[0] === "settings" && segments.length === 1) {
-    page = <Settings />;
-  } else {
+  } else if (route === null) {
     page = (
       <div className="notice">
         未知路径。
@@ -67,6 +97,8 @@ export default function App() {
         </a>
       </div>
     );
+  } else {
+    page = renderPage(route.page, route.params, roomId);
   }
 
   return (
@@ -97,8 +129,8 @@ export default function App() {
             title="当前房间（房间 = 主播）"
             data-testid="room-current"
           >
-            {typeof overviewData.streamer?.name === "string" && overviewData.streamer.name
-              ? overviewData.streamer.name
+            {typeof streamerName === "string" && streamerName
+              ? streamerName
               : (rooms.data?.[0]?.project_name ?? "直播房间")}
           </a>
           <RunStatusBadge />

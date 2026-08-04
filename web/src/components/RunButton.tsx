@@ -1,8 +1,9 @@
 import { useState } from "react";
 
-import { activeRunIdFrom, api, type RunRecordView } from "../api";
+import { type RunRecordView } from "../api";
 import { RUN_EVENTS_CAP } from "../constants";
 import { fmtTime } from "../format";
+import { useStartRun } from "../hooks/useStartRun";
 import { useRunTracker } from "./RunTracker";
 
 /** outcome.error 摘取（failed 终局体的唯一用户可读位；非对象 outcome → null）。 */
@@ -73,25 +74,13 @@ export function RunStatusBadge() {
  */
 export function RunButton({ viewerCount }: { viewerCount?: number | null }) {
   const tracker = useRunTracker();
+  const { start, error: submitError, clearError } = useStartRun();
   const [armed, setArmed] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
 
   async function trigger() {
     setArmed(false);
-    setSubmitError(null);
-    try {
-      const { run_id } = await api.startRun({ kind: "full" });
-      tracker.track(run_id);
-    } catch (error) {
-      const message = String(error instanceof Error ? error.message : error);
-      // 409：服务端互斥——错文携带在飞 run_id，改跟随而非裸报错（后端契约字样）。
-      const active = activeRunIdFrom(message);
-      if (active) {
-        tracker.track(active);
-      } else {
-        setSubmitError(message);
-      }
-    }
+    clearError();
+    await start({ kind: "full" });
   }
 
   return (

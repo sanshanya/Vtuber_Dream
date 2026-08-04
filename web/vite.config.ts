@@ -11,7 +11,6 @@ export default defineConfig({
       "/api": { target: DEV_PROXY_TARGET, changeOrigin: true },
     },
   },
-  build: { outDir: "dist" },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}"],

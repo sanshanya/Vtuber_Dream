@@ -89,6 +89,19 @@ describe("RunButton 谨慎双段确认（Z4 全量感知敏感钮）", () => {
     fireEvent.click(screen.getByRole("button", { name: "确认触发全量感知" }));
     await waitFor(() => expect(screen.getByTestId("run-id").textContent).toBe("abc12345"));
   });
+
+  // R3#2：全量钮与分层钮同契约——409 错文提取在飞 run_id 转跟随，不裸报错。
+  it("409（错文含在飞 run_id）→ 转为跟随在飞 run，不就地报错", async () => {
+    stubFetchPlan({
+      "/api/runs": [
+        { status: 409, body: JSON.stringify({ error: "已有进行中的 run（a1b2c3d4），待其到达终态后再触发" }) },
+      ],
+    });
+    harness(<RunButton />);
+    fireEvent.click(screen.getByRole("button", { name: "触发全量感知" }));
+    fireEvent.click(screen.getByRole("button", { name: "确认触发全量感知" }));
+    await waitFor(() => expect(screen.getByTestId("run-id").textContent).toBe("a1b2c3d4"));
+  });
 });
 
 describe("KindRunButton 分层动作钮（Z4）", () => {

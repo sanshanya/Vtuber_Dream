@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { EmptyPoolHint } from "../pages/Viewers";
+import { EmptyPoolHint } from "../components/EmptyPoolHint";
 
 /** 空池引导位是纯组件：uid 接线 + 提交时序由 props 走，不摸 fetch。 */
 function Harness(props: { onSubmit: () => void }) {

@@ -48,3 +48,8 @@ export function fmtTime(iso: string | null | undefined): string {
 export function fmtInt(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "—";
 }
+
+/** unknown 捕获件 → 用户可读本（Error 取 message，其余 String 化）：submit/加载面唯一口径（ag5-F4 同源）。 */
+export function errText(error: unknown): string {
+  return String(error instanceof Error ? error.message : error);
+}

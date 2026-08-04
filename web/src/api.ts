@@ -1,8 +1,14 @@
 /**
  * /api 客户端薄层（D3 端点表逐行兑现）。
- * run 记录与 config 面按真实响应收窄成接口；viewer/tree/graph 体量大、
- * 渲染面只「前进式取用」 → 保持 loose，转发即渲染。
+ * run 记录与 config 面按真实响应收窄成接口；F3 批再把 overview/tree 两面收口成
+ * 分段接口（已知键给字面量，index signature 慎用）——分段与服务端 app.rs 的
+ * json! 键一一对应；graph 体量大仍保持 loose，转发即渲染。
  */
+
+import type { LeadsView } from "./components/LeadsBlock";
+import type { MentionSpanLike } from "./components/MentionText";
+import type { StreamerProfile } from "./components/StreamerCard";
+import type { UsageRow } from "./format";
 
 const API_BASE = "/api";
 
@@ -61,17 +67,108 @@ export interface ViewerRow {
   ai_stale: boolean | null;
 }
 
-/** 个人树面（/tree）：渲染面前进式取用 → viewer/ai/episodes/mentions 保持松散，
- * ai_stale 是 Z5c 时效位的确定性面（三处消费面同源同型）。 */
+/**
+ * /rooms/{uid}/overview 响应面（F3 收口：原 request<any> 收窄；R2#2/#3）。
+ * 分段与服务端 app.rs room_overview 的 json! 键一一对应；工件原样透传段
+ * （streamer profile / live.records 行 / situation.analysis）保持窄形状，
+ * 消费侧沿用 presence 判别，不补齐不存在的数字。
+ */
+export interface OverviewView {
+  room_id?: string;
+  streamer_uid?: string;
+  project_name?: string;
+  /** 主播卡数据面：streamer.json 的 profile 段原样透传；缺文件 → null 空态。 */
+  streamer?: StreamerProfile | null;
+  /** 直播档案面：shared/live_records.json 透传；records 行形状随 B站接口漂移 → 行级 Record。 */
+  live?: {
+    status?: string;
+    count?: number;
+    records?: Array<Record<string, unknown>>;
+  } | null;
+  /** 图存量指标面（Z3 指标条）；无图态 → null（前端显「—」，不臆造数字）。 */
+  graph_stats?: Record<string, number> | null;
+  /** collection.json 透传（M4.x-T1 schema 冻结读取侧）。 */
+  collection?: CollectionView;
+  /** ai/state.json 透传（舰长 AI 聚合运行态）。 */
+  ai?: AiJobView;
+  /** ai/situation.json 透传（audience 段产物）。 */
+  situation?: SituationView;
+  /** G2 表形态读面唯一源（discovery_leads 表）；型单源在 LeadsBlock。 */
+  leads?: LeadsView;
+  /** 双 run delta（baseline 臂同形）；页面现无消费面板 → 窄 unknown。 */
+  delta?: unknown;
+}
+
+export interface CollectionView {
+  status?: string;
+  started_at?: string | null;
+  finished_at?: string | null;
+  viewer_count?: number;
+  /** W2/r5-F3 合成标示写位（三处分段随工件周期漂移，前端析取不绑定单一来源位）。 */
+  synthetic_demo?: boolean;
+  leads_consumed?: number;
+}
+
+export interface AiJobView {
+  status?: string | null;
+  completed_at?: string | null;
+  synthetic_demo?: boolean;
+  /** state.json.usage 原始五键（金额换算只在 format.ts，URL: D8 单屏单口径）。 */
+  usage?: UsageRow | null;
+}
+
+export interface SituationView {
+  status?: string;
+  /** LLM 产物形状漂移（ag4-F6 无 schema 校验）——Situ 消费侧 String() 护栏。 */
+  analysis?: Record<string, unknown> | null;
+  synthetic_demo?: boolean;
+}
+
+/** viewers/{uid}.json 原料形状（前进式取用：已知键字面量 + 透传租约）。 */
+export interface ViewerPayload {
+  schema_version?: number;
+  viewer?: { name?: string | null };
+  profile?: { name?: string | null; face?: string | null };
+  collected_at?: string | null;
+}
+
+/** ai/perception/viewers/{uid}.json 缓存形状；analysis 段 LLM 产物 → 消费侧护栏。 */
+export interface ViewerAiCache {
+  status?: string | null;
+  analysis?: Record<string, unknown> | null;
+}
+
+/** Episode 时间线行（live-core graph/query.rs EPISODE_COLUMNS 读面形状）。 */
+export interface EpisodeRow {
+  episode_id: string;
+  source?: string;
+  event_type?: string;
+  observed_at?: string;
+  published_at?: string;
+  title?: string | null;
+  url?: string | null;
+  bvid?: string | null;
+  fields?: Array<{ path: string; text: string; kind: string }>;
+}
+
+/** mention 明细行（mentions_of_viewer 左外联形状 + MentionText 渲染缝）。 */
+export interface MentionRow extends MentionSpanLike {
+  episode_id?: string;
+  field_path?: string;
+  origin?: string;
+  confidence?: number;
+}
+
+/** 个人树面（/tree）：F3 收口——viewer/ai 按服务端组装形状给段，episodes/mentions
+ * 行型安在本文件（消费面 ViewerTree.tsx import）。ai_stale 是 Z5c 时效位的确定性面。 */
 export interface ViewerTreeView {
   uid: string;
-  /** 观众原料 JSON 原样透传（viewer/profile/collected_at…）。 */
-  viewer: any;
-  /** ai/perception/viewers/{uid}.json 缓存原样透传。 */
-  ai: any;
+  viewer: ViewerPayload;
+  /** 无感知缓存 → null（ai_stale 同位 null）。 */
+  ai: ViewerAiCache | null;
   ai_stale: boolean | null;
-  episodes: any[];
-  mentions: any[];
+  episodes: EpisodeRow[];
+  mentions: MentionRow[];
 }
 
 export interface ConfigView {
@@ -121,7 +218,8 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const api = {
   rooms: () => request<Room[]>("GET", "/rooms"),
-  overview: (roomId: string) => request<any>("GET", `/rooms/${encodeURIComponent(roomId)}/overview`),
+  overview: (roomId: string) =>
+    request<OverviewView>("GET", `/rooms/${encodeURIComponent(roomId)}/overview`),
   viewers: (roomId: string) =>
     request<ViewerRow[]>("GET", `/rooms/${encodeURIComponent(roomId)}/viewers`),
   viewerTree: (roomId: string, vid: string) =>

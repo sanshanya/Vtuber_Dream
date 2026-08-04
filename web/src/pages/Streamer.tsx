@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api, isApiError } from "../api";
 import { AiStaleBadge } from "../components/AiStaleBadge";
+import { Avatar } from "../components/Avatar";
 import { KindRunButton } from "../components/KindRunButton";
 import { RunButton } from "../components/RunButton";
 import { Situ } from "../components/Situ";
@@ -51,6 +52,11 @@ export function Streamer({ roomId }: { roomId: string }) {
     );
   }
   const data = overview.data;
+  if (!data) {
+    // react-query 类型面有 pending-not-fetching 变体（isLoading/isError 双守卫外的静水区；
+    // 本查询无 enabled 门、运行期不可达）——显式落空态，不裸解引用。
+    return <div className="empty">载入主播资料…</div>;
+  }
   const collection = data.collection ?? {};
   const ai = data.ai ?? {};
   const situation = data.situation ?? {};
@@ -146,10 +152,10 @@ export function Streamer({ roomId }: { roomId: string }) {
           {cost !== null && <span className="badge action">估算花费 {fmtCny(cost)}</span>}
         </div>
         {cost !== null && (
+          // R1#9：价目内联公示，不再指引跳源码（constants.ts TOKEN_RATES 同值真源）。
           <p className="muted small">
-            花费为上限估算（按缓存未命中费率折算，价目见
-            <code>web/src/constants.ts</code>）· LLM 请求 {fmtInt(usage?.llm_requests)} 次 ·
-            工具调用 {fmtInt(usage?.tool_calls)} 次
+            花费为上限估算（按缓存未命中费率折算：输入 ¥2 / 输出 ¥8 每百万 token）· LLM 请求{" "}
+            {fmtInt(usage?.llm_requests)} 次 · 工具调用 {fmtInt(usage?.tool_calls)} 次
           </p>
         )}
         {/* 旧版站四层语色 legend（分层哲学肉眼可见）。 */}
@@ -178,12 +184,8 @@ export function Streamer({ roomId }: { roomId: string }) {
           <div className="guard-strip" data-testid="guard-strip">
             {viewers.data.map((row) => (
               <a className="guard-chip" key={row.uid} href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>
-                {row.face ? (
-                  // hdslb 图片防盗链：必须 referrerPolicy="no-referrer"。
-                  <img src={row.face} alt="" className="avatar avatar-xs" referrerPolicy="no-referrer" loading="lazy" />
-                ) : (
-                  <span className="avatar avatar-xs avatar-fallback">{(row.name ?? "?").slice(0, 1)}</span>
-                )}
+                {/* R2#7：头像统一面走 Avatar（防盗链/首字 fallback 单源；strip 档 = xs 26px）。 */}
+                <Avatar face={row.face} name={row.name} size="xs" />
                 <strong>{row.name ?? row.uid}</strong>
                 <span className={`badge${row.ai_completed ? " state" : ""}`}>
                   {row.ai_status ?? "—"}

@@ -7,6 +7,7 @@
  * 时逐字段空态降级，绝不臆造（demo 布景无 profile → 引导文案 + 双外链仍在）。
  */
 import { fmtInt } from "../format";
+import { NoReferrerImg } from "./NoReferrerImg";
 
 export interface StreamerProfile {
   uid?: unknown;
@@ -44,16 +45,12 @@ export function StreamerCard({
   return (
     <section className="section card streamer-card" data-testid="streamer-card">
       {face ? (
-        // hdslb 图片防盗链：必须 referrerPolicy="no-referrer"。
-        <img
-          src={face}
-          alt={`${name} 头像`}
-          className="streamer-face"
-          referrerPolicy="no-referrer"
-          loading="lazy"
-        />
+        // 防盗链理由源头注在 Avatar.tsx——主播卡用 NoReferrerImg 直封（110px 自定义档，
+        // 非 Avatar 三档家谱）。alt 直陈是谁的头像（主播名即意义本体，非陪衬装饰）。
+        <NoReferrerImg src={face} alt={`${name} 头像`} className="streamer-face" />
       ) : (
-        <div className="streamer-face streamer-face-fallback" aria-label="无头像">
+        // FE-F2/R3#9：aria-label 挂在通用 div 上须补 role（img=图片语义），否则读屏丢弃标签。
+        <div className="streamer-face streamer-face-fallback" role="img" aria-label="无头像">
           {name.slice(0, 1) || "?"}
         </div>
       )}

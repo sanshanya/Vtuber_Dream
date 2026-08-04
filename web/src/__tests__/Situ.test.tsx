@@ -51,12 +51,14 @@ describe("Situ 四层 badge（ag1-F1：计数与逐项同层）", () => {
     expect(countBadge?.className).toBe("badge ai");
   });
 
-  it("synthetic=true → synthetic_demo 徽标显形；默认不显", () => {
+  it("FE-F2/R1#8：synthetic=true → 合成徽标显形（键名不贴屏）；默认不显", () => {
     const { unmount } = render(<Situ analysis={ANALYSIS} />);
     expect(screen.queryByTestId("situ-synthetic")).toBeNull();
     unmount();
     render(<Situ analysis={ANALYSIS} synthetic />);
-    expect(screen.getByTestId("situ-synthetic").textContent).toContain("synthetic_demo");
+    const badge = screen.getByTestId("situ-synthetic");
+    expect(badge.textContent).toBe("合成演示数据");
+    expect(badge.textContent).not.toContain("synthetic_demo");
   });
 
   it("W3/r1-F1：合成标记是反事实元信息——裸 badge 不带四层类名", () => {

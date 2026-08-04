@@ -1,79 +1,29 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
-import { activeRunIdFrom, api, type ViewerRow } from "../api";
+import { api, type ViewerRow } from "../api";
 import { AiStaleBadge } from "../components/AiStaleBadge";
+import { EmptyPoolHint } from "../components/EmptyPoolHint";
 import { KindRunButton } from "../components/KindRunButton";
 import { useRunTracker } from "../components/RunTracker";
-import { fmtTime } from "../format";
-
-/**
- * 观众列表（D3）+ 空池单查引导位（§12 冷启动 / M5-C 签名件）。
- * EmptyPoolHint 是纯组件：uid 串与提交接线由 props 入——vitest 不摸 fetch。
- */
-export function EmptyPoolHint(props: {
-  uid: string;
-  pending: boolean;
-  /** 单飞互斥契约：有在飞 run 时禁触发钮（文本框照旧可输入）。 */
-  runActive: boolean;
-  onUidChange: (uid: string) => void;
-  onSubmit: () => void;
-}) {
-  return (
-    <div className="notice" data-testid="empty-pool-hint">
-      <h3>观众池为空</h3>
-      <p>
-        全量感知以大航海名单为入口；名单为空时可以<strong>单查指定观众</strong>
-        作为冷启动种子（seed_source=manual）。
-      </p>
-      <div className="toolbar">
-        <input
-          aria-label="单查观众 uid"
-          placeholder="B站观众 uid（如 1003 或 demo-1）"
-          value={props.uid}
-          onChange={(event) => props.onUidChange(event.target.value)}
-        />
-        <button
-          disabled={props.pending || props.uid.trim() === "" || props.runActive}
-          onClick={props.onSubmit}
-        >
-          {props.pending ? "已提交…" : "单查该观众"}
-        </button>
-      </div>
-    </div>
-  );
-}
+import { errText, fmtTime } from "../format";
+import { useStartRun } from "../hooks/useStartRun";
 
 export function Viewers({ roomId }: { roomId: string }) {
   const viewers = useQuery({ queryKey: ["viewers", roomId], queryFn: () => api.viewers(roomId) });
   const tracker = useRunTracker();
+  // ag4-F1/ag5-F3：单查 run 走 useStartRun 登记进全局 RunTracker——hero 徽标轮询 +
+  // 终态全失效兑现「完成后列表自动刷新」；R3-F1：409 错文在飞 id 由 hook 转跟随。
+  const { start, error: singleError, followedId } = useStartRun();
   const [singleUid, setSingleUid] = useState("");
-  const [singleError, setSingleError] = useState<string | null>(null);
-  const [followedRun, setFollowedRun] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
   const [submittedRun, setSubmittedRun] = useState<string | null>(null);
 
   async function submitSingle() {
-    setSingleError(null);
-    setFollowedRun(null);
     setPending(true);
     try {
-      const { run_id } = await api.startRun({ kind: "viewer", viewer_uid: singleUid.trim() });
-      setSubmittedRun(run_id);
-      // ag4-F1/ag5-F3：单查 run 登记进全局 RunTracker——hero 徽标轮询 + 终态全失效
-      // 兑现「完成后列表自动刷新」。
-      tracker.track(run_id);
-    } catch (error) {
-      const text = String(error instanceof Error ? error.message : error);
-      // R3-F1：viewer 属单飞互斥契约——409 错文在飞 id 转 RunTracker 跟随
-      //（与 KindRunButton 同构），不裸报错。
-      const active = activeRunIdFrom(text);
-      if (active) {
-        tracker.track(active);
-        setFollowedRun(active);
-      } else {
-        setSingleError(text);
-      }
+      const runId = await start({ kind: "viewer", viewer_uid: singleUid.trim() });
+      if (runId !== null) setSubmittedRun(runId);
     } finally {
       setPending(false);
     }
@@ -84,7 +34,7 @@ export function Viewers({ roomId }: { roomId: string }) {
   }
   if (viewers.isError) {
     // ag5-F5：错别字修正（面面→列表）。
-    return <div className="notice">观众列表加载失败：{String(viewers.error instanceof Error ? viewers.error.message : viewers.error)}</div>;
+    return <div className="notice">观众列表加载失败：{errText(viewers.error)}</div>;
   }
   const rows = viewers.data ?? [];
 
@@ -116,13 +66,14 @@ export function Viewers({ roomId }: { roomId: string }) {
       ) : (
         <ViewerTable rows={rows} />
       )}
-      {singleError && <div className="notice">单查提交被拒：{singleError}</div>}
-      {followedRun && (
+      {/* R3#3：拒单错是错误面——badge danger；.notice 只留空池引导等非错提示。 */}
+      {singleError && <span className="badge danger">单查提交被拒：{singleError}</span>}
+      {followedId && (
         <p className="muted small">
-          已有进行中的 run（{followedRun.slice(0, 8)}…）——页头徽标转为跟随其进度。
+          已有进行中的 run（{followedId.slice(0, 8)}…）——页头徽标转为跟随其进度。
         </p>
       )}
-      {submittedRun && (
+      {submittedRun && followedId === null && (
         <p className="muted small">
           已触发单查 run：<code>{submittedRun}</code>
           ——完成后列表自动刷新；进度与 events 流见页面顶部页头徽标。

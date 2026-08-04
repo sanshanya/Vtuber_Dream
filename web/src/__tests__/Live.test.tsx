@@ -4,6 +4,10 @@
  * - records 空 → live-empty 空态；
  * - 最后一场 + 7 天内场次 → 「上周均值」卡呈算术平均（1 场样本口径直陈）；
  * - 周窗未含旧场（>7 天）→ 不纳入均值（对比未开句式）。
+ * FE-F2 追加钉团：
+ * - status 汉化三态（ok→正常 / error→接口故障 / 缺省→—）；
+ * - error 分支独立错文并透传 errors 字段（不再撞「主播暂无回放列表」空态）；
+ * - 指标列落地（观看/弹幕/在线）：记录真实携带才渲值，缺席 → —。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -107,5 +111,100 @@ describe("Live 直播数据页（Z4）", () => {
     await waitFor(() => expect(screen.getByTestId("live-week-avg")).toBeTruthy());
     expect(screen.getByTestId("live-week-avg").textContent).toContain("0 场样本");
     expect(screen.getByText(/对比未开/)).toBeTruthy();
+  });
+});
+
+describe("FE-F2：Live 三修", () => {
+  it("status 汉化：ok → 正常", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        live: {
+          status: "ok",
+          count: 1,
+          records: [{ title: "A", start_time: T_LAST, end_time: T_LAST + 3600 }],
+        },
+      }),
+    );
+    renderLive();
+    await waitFor(() => expect(screen.getByTestId("live-status").textContent).toContain("正常"));
+    expect(screen.getByTestId("live-status").textContent).toContain("1 场");
+  });
+
+  it("status 缺省/未知 → —", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        live: {
+          count: 0,
+          records: [],
+        },
+      }),
+    );
+    renderLive();
+    await waitFor(() => {
+      const badge = screen.getByTestId("live-status");
+      expect(badge.textContent).toContain("—");
+      expect(badge.textContent).not.toContain("undefined");
+    });
+  });
+
+  it("error 分支：独立错文并透传 errors，不再撞「主播暂无回放列表」", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        live: {
+          status: "error",
+          count: 0,
+          errors: ["HTTP 412：风控拦截，record/getList 被平台拒绝"],
+          records: [],
+        },
+      }),
+    );
+    renderLive();
+    await waitFor(() => {
+      const badge = screen.getByTestId("live-status");
+      expect(badge.textContent).toContain("接口故障");
+    });
+    const notice = screen.getByTestId("live-error");
+    expect(notice.textContent).toContain("HTTP 412：风控拦截，record/getList 被平台拒绝");
+    expect(notice.textContent).not.toContain("主播暂无回放列表");
+    expect(screen.queryByTestId("live-empty")).toBeNull();
+  });
+
+  it("指标列落地：记录携带 watch_num/danmu_num/online → 渲值；缺席 → —", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        live: {
+          status: "ok",
+          count: 2,
+          records: [
+            {
+              title: "全场次",
+              start_time: T_LAST,
+              end_time: T_LAST + 3600,
+              watch_num: 1051,
+              danmu_num: 233,
+              online: 66,
+            },
+            { title: "裸场次", start_time: T_WEEK, end_time: T_WEEK + 1800 },
+          ],
+        },
+      }),
+    );
+    renderLive();
+    await waitFor(() => expect(screen.getByTestId("live-last")).toBeTruthy());
+    const head = Array.from(document.querySelectorAll("table.data-table thead th")).map(
+      (th) => th.textContent,
+    );
+    expect(head).toEqual(["封面", "场次", "开播时间", "时长", "分区", "观看", "弹幕", "在线"]);
+    const rows = document.querySelectorAll("table.data-table tbody tr");
+    expect(rows.length).toBe(2);
+    expect(rows[0].textContent).toContain("1051");
+    expect(rows[0].textContent).toContain("233");
+    expect(rows[0].textContent).toContain("66");
+    const cells = Array.from(rows[1].querySelectorAll("td")).map((td) => td.textContent);
+    expect(cells.slice(5)).toEqual(["—", "—", "—"]);
   });
 });

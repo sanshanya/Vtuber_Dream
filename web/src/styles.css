@@ -1,10 +1,104 @@
 /* 视觉资产：整体移植自 Python 报告层（原 live-audience report.py CSS）；
-   M5-web 追加段集中在文件尾（run 通道 / 图谱画布 / 设置表单）。 */
+   M5-web 追加段集中在文件尾（run 通道 / 图谱画布 / 设置表单）。
+   F3 清场（R2#4/#6）：零命中族整族删（.badge.hero-project / .runtime-status /
+   .relation/.arrow / .evidence / .tree details / .hero p），保活族按家族断行。 */
 
+/* ---- 主题与基件 ---- */
 :root{color-scheme:light dark;--bg:#f4f6f8;--panel:#fff;--panel2:#f8fafc;--text:#17212b;--muted:#667085;--line:#d8dee8;--accent:#2563eb;--accent2:#7c3aed;--good:#15803d;--warn:#b45309;--danger:#b42318;--shadow:0 8px 28px rgba(15,23,42,.08)}
 @media(prefers-color-scheme:dark){:root{--bg:#0d1117;--panel:#161b22;--panel2:#0f141b;--text:#e6edf3;--muted:#8b949e;--line:#30363d;--accent:#58a6ff;--accent2:#a78bfa;--good:#3fb950;--warn:#d29922;--danger:#f85149;--shadow:none}}
-*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:14px/1.65 Inter,"Segoe UI","Microsoft YaHei",sans-serif}.container{width:min(1440px,calc(100% - 36px));margin:auto}.hero{padding:34px 0 28px;background:linear-gradient(135deg,#111827,#1e3a8a 58%,#6d28d9);color:white}.hero h1{font-size:32px;margin:0 0 8px}.hero p{max-width:980px;margin:0;color:#dbeafe}.nav{display:flex;gap:16px;margin-top:10px}.nav a{color:#dbeafe;text-decoration:none}.nav a:hover{text-decoration:underline}.section{margin:24px auto}.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:var(--shadow)}.grid{display:grid;gap:16px}.stats{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));margin-top:-22px;position:relative}.stat strong{display:block;font-size:27px;line-height:1.2}.stat span,.muted{color:var(--muted)}.two{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}.three{grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}.section-title{display:flex;justify-content:space-between;align-items:end;gap:16px;margin-bottom:12px}.section-title h2,.card h2{margin:0}.card h3{margin:4px 0 8px}.badges{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0}.badge{display:inline-flex;align-items:center;padding:3px 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);font-size:12px}.badge.fact{border-color:#60a5fa}.badge.ai{border-style:dashed;border-color:#a78bfa}.badge.state{border-color:#34d399}.badge.action{border-color:#f59e0b}.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px}table{width:100%;border-collapse:collapse;min-width:760px}th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}th{position:sticky;top:0;background:var(--panel2);z-index:1}tr:last-child td{border-bottom:0}a{color:var(--accent)}.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}.toolbar input,.toolbar select,.toolbar button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:8px 10px}.toolbar input{min-width:260px}.toolbar button{cursor:pointer}.viewer-head{display:flex;align-items:center;gap:14px;margin-bottom:18px}.avatar{width:58px;height:58px;border-radius:50%;object-fit:cover;background:var(--panel2);border:1px solid var(--line)}.small{font-size:12px}.protocol{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-all;white-space:pre-wrap}.evidence{border-left:3px solid var(--line);padding:10px 13px;margin:12px 0;background:var(--panel2);border-radius:0 10px 10px 0}.evidence h4{margin:0 0 5px}.field{margin:8px 0;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);white-space:pre-wrap;word-break:break-word}mark{background:#fde68a;color:#422006;border-radius:3px;padding:0 2px}.relation{display:grid;grid-template-columns:minmax(120px,1fr) auto minmax(120px,1fr);gap:8px;align-items:center;padding:8px 0;border-bottom:1px solid var(--line)}.relation:last-child{border-bottom:0}.arrow{color:var(--accent2);font-weight:700}.notice{border:1px solid #f59e0b;background:color-mix(in srgb,#f59e0b 10%,var(--panel));border-radius:12px;padding:14px}.legend{display:flex;flex-wrap:wrap;gap:12px}.legend span{display:inline-flex;align-items:center;gap:6px}.dot{width:10px;height:10px;border-radius:50%;display:inline-block}.dot.fact{background:#3b82f6}.dot.ai{background:#8b5cf6}.dot.state{background:#10b981}.dot.action{background:#f59e0b}.timeline{border-left:2px solid var(--line);margin-left:8px;padding-left:18px}.timeline-item{position:relative;margin:0 0 18px}.timeline-item:before{content:"";position:absolute;left:-24px;top:7px;width:10px;height:10px;border-radius:50%;background:var(--accent)}.empty{color:var(--muted);padding:18px;text-align:center}.graph-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}.canvas-wrap{height:720px;position:relative;overflow:hidden;padding:0}.graph-side{height:720px;overflow:auto}.kv{display:grid;grid-template-columns:110px 1fr;gap:6px 10px}.kv dt{color:var(--muted)}.kv dd{margin:0;word-break:break-word}.footer{color:var(--muted);padding:28px 0 50px}.tree details{margin:8px 0}.tree summary{cursor:pointer;font-weight:600}@media(max-width:900px){.graph-layout{grid-template-columns:1fr}.graph-side{height:auto}.canvas-wrap{height:560px}.hero h1{font-size:26px}.container{width:min(100% - 22px,1440px)}}
-.badge{white-space:nowrap}.runtime-status details,.card details{margin-top:12px}.runtime-status summary,.card summary{cursor:pointer;font-weight:600}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:14px/1.65 Inter,"Segoe UI","Microsoft YaHei",sans-serif}
+.container{width:min(1440px,calc(100% - 36px));margin:auto}
+a{color:var(--accent)}
+
+/* ---- hero / 导航 ---- */
+.hero{padding:34px 0 28px;background:linear-gradient(135deg,#111827,#1e3a8a 58%,#6d28d9);color:white}
+.hero h1{font-size:32px;margin:0 0 8px}
+.nav{display:flex;gap:16px;margin-top:10px}
+.nav a{color:#dbeafe;text-decoration:none}
+.nav a:hover{text-decoration:underline}
+
+/* ---- 版面骨架 ---- */
+.section{margin:24px auto}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:18px;box-shadow:var(--shadow)}
+.grid{display:grid;gap:16px}
+.two{grid-template-columns:repeat(auto-fit,minmax(330px,1fr))}
+.three{grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
+.section-title{display:flex;justify-content:space-between;align-items:end;gap:16px;margin-bottom:12px}
+.section-title h2,.card h2{margin:0}
+.card h3{margin:4px 0 8px}
+.footer{color:var(--muted);padding:28px 0 50px}
+
+/* ---- 指标条（签名六宫格族） ---- */
+.stats{grid-template-columns:repeat(auto-fit,minmax(145px,1fr));margin-top:-22px;position:relative}
+.stat strong{display:block;font-size:27px;line-height:1.2}
+.stat span,.muted{color:var(--muted)}
+
+/* ---- 徽标族 ---- */
+.badges{display:flex;flex-wrap:wrap;gap:7px;margin:8px 0}
+.badge{display:inline-flex;align-items:center;padding:3px 9px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);font-size:12px}
+.badge{white-space:nowrap}
+.badge.fact{border-color:#60a5fa}
+.badge.ai{border-style:dashed;border-color:#a78bfa}
+.badge.state{border-color:#34d399}
+.badge.action{border-color:#f59e0b}
+
+/* ---- 表格族 ---- */
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px}
+table{width:100%;border-collapse:collapse;min-width:760px}
+th,td{text-align:left;padding:11px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+th{position:sticky;top:0;background:var(--panel2);z-index:1}
+tr:last-child td{border-bottom:0}
+
+/* ---- 工具条 / 表单 ---- */
+.toolbar{display:flex;flex-wrap:wrap;gap:10px;margin:12px 0}
+.toolbar input,.toolbar select,.toolbar button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:9px;padding:8px 10px}
+.toolbar input{min-width:260px}
+.toolbar button{cursor:pointer}
+
+/* ---- 头像族（三档 + fallback；防盗链封装见 components/Avatar.tsx） ---- */
+.viewer-head{display:flex;align-items:center;gap:14px;margin-bottom:18px}
+.avatar{width:58px;height:58px;border-radius:50%;object-fit:cover;background:var(--panel2);border:1px solid var(--line)}
+/* F3：Viewers 表内头像档——缺席时吃满 .avatar 的 58px 大块是真 bug，补 34px 档（圆角同族 50%）。 */
+.avatar-sm{width:34px;height:34px;font-size:14px}
+
+/* ---- 文本杂件 ---- */
+.small{font-size:12px}
+.protocol{font-family:ui-monospace,SFMono-Regular,Consolas,monospace;word-break:break-all;white-space:pre-wrap}
+.field{margin:8px 0;padding:9px 10px;border:1px solid var(--line);border-radius:9px;background:var(--panel);white-space:pre-wrap;word-break:break-word}
+mark{background:#fde68a;color:#422006;border-radius:3px;padding:0 2px}
+.notice{border:1px solid #f59e0b;background:color-mix(in srgb,#f59e0b 10%,var(--panel));border-radius:12px;padding:14px}
+
+/* ---- 四层语色 legend / dot ---- */
+.legend{display:flex;flex-wrap:wrap;gap:12px}
+.legend span{display:inline-flex;align-items:center;gap:6px}
+.dot{width:10px;height:10px;border-radius:50%;display:inline-block}
+.dot.fact{background:#3b82f6}
+.dot.ai{background:#8b5cf6}
+.dot.state{background:#10b981}
+.dot.action{background:#f59e0b}
+
+/* ---- 时间线（个人树） ---- */
+.timeline{border-left:2px solid var(--line);margin-left:8px;padding-left:18px}
+.timeline-item{position:relative;margin:0 0 18px}
+.timeline-item:before{content:"";position:absolute;left:-24px;top:7px;width:10px;height:10px;border-radius:50%;background:var(--accent)}
+.empty{color:var(--muted);padding:18px;text-align:center}
+
+/* ---- 图谱画布布局 ---- */
+.graph-layout{display:grid;grid-template-columns:minmax(0,1fr) 360px;gap:16px}
+.canvas-wrap{height:720px;position:relative;overflow:hidden;padding:0}
+.graph-side{height:720px;overflow:auto}
+
+/* ---- 键值面 ---- */
+.kv{display:grid;grid-template-columns:110px 1fr;gap:6px 10px}
+.kv dt{color:var(--muted)}
+.kv dd{margin:0;word-break:break-word}
+
+/* ---- 卡内 details 折叠 ---- */
+.card details{margin-top:12px}
+.card summary{cursor:pointer;font-weight:600}
+
+@media(max-width:900px){.graph-layout{grid-template-columns:1fr}.graph-side{height:auto}.canvas-wrap{height:560px}.hero h1{font-size:26px}.container{width:min(100% - 22px,1440px)}}
 
 /* ---- M5-web 追加段 ---- */
 
@@ -87,12 +181,9 @@ table.data-table td{vertical-align:middle}
 
 /* Z3 追加段：舰长头像列 / 指标条 / 观众单元 */
 .avatar-xs{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--panel2);border:1px solid var(--line);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--muted)}
-.avatar-fallback{align-items:center}
+.avatar-fallback{display:inline-flex;align-items:center;justify-content:center}
 .viewer-cell{display:flex;align-items:center;gap:8px}
 .guard-chip strong{flex:1;min-width:0}
-
-/* 英雄区项目代号徽标：半透明白，附于主播名后，不显抢。 */
-.badge.hero-project{margin-left:12px;color:rgba(255,255,255,.72);background:rgba(255,255,255,.10);border-color:transparent;font-weight:400;vertical-align:middle}
 
 /* 当前房间名（房间=主播）：runbar 里与触发钮并列的实心浅底 pill——位置即身份。 */
 .room-current{display:inline-flex;align-items:center;padding:7px 14px;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-weight:700;text-decoration:none;border:1px solid rgba(255,255,255,.35);white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis}
@@ -117,3 +208,16 @@ table.data-table td{vertical-align:middle}
 .run-confirm-actions{display:flex;gap:10px}
 .run-confirm-actions button{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:9px;padding:8px 14px;cursor:pointer;font:inherit}
 .run-confirm-actions .primary{background:var(--accent);border:0;color:#fff}
+
+/* ---- FE-F2 追加段：图谱层色变量 + 详情徽标 + a11y 清单 ----
+   层色唯一锚点：GraphPage 画布 KIND_COLORS（cytoscape canvas 不解析 var()，
+   3.31 实测判 invalid 回落基色，故那边保留同值字面锚）与所有 DOM 面
+   （详情 kind 徽标等 inline style 引用）同源本组变量——数值走形只改这里一处。 */
+:root{--layer-viewer:#2563eb;--layer-entity:#7c3aed;--layer-mention:#94a3b8;--layer-episode:#0891b2;--layer-state:#15803d;--layer-action:#b45309}
+@media(prefers-color-scheme:dark){:root{--layer-viewer:#58a6ff;--layer-entity:#a78bfa;--layer-mention:#8b949e;--layer-episode:#22d3ee;--layer-state:#3fb950;--layer-action:#d29922}}
+/* 图谱详情 kind 徽标：底色由 GraphPage inline style 注入 var(--layer-*)，文字反白。 */
+.graph-kind-chip{color:#fff;border-color:transparent}
+/* R3#9 a11y：cytoscape canvas 外叠的节点清单——视觉藏、焦点可达
+   （禁 display:none/visibility:hidden，二者会连焦点与读屏一起灭）。 */
+.graph-a11y{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;list-style:none}
+.graph-a11y li:focus{outline:2px solid var(--accent);outline-offset:1px}
