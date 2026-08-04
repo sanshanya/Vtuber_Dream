@@ -596,6 +596,201 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
 }
 
 // ---------------------------------------------------------------------------
+// Z4 动作平面 e2e：collect_streamer 事实层终局 / ai_viewers 停点 / ai_audience 续跑
+// ---------------------------------------------------------------------------
+
+fn build_zip_fixture(
+    bilibili_uri: &str,
+    llm_uri: Option<&str>,
+) -> (tempfile::TempDir, PathBuf, axum::Router, Registry) {
+    let tmp = tempfile::tempdir().unwrap();
+    let out_dir: PathBuf = tmp.path().join("out");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let yaml = common::yaml_template(
+        None,
+        "m5d-staged",
+        "SESSDATA=test",
+        "test-key",
+        llm_uri.unwrap_or("http://127.0.0.1:9/v1"),
+        "m5d-staged",
+    )
+    .replace(
+        "OUTPUT_DIR",
+        &out_dir.display().to_string().replace('\\', "/"),
+    );
+    let config_path = tmp.path().join("config.yaml");
+    std::fs::write(&config_path, yaml).unwrap();
+    let registry = Registry::new();
+    let app = build_app(AppState {
+        config_path: config_path.clone(),
+        web_root: tmp.path().join("no-dist"),
+        registry: registry.clone(),
+        demo: false,
+        data_root: None,
+        bilibili_hosts: Some((bilibili_uri.to_string(), bilibili_uri.to_string())),
+        config_write_lock: Default::default(),
+    });
+    (tmp, config_path, app, registry)
+}
+
+fn run_terminal(run_id: &str, registry: &Registry, timeout: Duration) -> Value {
+    let record = registry.get(run_id).expect("run registered");
+    let finished = wait_until(timeout, || {
+        let r = record.lock().expect("record poisoned");
+        r.status == "done" || r.status == "failed"
+    });
+    let snapshot = live_server::registry::run_to_json(&record.lock().expect("record poisoned"));
+    assert!(finished, "run 未在 {:?} 内到终：{snapshot}", timeout);
+    snapshot
+}
+
+/// Z4a：collect_streamer = 事实层终局——主播产物在位、观众面不生、AI 面未涉、无需 LLM。
+#[tokio::test(flavor = "multi_thread")]
+async fn staged_collect_streamer_is_facts_only_terminal() {
+    let bilibili = MockServer::start().await;
+    mount_bilibili_baseline(&bilibili).await;
+    let (_tmp, config_path, app, registry) = build_zip_fixture(&bilibili.uri(), None);
+    let out_dir = live_core::config::load_config(&config_path)
+        .expect("config loads")
+        .output_dir;
+
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "collect_streamer"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    assert_eq!(snapshot["kind"], "collect_streamer");
+
+    // 主播事实面在位；观众面/AI 面都不该生（动作语义=只采主播）。
+    assert!(
+        out_dir.join("streamer.json").exists(),
+        "主播 profile 面板应落盘"
+    );
+    assert_eq!(read(&out_dir.join("collection.json"))["status"], "complete");
+    let viewers_dir = out_dir.join("viewers");
+    assert!(
+        !viewers_dir.exists()
+            || std::fs::read_dir(&viewers_dir)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true),
+        "collect_streamer 不得写 viewers/：{viewers_dir:?}"
+    );
+    assert!(
+        !out_dir.join("ai/state.json").exists(),
+        "collect_streamer 不得涉 AI 状态面"
+    );
+}
+
+/// Z4b/c：同一份采集面先 ai_viewers（收口到 viewer 阶段停点、态势不动），
+/// 再 ai_audience（观众哈希命中短路过，平稳入 audience 落定态势）。
+#[tokio::test(flavor = "multi_thread")]
+async fn staged_ai_viewers_stops_then_ai_audience_completes_situation() {
+    let bilibili = MockServer::start().await;
+    mount_bilibili_baseline(&bilibili).await;
+    let llm = MockServer::start().await;
+    let cell: Cell = Arc::new((Mutex::new(HashMap::new()), Condvar::new()));
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(DynamicSubmit {
+            cell: cell.clone(),
+            model: "m5d-staged".to_string(),
+            fail_audience: false,
+        })
+        .mount(&llm)
+        .await;
+    let (_tmp, config_path, app, registry) = build_zip_fixture(&bilibili.uri(), Some(&llm.uri()));
+    let out_dir = live_core::config::load_config(&config_path)
+        .expect("config loads")
+        .output_dir;
+
+    // 布景：不经服务端，直接同模式落一次采集面（SingleViewer=1003——本布景 yaml 无
+    // additional_viewer_ids，Guards 空名单会拒采；单查种子自带 1003 即够生成采集面）。
+    // 纪律（W2-C1 同刃）：blocking client 绝不能在 async ctx 直调——scoped 线程卸出去。
+    let config = live_core::config::load_config(&config_path).expect("config loads");
+    let bilibili_host = bilibili.uri();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let client = live_core::bilibili::BilibiliClient::with_origin(
+                    &bilibili_host,
+                    &bilibili_host,
+                    &config.bilibili.cookie,
+                    config.collection.request_delay_seconds,
+                    config.collection.timeout_seconds,
+                )
+                .expect("client builds");
+                let mut emit_fn = |_: &str| {};
+                live_core::collector::run::collect_with_client(
+                    client,
+                    &config,
+                    live_core::collector::run::CollectMode::SingleViewer("1003".to_string()),
+                    &mut emit_fn,
+                )
+                .expect("seed collect completes");
+            })
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+    });
+    assert!(
+        out_dir.join("viewers").join("1003.json").exists(),
+        "布景采集应落 viewers/1003.json"
+    );
+
+    // 一颗大头：先填 viewer 提交体——ai_viewers 跑通后）钉停点。
+    let (viewer_submission, audience_submission) = derive_submissions(&out_dir);
+    fill(&cell, "viewer", viewer_submission);
+    fill(&cell, "audience", audience_submission);
+
+    // —— ai_viewers：跑到 viewer 阶段收口，audience 不启 ——
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "ai_viewers"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(90));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    assert_eq!(
+        snapshot["outcome"]["stage_terminal"], "per_viewer_ai",
+        "{snapshot}"
+    );
+    let state_path = out_dir.join("ai/state.json");
+    let state = read(&state_path);
+    assert_eq!(state["status"], "complete");
+    assert_eq!(state["stage_terminal"], "per_viewer_ai", "{state}");
+    assert!(
+        !out_dir.join("ai/situation.json").exists(),
+        "ai_viewers 不得产态势面（situation 未动）"
+    );
+
+    // —— ai_audience：viewer 哈希命中短路，走 audience 落定 ——
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "ai_audience"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(90));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    assert!(
+        out_dir.join("ai/situation.json").exists(),
+        "ai_audience 必须落定态势面"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // partial=true e2e（kickoff M6-B 挂账消化 2）：audience 期失败 → failed(partial)
 // ---------------------------------------------------------------------------
 

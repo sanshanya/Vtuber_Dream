@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "./api";
-import { RunButton } from "./components/RunButton";
+import { RunStatusBadge } from "./components/RunButton";
 import { GraphPage } from "./pages/GraphPage";
 import { Leads } from "./pages/Leads";
 import { Live } from "./pages/Live";
@@ -86,7 +86,8 @@ export default function App() {
             <a href="#/settings">设置</a>
           </nav>
         </div>
-        {/* design §10「全部页头触发钮」裁决：hero 单点挂载；追踪态由 RunTracker 全局共享。
+        {/* Z4c：hero 去触发钮——动作全数落页（哪个页面数据由哪个动作产出，钮住哪），
+            hero 只保留只读状态徽标（RunTracker 全局共享，任何页面触发的 run 在此回报）。
             房间模型：当前房间 = 主播名（房间即主播），名列最前，点击回主播介绍页；
             「＋房间」行为 = 引导（跳设置页），多房间后端不在本原型。 */}
         <div className="container hero-runbar">
@@ -100,7 +101,7 @@ export default function App() {
               ? overviewData.streamer.name
               : (rooms.data?.[0]?.project_name ?? "直播房间")}
           </a>
-          <RunButton />
+          <RunStatusBadge />
           <a
             className="room-entry"
             href="#/settings"

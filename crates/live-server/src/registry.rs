@@ -27,6 +27,16 @@ pub const RUN_STATES: [&str; 7] = [
 /// POST 可提的 kind 值（D3）。
 pub const RUN_KINDS: [&str; 2] = ["full", "viewer"];
 
+/// Z4 动作平面：采集/AI 分层的四个新 kind（全名面，冻结给 api.ts 的 RunKind）。
+/// collect_* 是事实层（不进 baseline/pipeline）；ai_* 是认知层（不进 collector——
+/// AI 幂等靠 pipeline 既有 complete_cache(input_hash) 短路，不碰采集面）。
+pub const RUN_KINDS_STAGED: [&str; 4] = [
+    "collect_streamer",
+    "collect_guards",
+    "ai_viewers",
+    "ai_audience",
+];
+
 fn utc_now() -> String {
     // 与 Python 时间戳同形（秒+微秒+ +00:00）；不新拉 chrono 进 live-server。
     live_core::episodes::now_iso()
@@ -250,13 +260,20 @@ impl Registry {
                     move |message: &str| events.push(message)
                 };
                 emit(&format!("[runs] 触发 kind={kind}"));
-                registry.set_status(&run_id, "collecting");
+                // Z4：动作平面分层——ai_* 只跑认知层（baseline+pipeline），不进 collector
+                // 的 reset_output 屠刀（采集 + reset 会灭 ai/ 缓存，动作语义必须干净）。
+                let ai_only = matches!(kind.as_str(), "ai_viewers" | "ai_audience");
+                if !ai_only {
+                    registry.set_status(&run_id, "collecting");
+                }
                 let mode = match kind.as_str() {
                     "viewer" => live_core::collector::run::CollectMode::SingleViewer(
                         viewer_uid.clone().unwrap_or_default(),
                     ),
+                    "collect_streamer" => live_core::collector::run::CollectMode::StreamerOnly,
                     _ => live_core::collector::run::CollectMode::Guards,
                 };
+                let collect_only = kind.starts_with("collect_");
                 let client = match &bilibili_hosts {
                     Some((api, live)) => live_core::bilibili::BilibiliClient::with_origin(
                         api,
@@ -277,16 +294,24 @@ impl Registry {
                 let inner_registry = registry.clone();
                 let inner_run_id = run_id.clone();
                 let outcome: Result<Value, String> = (move || {
-                    // 阶段①：collection
-                    let client = client.map_err(|error| error.to_string())?;
-                    let mut emit_fn = |message: &str| emit(message);
-                    live_core::collector::run::collect_with_client(
-                        client,
-                        &config,
-                        mode,
-                        &mut emit_fn,
-                    )
-                    .map_err(|error| error.to_string())?;
+                    if !ai_only {
+                        // 阶段①：collection
+                        let client = client.map_err(|error| error.to_string())?;
+                        let mut emit_fn = |message: &str| emit(message);
+                        let summary = live_core::collector::run::collect_with_client(
+                            client,
+                            &config,
+                            mode,
+                            &mut emit_fn,
+                        )
+                        .map_err(|error| error.to_string())?;
+                        if collect_only {
+                            // Z4a：collect_* 是事实层终局——collect_with_client 的汇总
+                            // 即 outcome（无 viewer_failures 键 → 默认 0 → 非 partial）。
+                            emit("[runs] 采集完成（collect_* 终局，未涉 AI 层）");
+                            return Ok(summary);
+                        }
+                    }
                     // 阶段②：基线（episodes 风向：baseline 构造是唯一的显式调用点）
                     inner_registry.set_status(&inner_run_id, "episodes");
                     let analysis = live_core::episodes::baseline::build_factual_baseline(
@@ -312,6 +337,8 @@ impl Registry {
                             apply_viewer: None,
                             bilibili_origin: bilibili_hosts.clone(),
                             stage: Some(&stage_listener),
+                            // Z4b：ai_viewers 在 viewer 阶段写盘后收——不跑 audience。
+                            stop_after_viewer_stage: kind == "ai_viewers",
                         };
                         let result = match kind.as_str() {
                             "viewer" => {

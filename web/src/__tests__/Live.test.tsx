@@ -9,6 +9,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { RunTrackerProvider } from "../components/RunTracker";
 import { Live } from "../pages/Live";
 
 function stubFetch(status: number, body: string) {
@@ -22,7 +23,10 @@ function renderLive() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <Live roomId="983" />
+      {/* Z4d：页面动作栏含 KindRunButton，需 RunTracker 上下文。 */}
+      <RunTrackerProvider>
+        <Live roomId="983" />
+      </RunTrackerProvider>
     </QueryClientProvider>,
   );
 }

@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api, type ViewerRow } from "../api";
+import { KindRunButton } from "../components/KindRunButton";
 import { useRunTracker } from "../components/RunTracker";
 import { fmtTime } from "../format";
 
@@ -74,6 +75,18 @@ export function Viewers({ roomId }: { roomId: string }) {
     <section className="section">
       <div className="section-title">
         <h2>舰长列表</h2>
+      </div>
+      {/* Z4d 动作落页：名单与每人近态 = collect_guards 产物；逐舰长感知 = ai_viewers
+          产物——钮住本页。重采会重建采集面并清空 AI 缓存（历史归档），文案直陈。 */}
+      <div className="action-bar" data-testid="guard-actions">
+        <KindRunButton
+          kind="collect_guards"
+          note="事实层：重拉大航海名单 + 每人动态/勋章/直播状态。重建采集面并清空舰长 AI 缓存（历史照旧归档）。"
+        />
+        <KindRunButton
+          kind="ai_viewers"
+          note="认知层：对现有名单逐舰长跑感知（幂等缓存——已完成的复用，未跑/失效的补跑）。"
+        />
       </div>
       {rows.length === 0 ? (
         <EmptyPoolHint

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-import { api, type RunRecordView } from "../api";
+import { activeRunIdFrom, api, type RunRecordView } from "../api";
 import { RUN_EVENTS_CAP } from "../constants";
 import { fmtTime } from "../format";
 import { useRunTracker } from "./RunTracker";
@@ -22,31 +22,20 @@ export function partialTitle(record: RunRecordView): string {
 }
 
 /**
- * hero 单点触发钮（design §10「全部页头」裁决）+ 状态徽标。
- * run 追踪的全部状态位由 RunTracker 共享层供给——本组件不再自持 runId（ag4-F1）。
+ * Z4c：run 状态面从触发钮拆出——hero 页头挂只读徽标，各页面各自摆触发钮。
+ * 数据源仍是 RunTracker 共享层：任何页面触发的 run 都在此处反映（单槽与后端
+ * 409 互斥同构，任何时刻至多一条在飞）。
  */
-export function RunButton() {
+export function RunStatusBadge() {
   const tracker = useRunTracker();
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  async function trigger() {
-    setSubmitError(null);
-    try {
-      const { run_id } = await api.startRun({ kind: "full" });
-      tracker.track(run_id);
-    } catch (error) {
-      setSubmitError(String(error instanceof Error ? error.message : error));
-    }
-  }
-
   const data = tracker.record;
   const events = (data?.events ?? []).slice(-RUN_EVENTS_CAP);
   const outcomeError = outcomeErrorOf(data?.outcome);
+  if (!data && !tracker.lost) {
+    return null;
+  }
   return (
-    <span className="run-trigger">
-      <button className="primary" disabled={tracker.active} onClick={() => void trigger()}>
-        {tracker.active ? "运行中…" : "触发全量感知"}
-      </button>
+    <span className="run-status" data-testid="run-status">
       {data && (
         <span className={`badge run-status-${data.status}`} title={partialTitle(data)}>
           {data.status}
@@ -66,7 +55,6 @@ export function RunButton() {
         </button>
       )}
       {outcomeError && <span className="badge danger">{outcomeError}</span>}
-      {submitError && <span className="badge danger">{submitError}</span>}
       {/* ag5-F2：events 不再只在 active 时渲染——终态恰是最需要排查的时刻。 */}
       {data && events.length > 0 && (
         <details className="run-events">
@@ -74,6 +62,68 @@ export function RunButton() {
           <pre>{events.join("\n")}</pre>
         </details>
       )}
+    </span>
+  );
+}
+
+/**
+ * Z4：全量感知 = 「敏感而谨慎」的钮（用户定调）——不在 hero 页头常驻，落在主播
+ * 介绍页动作栏，一击不飞：先展开成本/时长确认段，再击「确认触发」才提交。
+ * 其余四个分层动作（采集/AI × 主播/舰长）走 KindRunButton。
+ */
+export function RunButton({ viewerCount }: { viewerCount?: number | null }) {
+  const tracker = useRunTracker();
+  const [armed, setArmed] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
+
+  async function trigger() {
+    setArmed(false);
+    setSubmitError(null);
+    try {
+      const { run_id } = await api.startRun({ kind: "full" });
+      tracker.track(run_id);
+    } catch (error) {
+      const message = String(error instanceof Error ? error.message : error);
+      // 409：服务端互斥——错文携带在飞 run_id，改跟随而非裸报错（后端契约字样）。
+      const active = activeRunIdFrom(message);
+      if (active) {
+        tracker.track(active);
+      } else {
+        setSubmitError(message);
+      }
+    }
+  }
+
+  return (
+    <span className="run-trigger">
+      {armed ? (
+        <span className="run-confirm" data-testid="full-run-confirm">
+          <p className="run-confirm-copy">
+            全量感知 = 采集 + AI 先后连环进：重抓主播档案、大航海名单与每人近态（事实层），
+            再逐舰长 AI + 整体态势（认知层）。实测 5 名舰长 ≈54 分钟、估算 ≈¥6.6
+            （DeepSeek 价目上界；规模随舰长数伸缩
+            {typeof viewerCount === "number" ? `，当前名单 ${viewerCount} 人` : ""}）。
+            重采会重建采集面并清空 AI 缓存（历史照旧归档）；运行期间一切触发 409 互斥。
+          </p>
+          <span className="run-confirm-actions">
+            <button className="primary" onClick={() => void trigger()}>
+              确认触发全量感知
+            </button>
+            <button onClick={() => setArmed(false)}>取消</button>
+          </span>
+        </span>
+      ) : (
+        <button
+          className="primary"
+          disabled={tracker.active}
+          onClick={() => setArmed(true)}
+          title="敏感动作：采集 + AI 连环，先展开成本确认"
+        >
+          {tracker.active ? "运行中…" : "触发全量感知"}
+        </button>
+      )}
+      {submitError && <span className="badge danger">{submitError}</span>}
+      <RunStatusBadge />
     </span>
   );
 }

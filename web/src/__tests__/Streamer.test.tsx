@@ -10,6 +10,7 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { RunTrackerProvider } from "../components/RunTracker";
 import { Streamer } from "../pages/Streamer";
 
 function stubFetch(status: number, body: string) {
@@ -43,7 +44,10 @@ function renderStreamer() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });
   render(
     <QueryClientProvider client={queryClient}>
-      <Streamer roomId="983" />
+      {/* Z4c：页面内嵌动作钮（RunButton/KindRunButton）依赖 RunTracker 上下文。 */}
+      <RunTrackerProvider>
+        <Streamer roomId="983" />
+      </RunTrackerProvider>
     </QueryClientProvider>,
   );
 }

@@ -26,12 +26,13 @@ live-audience demo [-c config.yaml] [--output dir]       # 只构建合成 Demo 
 ## HTTP/CLI 面
 
 - 数据端点：`GET /api/rooms`、`/rooms/{uid}/overview|viewers|graph`、`/rooms/{uid}/viewers/{vid}/tree|graph`、`GET/PUT /api/config`（cookie/api_key 只回存在性布尔，永不回显原文；PUT 走白名单 4 键 + 显式字符串类型 + 原子写盘，非法一律 422 原文件不动）。
-- 触发通道：`POST /api/runs {kind:"full"|"viewer", force?, viewer_uid?}` → `202 {run_id}`；轮询 `GET /api/runs/{id}` 看状态机 `queued → collecting → episodes → per_viewer_ai → audience → done | failed(partial)` 与最近 50 条 events。
-  - 校验失败 `422`（kind=viewer 必须有 viewer_uid、与 force 互斥；kind=full 不接受 viewer_uid；非布尔 force / 超长 uid 同拒）。
-  - 已有未终态 run → `409`（同一时刻只允许一个真实 run）。
+- 触发通道：`POST /api/runs {kind, force?, viewer_uid?}` → `202 {run_id}`；轮询 `GET /api/runs/{id}` 看状态机 `queued → collecting → episodes → per_viewer_ai → audience → done | failed(partial)` 与最近 50 条 events。
+  - kind 六值（Z4 动作平面）：`full`（采集+AI 连环）、`viewer`（单舰长，须 viewer_uid）、`collect_streamer` / `collect_guards`（事实层采集，跑完采集即终局）、`ai_viewers`（逐舰长 AI，写盘后即终局，不跑整体态势）/ `ai_audience`（整体态势聚合，幂等缓存自动复用已完成舰长感知）。
+  - 校验失败 `422`（kind=viewer 必须有 viewer_uid、与 force 互斥；kind=full 不接受 viewer_uid；四个分层 kind 一律拒绝 viewer_uid 与 force；非布尔 force / 超长 uid 同拒）。
+  - 已有未终态 run → `409`，错文携带在飞 run_id（同一时刻只允许一个真实 run）。
   - 请求体超 64KiB 等抽取层拒绝 → 状态码保留 + `{error}` JSON 信封（含 413）。
   - demo 模式下 `POST /api/runs` 返回静态合成快照（幂等：重复触发返回同一 run_id）。
-- 面板（`web/`）：hero 常驻触发钮 + run 状态徽标（含 partial 标记与 events 流）+ 房间入口钮（引导跳设置页，单房间原型）；首页 = 主播介绍（主播卡头像/签名/平台事实徽标 + 运行概览薄统计带 + 整体态势，executive_summary 走自绘 Markdown 渲染）、舰长列表（空池单查引导）→ 舰长态势（Episode 时间线 + mention 定位高亮）、直播数据（`shared/live_records.json` 场次档案：最后一场 vs 上周均值对比 + 全场次表，记录空则显式空态）、线索账本末位、图谱（cytoscape 四层调色）、设置（白名单写入回显）。「vs 上轮」delta 为底层参考信号保留在 overview payload，不上页面。
+- 面板（`web/`）：hero = 应用品牌 + 导航 + 当前房间 pill（房间=主播）+ ＋房间入口钮（引导跳设置页，单房间原型）+ 只读 run 状态徽标（含 partial 标记与 events 流）；**动作不落 hero，落页面**（Z4 动作平面：钮随身段——哪个页面消费哪个产物，钮就住哪个页面）——主播介绍页 = 全量感知（敏感谨慎钮：inline 两段确认，直陈时长/花费上界/409 互斥）＋主播 AI 分析；舰长列表页 = 舰长采集＋舰长 AI 分析（空池另附单查引导）；直播数据页 = 主播采集（本页数据源；文案直陈采集器重建采集面并清空 AI 缓存、历史归档）。首页主播介绍（主播卡头像/签名/平台事实徽标 + 大图数指标条 + 运行概览四层 legend + 整体态势，executive_summary 走自绘 Markdown 渲染）、舰长列表（头像 + 大航海/勋章身份列）→ 舰长态势（Episode 时间线 + mention 定位高亮）、直播数据（`shared/live_records.json` 场次档案：最后一场 vs 上周均值对比 + 全场次表，记录空则显式空态）、线索账本末位、图谱（cytoscape 四层调色）、设置（白名单写入回显）。「vs 上轮」delta 为底层参考信号保留在 overview payload，不上页面。
 
 ## 真实端点（显式 opt-in）
 

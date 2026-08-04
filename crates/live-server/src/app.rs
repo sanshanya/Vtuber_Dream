@@ -410,11 +410,14 @@ async fn runs_post(
     let kind = object
         .get("kind")
         .and_then(Value::as_str)
-        .filter(|kind| crate::registry::RUN_KINDS.contains(kind))
+        .filter(|kind| {
+            crate::registry::RUN_KINDS.contains(kind)
+                || crate::registry::RUN_KINDS_STAGED.contains(kind)
+        })
         .ok_or_else(|| {
             fail(
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "kind 必须是 full 或 viewer",
+                "kind 必须是 full / viewer / collect_streamer / collect_guards / ai_viewers / ai_audience",
             )
         })?;
     let force = match object.get("force") {
@@ -462,6 +465,21 @@ async fn runs_post(
             return Err(fail(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "kind=full 不接受 viewer_uid",
+            ));
+        }
+        // Z4：分层四 kind 是纯整体动作——不接 viewer_uid（单人=kind=viewer）。
+        (kind, Some(_)) if crate::registry::RUN_KINDS_STAGED.contains(&kind) => {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                &format!("kind={kind} 不接受 viewer_uid（单舰长动作 = kind=viewer）"),
+            ));
+        }
+        // Z4：分层四 kind 亦不接 force——force=全量清 AI 缓存语义仅属 kind=full；
+        // ai_* 的幂等就是保留在Collect面的前提下做哈希失配重算。
+        (kind, _) if crate::registry::RUN_KINDS_STAGED.contains(&kind) && force => {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                &format!("kind={kind} 不接受 force（force 仅属 kind=full 的全量语义）"),
             ));
         }
         (_, viewer_uid) => viewer_uid,

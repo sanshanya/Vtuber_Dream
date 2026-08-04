@@ -414,6 +414,9 @@ pub struct PipelineKnobs<'a> {
     /// queued/collecting/episodes/done/failed 由调用方（live-server registry）控制——
     /// 显式 seam 使 progress 文案与状态机解耦（不改既有测试签名：Option<'_'> 字段）。
     pub stage: Option<&'a dyn Fn(&'static str)>,
+    /// Z4b（动作平面 kind=ai_viewers）：viewer 阶段写盘完成即收——不跑 audience。
+    /// 语义边界：situation.json 保持上一轮；终盘 state.json 落 `stage_terminal=per_viewer_ai`。
+    pub stop_after_viewer_stage: bool,
 }
 
 fn progress_say(knobs: &PipelineKnobs<'_>, message: &str) {
@@ -1352,6 +1355,49 @@ async fn run_pipeline_inner(
     }
     // viewer 阶段收口标记：兜底伞 interrupted/failed 文案的 viewer_stage_status 数据源。
     note.viewer_stage_complete = true;
+    // Z4b（动作平面「舰长 AI 分析」kind）：viewer 阶段全部落盘即收——不进 audience；
+    // situation.json 未动（overview.situation 保持上一轮的态势面，这些钮的语义边界）。
+    if knobs.stop_after_viewer_stage {
+        progress_say(
+            knobs,
+            "[AI] stop_after_viewer_stage：舰长分析收口（audience 未跑，整体态势未动）",
+        );
+        if let Err(err) = store.complete_run(&run_id) {
+            bail!(PipelineError::Store(err));
+        }
+        let usage = aggregate_runtime_usage(&viewer_runtime, &json!({}));
+        if let Err(err) = write_state(
+            &state_path,
+            json!({
+                "status": "complete",
+                "completed_at": utc_now(),
+                "model": config.ai.model,
+                "protocol": "tool_call_only",
+                // 停点口径：AI 完成于 viewer 阶段，situation 未产出——落显式 stage_terminal。
+                "stage_terminal": "per_viewer_ai",
+                "viewer_input_hashes": viewer_input_hashes,
+                "graph_run_id": run_id,
+                "usage": usage,
+            }),
+        ) {
+            bail!(err);
+        }
+        let final_result = json!({
+            "status": "complete",
+            "runtime": "openai-agents",
+            "stage_terminal": "per_viewer_ai",
+            "viewer_count": viewer_count,
+            "viewer_failures": (viewer_ids.len() as i64) - viewer_count,
+            "search_result_count": master
+                .as_ref()
+                .expect("master 归还")
+                .search_results
+                .len() as i64,
+            "graph": {"database": graph_file.display().to_string()},
+            "usage": usage,
+        });
+        return (Ok(final_result), master.take().expect("master 归还"));
+    }
     let (audience, research) = run_audience_stage(
         analysis,
         &viewer_submissions,

@@ -124,6 +124,24 @@ export const api = {
   config: () => request<ConfigView>("GET", "/config"),
   putConfig: (body: unknown) => request<{ status: string; keys?: number }>("PUT", "/config", body),
   run: (id: string) => request<RunRecordView>("GET", `/runs/${encodeURIComponent(id)}`),
-  startRun: (body: { kind: "full" | "viewer"; force?: boolean; viewer_uid?: string }) =>
+  startRun: (body: { kind: RunKind; force?: boolean; viewer_uid?: string }) =>
     request<{ run_id: string }>("POST", "/runs", body),
 };
+
+/** Z4 动作平面：六 kind 字面冻结（与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源）。 */
+export const RUN_KIND_LABELS = {
+  full: "全量感知",
+  viewer: "单舰长感知",
+  collect_streamer: "主播采集",
+  collect_guards: "舰长采集",
+  ai_viewers: "舰长 AI 分析",
+  ai_audience: "主播 AI 分析",
+} as const;
+
+export type RunKind = keyof typeof RUN_KIND_LABELS;
+
+/** 服务端 409 错文「已有进行中的 run（{id}），…」的在飞 id 抽取（nil → 纯报错面）。 */
+export function activeRunIdFrom(message: string): string | null {
+  const hit = /run（([^）]+)）/.exec(message);
+  return hit ? hit[1] : null;
+}

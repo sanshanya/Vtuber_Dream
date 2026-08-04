@@ -110,6 +110,12 @@ async fn runs_post_validation_battery_422() {
         json!({"kind": "viewer", "viewer_uid": "123", "force": true}), // viewer+force 互斥
         json!({"kind": "full", "viewer_uid": "123"}),                  // full 不带 uid
         json!({"kind": "viewer", "viewer_uid": "1".repeat(MAX_VIEWER_UID_CHARS + 1)}),
+        // Z4：分层四 kind——不接 uid、不接 force（每种矩阵臂各抽查一个全面代表，
+        // 新 kinds 自身合法性由 202 侧钉跑道另行兜底）。
+        json!({"kind": "collect_streamer", "viewer_uid": "123"}),
+        json!({"kind": "collect_guards", "force": true}),
+        json!({"kind": "ai_viewers", "force": true}),
+        json!({"kind": "ai_audience", "viewer_uid": "123"}),
     ];
     for case in &cases {
         let (status, body) = oneshot(&fx.app, "POST", "/api/runs", Some(case.clone())).await;
@@ -122,6 +128,9 @@ async fn runs_post_validation_battery_422() {
     // W3/r6 对账：副作用断言必须是「零登记」对账，不是选一个不存在的键自嗨。
     assert_eq!(fx.registry.record_count(), 0, "校验电池不得登记任何 run");
 }
+// Z4：分层四 kind 的「合法体面」（202/409 区别、行为面）由 app_runs_e2e 三钉兜底——
+// 本文件的 fixture 指向真实 B 站端点（SESSDATA=test 布景），合法分面会直接产真实网络，
+// 不在这里钉。
 
 /// W1/r2-F1：viewer_uid 穿透必须短路在 422 且绝不落盘——
 /// 字符集白名单 [A-Za-z0-9_-]，dot-dot/内嵌斜杠/非 ASCII 一律拒（r6 「不落盘」是证据主位）。

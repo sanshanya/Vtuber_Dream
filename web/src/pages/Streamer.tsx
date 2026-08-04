@@ -6,6 +6,8 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api, isApiError } from "../api";
+import { KindRunButton } from "../components/KindRunButton";
+import { RunButton } from "../components/RunButton";
 import { Situ } from "../components/Situ";
 import { StreamerCard } from "../components/StreamerCard";
 import { estimateCostCny, fmtCny, fmtInt, fmtTime, type UsageRow } from "../format";
@@ -35,7 +37,14 @@ export function Streamer({ roomId }: { roomId: string }) {
       <section className="section card">
         <h2>主播介绍</h2>
         <div className="notice">
-          {missing ? "还没有采集数据——用页面顶部页头的「触发全量感知」跑一轮。" : message}
+          {missing
+            ? "还没有采集数据——请先在下方「感知动作」栏跑一轮全量感知（或到「舰长列表」单查冷启动）。"
+            : message}
+        </div>
+        {/* 空态也要给动作栏：首次冷启动的唯一入口正是本页。 */}
+        <h3>感知动作</h3>
+        <div className="action-bar" data-testid="room-actions">
+          <RunButton viewerCount={null} />
         </div>
       </section>
     );
@@ -65,6 +74,27 @@ export function Streamer({ roomId }: { roomId: string }) {
         streamerUid={String(data.streamer_uid ?? "")}
         roomId={String(data.room_id ?? "")}
       />
+
+      {/* Z4d 动作落页：本页住「全量感知」（敏感谨慎钮，双段确认）与「主播 AI 分析」
+          （认知层聚合，不重采）。采集面动作：主播采集在「直播数据」页、舰长采集在
+          「舰长列表」页——钮随身段（哪个页面消费哪个产物）。 */}
+      <section className="section card" data-testid="room-actions">
+        <div className="section-title">
+          <h2>感知动作</h2>
+          <span className="muted small">事实层采集 → 认知层 AI：一次全量，或分层补跑</span>
+        </div>
+        <div className="action-bar">
+          <RunButton
+            viewerCount={
+              typeof collection.viewer_count === "number" ? collection.viewer_count : null
+            }
+          />
+          <KindRunButton
+            kind="ai_audience"
+            note="认知层：不复采。基于现有各舰长感知（幂等缓存，已完成的自动复用）重推整体态势与行动建议——舰长感知齐时秒级收。"
+          />
+        </div>
+      </section>
 
       {/* Z3：旧版站签名指标条（大图数）——感知引擎的存量自豪位。
           graph_stats 缺图态 → 「—」，不臆造数字。 */}

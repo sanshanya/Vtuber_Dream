@@ -10,6 +10,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api";
+import { KindRunButton } from "../components/KindRunButton";
 
 const WEEK_SECONDS = 7 * 24 * 3600;
 
@@ -113,6 +114,13 @@ export function Live({ roomId }: { roomId: string }) {
               ? "档案面未建立"
               : `${String(live.status)} · ${String(live.count ?? rows.length)} 场`}
           </span>
+        </div>
+        {/* Z4d 动作落页：本页数据 = 主播采集（回放列表 + profile/投稿）产物，钮住本页。 */}
+        <div className="action-bar" data-testid="live-actions">
+          <KindRunButton
+            kind="collect_streamer"
+            note="事实层：重抓主播 profile/投稿/直播回放（本页数据源）。注意：采集器会重建整个采集面并清空舰长 AI 缓存（历史照旧归档）。"
+          />
         </div>
         {records.length === 0 ? (
           <div className="empty" data-testid="live-empty">

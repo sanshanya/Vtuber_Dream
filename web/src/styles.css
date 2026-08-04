@@ -37,12 +37,13 @@
 .delta-list{list-style:none;margin:8px 0;padding:0;font-size:13px}
 .delta-list li{padding:4px 0;border-bottom:1px dashed var(--line)}
 .delta-list li:last-child{border-bottom:0}
-/* X2 追加段：hero 单点挂载 RunButton（ag7 页头钮裁决兑现）+ 丢失提示钮形 */
+/* X2 追加段：hero 单点挂载 RunButton（ag7 页头钮裁决兑现）+ 丢失提示钮形
+   Z4c 修订：hero 去触发钮，只挂只读 RunStatusBadge（动作全数落页）——选择器跟随改 .run-status。 */
 .hero-runbar{margin-top:14px;padding-top:10px;border-top:1px solid rgba(255,255,255,.18)}
-.hero-runbar .run-trigger{background:rgba(255,255,255,.06);padding:6px 10px;border-radius:12px}
+.hero-runbar .run-status{background:rgba(255,255,255,.06);padding:6px 10px;border-radius:12px}
 /* W2/r5-F1：hero 重着色收窄为排除 danger——0-3-0 特异度压过 .badge.danger（0-2-0），
    丢失/失败徽标的红字会被抹成近白，而恰是 hero 上最需要保全的警示信号。 */
-.hero-runbar .run-trigger .badge:not(.danger){--panel2:rgba(255,255,255,.10);color:#eef2ff}
+.hero-runbar .run-status .badge:not(.danger){--panel2:rgba(255,255,255,.10);color:#eef2ff}
 button.badge{cursor:pointer;font:inherit;font-size:12px}
 /* W2/r5-F3：footer 全局 synthetic 徽标（裸 badge——合成标记是元信息，四层色不入）。 */
 .footer .badge{margin-left:8px;vertical-align:middle}
@@ -97,3 +98,22 @@ table.data-table td{vertical-align:middle}
 .room-current{display:inline-flex;align-items:center;padding:7px 14px;border-radius:999px;background:rgba(255,255,255,.16);color:#fff;font-weight:700;text-decoration:none;border:1px solid rgba(255,255,255,.35);white-space:nowrap;max-width:320px;overflow:hidden;text-overflow:ellipsis}
 .room-current:hover{background:rgba(255,255,255,.24);text-decoration:none}
 .hero-runbar{display:flex;align-items:center;gap:12px}
+
+/* ---- Z4c/d 追加段：动作平面分层 ---- */
+/* 只读状态徽标（hero/卡片内通用）：与 .run-trigger 同构的 inline-flex 容器，
+   position:relative 给 .run-events 的 absolute 浮层锚点。 */
+.run-status{display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;position:relative}
+/* 动作栏：每页面一个竖排区，动作 + 解释 note 成对。 */
+.action-bar{display:flex;flex-direction:column;gap:12px;margin:4px 0 8px}
+.action-bar .run-trigger{display:flex;align-items:flex-start;gap:12px;flex-wrap:wrap}
+/* KindRunButton（分层 kind 钮，一击即飞） */
+.kind-run{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.kind-run .secondary{background:var(--panel);border:1px solid var(--line);color:var(--text);border-radius:9px;padding:8px 14px;cursor:pointer;font:inherit}
+.kind-run .secondary:hover{border-color:var(--accent)}
+.kind-run .secondary:disabled{opacity:.6;cursor:wait}
+/* 全量感知双段确认面板：inline 展开，成本/时长/互斥直陈，再击确认才提交。 */
+.run-confirm{display:flex;flex-direction:column;gap:10px;max-width:680px;border:1px solid var(--line);border-radius:10px;padding:12px;background:var(--panel2)}
+.run-confirm-copy{margin:0;font-size:13px;color:var(--muted)}
+.run-confirm-actions{display:flex;gap:10px}
+.run-confirm-actions button{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:9px;padding:8px 14px;cursor:pointer;font:inherit}
+.run-confirm-actions .primary{background:var(--accent);border:0;color:#fff}
