@@ -46,3 +46,33 @@
 button.badge{cursor:pointer;font:inherit;font-size:12px}
 /* W2/r5-F3：footer 全局 synthetic 徽标（裸 badge——合成标记是元信息，四层色不入）。 */
 .footer .badge{margin-left:8px;vertical-align:middle}
+/* ---- Z 批追加段：主播卡 / 直播数据页 / Markdown 态势渲染 / 房间入口钮 ---- */
+
+/* 主播卡：头像在左、信息体在右（参照 laplace.live 主播卡层级）。 */
+.streamer-card{display:flex;gap:18px;align-items:flex-start}
+.streamer-face{width:110px;height:110px;border-radius:20px;object-fit:cover;border:1px solid var(--line);background:var(--panel2);flex:none}
+.streamer-face-fallback{display:flex;align-items:center;justify-content:center;font-size:44px;font-weight:700;color:var(--muted)}
+.streamer-body h2{margin:0 0 6px;font-size:24px}
+.streamer-sign{white-space:pre-wrap;word-break:break-word;margin:8px 0}
+.streamer-links{display:flex;gap:16px;margin:10px 0 0}
+@media(max-width:640px){.streamer-card{flex-direction:column;align-items:center;text-align:center}.streamer-links{justify-content:center}}
+
+/* 运行概览薄统计带：旧六宫格降级为徽标行。 */
+.overview-strip{gap:9px}
+
+/* Markdown 态势渲染：卡片内标题压层级，留白克制。 */
+.markdown h3{margin:14px 0 6px;font-size:17px}
+.markdown h4{margin:12px 0 5px;font-size:15px}
+.markdown p{margin:6px 0}
+.markdown ul{padding-left:20px;margin:6px 0}
+.markdown li{margin:2px 0}
+.markdown code{background:var(--panel2);border:1px solid var(--line);border-radius:5px;padding:0 4px}
+
+/* 直播数据页：对比双卡与封面表。 */
+.grid.stats.static{margin-top:0}
+.live-cover{width:96px;height:54px;object-fit:cover;border-radius:8px;border:1px solid var(--line);background:var(--panel2)}
+table.data-table td{vertical-align:middle}
+
+/* 房间入口钮（引导跳设置页）：hero 上的次级钮形。 */
+.room-entry{display:inline-flex;align-items:center;margin-left:10px;padding:6px 12px;border:1px solid rgba(255,255,255,.35);border-radius:10px;color:#eef2ff;text-decoration:none}
+.room-entry:hover{background:rgba(255,255,255,.12);text-decoration:none}

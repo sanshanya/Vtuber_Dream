@@ -1,7 +1,7 @@
 /**
  * api 错误信道钉（ag5-F4 / ag5-F6 / ag4-F3 裁定）：
  * - 非 JSON 错误体不得抛裸 SyntaxError → ApiError(status + 「非 JSON」文案)；
- * - 服务端 {error} 体 → message 原样透传、status 保留（404 供 Dashboard 空态判别）；
+ * - 服务端 {error} 体 → message 原样透传、status 保留（404 供 Streamer 首页空态判别）；
  * - 空体成功 → null 载荷不炸。
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -40,7 +40,7 @@ describe("request 错误信道", () => {
     expect((error as ApiError).message).toBe("kind 必须是 full 或 viewer");
   });
 
-  it("404 + {error} → ApiError(status=404)，Dashboard 靠它而非文案子串判空态", async () => {
+  it("404 + {error} → ApiError(status=404)，Streamer 首页靠它而非文案子串判空态", async () => {
     stubFetch(404, JSON.stringify({ error: "尚无 collection 完成快照…" }));
     const error: unknown = await api.overview("983").catch((thrown: unknown) => thrown);
     expect(isApiError(error)).toBe(true);

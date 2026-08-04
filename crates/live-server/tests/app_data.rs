@@ -15,6 +15,7 @@ use live_server::app::{AppState, build_app};
 struct Fixture {
     _tmp: tempfile::TempDir,
     app: axum::Router,
+    data_root: std::path::PathBuf,
 }
 
 fn fixture() -> Fixture {
@@ -49,11 +50,15 @@ fn fixture() -> Fixture {
         web_root: tmp.path().join("no-dist"),
         registry: live_server::registry::Registry::new(),
         demo: true,
-        data_root: Some(data_root),
+        data_root: Some(data_root.clone()),
         bilibili_hosts: None,
         config_write_lock: Default::default(),
     });
-    Fixture { _tmp: tmp, app }
+    Fixture {
+        _tmp: tmp,
+        app,
+        data_root,
+    }
 }
 
 async fn get(app: &axum::Router, path: &str) -> (u16, Value) {
@@ -87,9 +92,55 @@ async fn overview_combines_collection_ai_leads_and_baseline_delta() {
         "单次 complete 观众的 delta 码必须是基线态：{}",
         body["delta"]
     );
+    // Z2：主播卡/直播档案两新面必须始终就位（demo 布景无 profile/records → null 空态，
+    // 而不是缺键——前端空态分支靠「键存在且值为 null」判别，缺键会让判别歧义）。
+    let keys = body.as_object().expect("overview object");
+    assert!(keys.contains_key("streamer"), "{body}");
+    assert!(keys.contains_key("live"), "{body}");
+    assert!(body["streamer"].is_null(), "{body}");
+    assert!(body["live"].is_null(), "{body}");
     // 未知 uid → 404
     let (status, body) = get(&fx.app, "/api/rooms/999/overview").await;
     assert_eq!(status, 404, "{body}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn overview_passes_through_streamer_profile_and_live_records() {
+    let fx = fixture();
+    // Z2 主播卡面：streamer.json 的 profile 段原样透传——sources（原始事实原料，体大）
+    // 不得爬上 overview 面，由 Vue/直播数据页之外的专用端点或文件面另行服务。
+    live_core::storage::write_json(
+        &fx.data_root.join("streamer.json"),
+        &serde_json::json!({
+            "profile": {
+                "uid": "u-1",
+                "name": "演示主播",
+                "face": "https://i1.hdslb.com/bfs/face/demo.jpg",
+            },
+            "sources": { "videos": [ { "id": "v-big-blob" } ] },
+        }),
+    )
+    .expect("streamer fixture writes");
+    live_core::storage::write_json(
+        &fx.data_root.join("shared").join("live_records.json"),
+        &serde_json::json!({
+            "platform": "bilibili",
+            "status": "ok",
+            "count": 1,
+            "records": [ { "title": "第N场", "start_time": 1754208000 } ],
+        }),
+    )
+    .expect("live fixture writes");
+
+    let (status, body) = get(&fx.app, "/api/rooms/983/overview").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["streamer"]["name"], "演示主播", "{body}");
+    assert!(
+        body["streamer"].get("sources").is_none(),
+        "sources/videos 原料段不得上 overview 面：{body}"
+    );
+    assert_eq!(body["live"]["status"], "ok", "{body}");
+    assert_eq!(body["live"]["records"][0]["title"], "第N场", "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread")]

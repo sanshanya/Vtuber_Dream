@@ -2,9 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "./api";
 import { RunButton } from "./components/RunButton";
-import { Dashboard } from "./pages/Dashboard";
 import { GraphPage } from "./pages/GraphPage";
+import { Leads } from "./pages/Leads";
+import { Live } from "./pages/Live";
 import { Settings } from "./pages/Settings";
+import { Streamer } from "./pages/Streamer";
 import { ViewerTree } from "./pages/ViewerTree";
 import { Viewers } from "./pages/Viewers";
 import { useHashPath } from "./router";
@@ -15,7 +17,7 @@ export default function App() {
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const roomId = rooms.data?.[0]?.id;
   // W2/r5-F3：synthetic_demo 全局明示（README「页面以徽标明示」承诺兑现）。
-  // 数据面沿用 Dashboard 的 collection/ai/situation 任一析取口径；overview 失败
+  // 数据面沿用 Streamer 的 collection/ai/situation 任一析取口径；overview 失败
   // 静默缺省——合成标示宁可缺席，不许凭失败臆造。
   const overview = useQuery({
     queryKey: ["overview", roomId],
@@ -41,13 +43,17 @@ export default function App() {
     // ag4-F7：查询成功但空数组不得悬挂「正在连接」——显式空态。
     page = <div className="notice">服务端未配置任何房间（/api/rooms 返回空）。</div>;
   } else if (segments.length === 0) {
-    page = <Dashboard roomId={roomId} />;
+    page = <Streamer roomId={roomId} />;
   } else if (segments[0] === "viewers" && segments.length === 1) {
     page = <Viewers roomId={roomId} />;
   } else if (segments[0] === "viewers" && segments.length === 3 && segments[2] === "tree") {
     page = <ViewerTree roomId={roomId} vid={segments[1]} />;
   } else if (segments[0] === "viewers" && segments.length === 3 && segments[2] === "graph") {
     page = <GraphPage roomId={roomId} vid={segments[1]} />;
+  } else if (segments[0] === "live" && segments.length === 1) {
+    page = <Live roomId={roomId} />;
+  } else if (segments[0] === "leads" && segments.length === 1) {
+    page = <Leads roomId={roomId} />;
   } else if (segments[0] === "graph" && segments.length === 1) {
     page = <GraphPage roomId={roomId} />;
   } else if (segments[0] === "settings" && segments.length === 1) {
@@ -57,7 +63,7 @@ export default function App() {
       <div className="notice">
         未知路径。
         <a href="#/" style={{ marginLeft: 8 }}>
-          回到房间面板
+          回到主播介绍页
         </a>
       </div>
     );
@@ -68,16 +74,23 @@ export default function App() {
       <header className="hero">
         <div className="container">
           <h1>{rooms.data?.[0]?.project_name ?? "live-audience"}</h1>
+          {/* Z3 定稿序：主播介绍（首页）→ 舰长列表 → 直播数据 → 线索账本（末位）→ 图谱 → 设置。 */}
           <nav className="nav">
-            <a href="#/">房间面板</a>
-            <a href="#/viewers">观众列表</a>
+            <a href="#/">主播介绍</a>
+            <a href="#/viewers">舰长列表</a>
+            <a href="#/live">直播数据</a>
+            <a href="#/leads">线索账本</a>
             <a href="#/graph">图谱</a>
             <a href="#/settings">设置</a>
           </nav>
         </div>
-        {/* design §10「全部页头触发钮」裁决：hero 单点挂载；追踪态由 RunTracker 全局共享。 */}
+        {/* design §10「全部页头触发钮」裁决：hero 单点挂载；追踪态由 RunTracker 全局共享。
+            Z5 房间入口钮：行为 = 引导（跳「设置」页的房间配置区），不做真实多房间后端。 */}
         <div className="container hero-runbar">
           <RunButton />
+          <a className="room-entry" href="#/settings" title="房间配置在设置页——单房间原型，入口负责引导">
+            ＋ 房间
+          </a>
         </div>
       </header>
       <main className="container">{page}</main>

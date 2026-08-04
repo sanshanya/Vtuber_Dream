@@ -1,20 +1,23 @@
+/**
+ * 主播介绍页（Z2 定稿首页）：主播卡（头像/签名/平台事实徽标）→ 运行概览（薄统计带 +
+ * 花费公示）→ 整体态势。取代旧 Dashboard——「vs 上轮」裁决为底层参考信号不上页面
+ * （Z2 裁定），线索账本独立成 #/leads 页。
+ */
 import { useQuery } from "@tanstack/react-query";
 
 import { api, isApiError } from "../api";
-import { DeltaBlock } from "../components/DeltaBlock";
-import { LeadsBlock } from "../components/LeadsBlock";
 import { Situ } from "../components/Situ";
+import { StreamerCard } from "../components/StreamerCard";
 import { estimateCostCny, fmtCny, fmtInt, fmtTime, type UsageRow } from "../format";
 
-/** 房间面板（D3）：collection 状态 + ai 状态 + delta 区块 + leads 区块 + token/费用公示。 */
-export function Dashboard({ roomId }: { roomId: string }) {
+export function Streamer({ roomId }: { roomId: string }) {
   const overview = useQuery({
     queryKey: ["overview", roomId],
     queryFn: () => api.overview(roomId),
   });
 
   if (overview.isLoading) {
-    return <div className="empty">载入房间面板…</div>;
+    return <div className="empty">载入主播资料…</div>;
   }
   if (overview.isError) {
     const error: unknown = overview.error;
@@ -23,7 +26,7 @@ export function Dashboard({ roomId }: { roomId: string }) {
     const message = String(error instanceof Error ? error.message : error);
     return (
       <section className="section card">
-        <h2>房间面板</h2>
+        <h2>主播介绍</h2>
         <div className="notice">
           {missing ? "还没有采集数据——用页面顶部页头的「触发全量感知」跑一轮。" : message}
         </div>
@@ -37,43 +40,38 @@ export function Dashboard({ roomId }: { roomId: string }) {
   const usage: UsageRow | undefined = ai.usage ?? undefined;
   const cost = estimateCostCny(usage);
 
-  const stats: Array<[string, string]> = [
-    ["采集状态", collection.status ?? "—"],
-    ["采集时间", fmtTime(collection.finished_at ?? collection.started_at)],
-    ["AI 状态", ai.status ?? "—"],
-    ["AI 完成于", fmtTime(ai.completed_at)],
-    ["输入 tokens", fmtInt(usage?.input_tokens)],
-    ["输出 tokens", fmtInt(usage?.output_tokens)],
-  ];
-
   return (
     <>
-      <section className="section">
-        <div className="section-title">
-          <h2>房间面板</h2>
-        </div>
-        <div className="grid stats">
-          {stats.map(([label, value]) => (
-            <div className="card stat" key={label}>
-              <span>{label}</span>
-              <strong>{value}</strong>
-            </div>
-          ))}
-        </div>
-        {cost !== null && (
-          <p className="muted small">
-            最近运行估算花费：{fmtCny(cost)}（上限估算：按缓存未命中费率折算，见
-            <code>web/src/constants.ts</code> 价目）· LLM 请求 {fmtInt(usage?.llm_requests)} 次 ·
-            工具调用 {fmtInt(usage?.tool_calls)} 次
-          </p>
-        )}
-      </section>
+      <StreamerCard
+        profile={data.streamer ?? null}
+        streamerUid={String(data.streamer_uid ?? "")}
+        roomId={String(data.room_id ?? "")}
+      />
 
       <section className="section card">
         <div className="section-title">
-          <h2>vs 上轮</h2>
+          <h2>运行概览</h2>
         </div>
-        <DeltaBlock delta={data.delta ?? { baseline_only: true }} />
+        <div className="badges overview-strip">
+          <span className="badge" data-testid="run-collection">
+            采集 {String(collection.status ?? "—")}
+          </span>
+          <span className="badge">
+            采集于 {fmtTime(collection.finished_at ?? collection.started_at)}
+          </span>
+          <span className="badge" data-testid="run-ai">
+            AI {String(ai.status ?? "—")}
+          </span>
+          <span className="badge">AI 完成于 {fmtTime(ai.completed_at)}</span>
+          {cost !== null && <span className="badge action">估算花费 {fmtCny(cost)}</span>}
+        </div>
+        {cost !== null && (
+          <p className="muted small">
+            花费为上限估算（按缓存未命中费率折算，价目见
+            <code>web/src/constants.ts</code>）· LLM 请求 {fmtInt(usage?.llm_requests)} 次 ·
+            工具调用 {fmtInt(usage?.tool_calls)} 次
+          </p>
+        )}
       </section>
 
       <section className="section card">
@@ -94,13 +92,6 @@ export function Dashboard({ roomId }: { roomId: string }) {
         ) : (
           <div className="empty">整体态势尚未形成（跑完 Audience 阶段后呈现）</div>
         )}
-      </section>
-
-      <section className="section card">
-        <div className="section-title">
-          <h2>线索账本</h2>
-        </div>
-        <LeadsBlock leads={data.leads ?? {}} />
       </section>
     </>
   );

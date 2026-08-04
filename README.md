@@ -31,7 +31,7 @@ live-audience demo [-c config.yaml] [--output dir]       # 只构建合成 Demo 
   - 已有未终态 run → `409`（同一时刻只允许一个真实 run）。
   - 请求体超 64KiB 等抽取层拒绝 → 状态码保留 + `{error}` JSON 信封（含 413）。
   - demo 模式下 `POST /api/runs` 返回静态合成快照（幂等：重复触发返回同一 run_id）。
-- 面板（`web/`）：hero 常驻触发钮 + run 状态徽标（含 partial 标记与 events 流）；Dashboard（投入/产出/花费上限估算/vs 上轮 delta/整体态势/线索账本）、Viewers（空池单查引导）、个人树（Episode 时间线 + mention 定位高亮）、图谱（cytoscape 四层调色）、设置（白名单写入回显）。
+- 面板（`web/`）：hero 常驻触发钮 + run 状态徽标（含 partial 标记与 events 流）+ 房间入口钮（引导跳设置页，单房间原型）；首页 = 主播介绍（主播卡头像/签名/平台事实徽标 + 运行概览薄统计带 + 整体态势，executive_summary 走自绘 Markdown 渲染）、舰长列表（空池单查引导）→ 舰长态势（Episode 时间线 + mention 定位高亮）、直播数据（`shared/live_records.json` 场次档案：最后一场 vs 上周均值对比 + 全场次表，记录空则显式空态）、线索账本末位、图谱（cytoscape 四层调色）、设置（白名单写入回显）。「vs 上轮」delta 为底层参考信号保留在 overview payload，不上页面。
 
 ## 真实端点（显式 opt-in）
 

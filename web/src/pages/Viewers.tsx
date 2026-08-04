@@ -73,7 +73,7 @@ export function Viewers({ roomId }: { roomId: string }) {
   return (
     <section className="section">
       <div className="section-title">
-        <h2>观众列表</h2>
+        <h2>舰长列表</h2>
       </div>
       {rows.length === 0 ? (
         <EmptyPoolHint

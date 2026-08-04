@@ -50,7 +50,7 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
   return (
     <section className="section">
       <div className="section-title">
-        <h2>个人树 · {viewer.viewer?.name ?? viewer.profile?.name ?? vid}</h2>
+        <h2>舰长态势 · {viewer.viewer?.name ?? viewer.profile?.name ?? vid}</h2>
         <a href={`#/viewers/${encodeURIComponent(vid)}/graph`}>局部图 →</a>
       </div>
 

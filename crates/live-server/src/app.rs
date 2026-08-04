@@ -581,6 +581,13 @@ async fn room_overview(
         "room_id": config.bilibili.room_id,
         "streamer_uid": config.bilibili.streamer_uid,
         "project_name": config.project_name,
+        // 主播卡数据面（Z2 主页签名）：streamer.json 的 profile 段原样透传——
+        // sources.videos 属事实层原料且体大，不上 overview 面；缺文件 → null 空态。
+        "streamer": read_json(&root.join("streamer.json"))
+            .and_then(|v| v.get("profile").cloned()),
+        // 直播数据页档案面：shared/live_records.json 整场记录原样透传
+        //（status/count/records[]；空态 status="empty" 由前端解说）。
+        "live": read_json(&root.join("shared").join("live_records.json")),
         "collection": collection,
         "ai": read_json(&root.join("ai").join("state.json")),
         "situation": read_json(&root.join("ai").join("situation.json")),

@@ -5,7 +5,9 @@
  * 平台事实=fact——计数徽标与逐项标注必须用同一层色（本组件是唯一实装点，
  * Dashboard 里的 count 行与 item 行致错史见 docs/review-m5/ag1）。
  * LLM 产物形状漂移无 schema 校验（ag4-F6）：所有入 JSX 的键一律 String() 护栏。
+ * Z2：executive_summary 走 Markdown 渲染（旧实现整段入 <p>，##/** 记号漏上墙）。
  */
+import { Markdown } from "./Markdown";
 
 function text(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
@@ -54,7 +56,9 @@ export function Situ({ analysis, synthetic = false }: { analysis: SituAnalysis; 
           synthetic_demo 合成演示数据
         </span>
       )}
-      {typeof analysis.executive_summary === "string" && <p>{analysis.executive_summary}</p>}
+      {typeof analysis.executive_summary === "string" && (
+        <Markdown text={analysis.executive_summary} />
+      )}
       <div className="badges" data-testid="situ-count-badges">
         {COUNT_BADGE_LAYERS.map((layer) => (
           <span className={layer.badgeClass} key={layer.key} data-layer={layer.key}>

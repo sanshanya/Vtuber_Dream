@@ -8,7 +8,7 @@ const API_BASE = "/api";
 
 /**
  * 结构化错误：HTTP status + 用户可读文案（ag5-F4/F6）。
- * Dashboard 空态等分支用 status 判别，绝不再子串匹配 message。
+ * Streamer 首页空态等分支用 status 判别，绝不再子串匹配 message。
  */
 export class ApiError extends Error {
   constructor(
