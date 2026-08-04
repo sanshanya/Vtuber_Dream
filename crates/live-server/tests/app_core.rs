@@ -11,50 +11,7 @@ use tower::ServiceExt;
 
 use live_server::app::{AppState, build_app};
 
-const YAML_TEMPLATE: &str = r#"
-# 本行是用户的注释——PUT 后不得丢。
-version: 6
-project:
-  name: m5b-app
-  output_dir: OUTPUT_DIR
-bilibili:
-  room_id: "983"
-  streamer_uid: "9001"
-  cookie: "SESSDATA=supersecret"   # 绝不回显
-  additional_viewer_ids: []
-collection:
-  max_guards: 50
-  per_viewer_request_budget: 12
-  followings_limit: 50
-  recent_videos: 10
-  recent_dynamics: 30
-  favorite_folders: 3
-  favorite_items_per_folder: 30
-  bangumi_limit: 30
-  games_limit: 30
-  max_video_metadata_items: 120
-  request_delay_seconds: 0
-  timeout_seconds: 5
-perception:
-  peer_discovery:
-    candidate_limit: 20
-    recent_videos: 8
-    recent_dynamics: 8
-    max_formal_peers: 8
-ai:
-  api: chat_completions
-  base_url: http://127.0.0.1:9/v1
-  api_key: supersecret-key
-  model: m5b-app
-  reasoning:
-    enabled: false
-  agent:
-    max_turns: 4
-    run_retries: 0
-  max_output_tokens: 131072
-report:
-  title: t
-"#;
+mod common;
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -69,7 +26,15 @@ fn fixture(web_root: Option<&str>) -> Fixture {
     std::fs::create_dir_all(&out_dir).unwrap();
     std::fs::write(
         &config_path,
-        YAML_TEMPLATE.replace(
+        common::yaml_template(
+            Some("# 本行是用户的注释——PUT 后不得丢。"),
+            "m5b-app",
+            "SESSDATA=supersecret",
+            "supersecret-key",
+            "http://127.0.0.1:9/v1",
+            "m5b-app",
+        )
+        .replace(
             "OUTPUT_DIR",
             &out_dir.display().to_string().replace('\\', "/"),
         ),
@@ -236,7 +201,19 @@ async fn existing_dist_serves_index() {
     // dist 判定发生在 build_app；文件须先于装配存在。
     std::fs::write(dist.join("index.html"), "<h1>dist-ok</h1>").unwrap();
     let config_path = _tmp.path().join("config.yaml");
-    std::fs::write(&config_path, YAML_TEMPLATE.replace("OUTPUT_DIR", "./out")).unwrap();
+    std::fs::write(
+        &config_path,
+        common::yaml_template(
+            Some("# 本行是用户的注释——PUT 后不得丢。"),
+            "m5b-app",
+            "SESSDATA=supersecret",
+            "supersecret-key",
+            "http://127.0.0.1:9/v1",
+            "m5b-app",
+        )
+        .replace("OUTPUT_DIR", "./out"),
+    )
+    .unwrap();
     let app = build_app(AppState {
         config_path,
         web_root: dist,

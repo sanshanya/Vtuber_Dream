@@ -5,54 +5,12 @@
 use serde_json::Value;
 use tower::ServiceExt;
 
+mod common;
+
 use axum::http::Request;
 use http_body_util::BodyExt;
 
 use live_server::app::{AppState, build_app};
-
-const YAML_TEMPLATE: &str = r#"
-version: 6
-project:
-  name: m5b-data
-  output_dir: OUTPUT_DIR
-bilibili:
-  room_id: "983"
-  streamer_uid: "9001"
-  cookie: "SESSDATA=test"
-  additional_viewer_ids: []
-collection:
-  max_guards: 50
-  per_viewer_request_budget: 12
-  followings_limit: 50
-  recent_videos: 10
-  recent_dynamics: 30
-  favorite_folders: 3
-  favorite_items_per_folder: 30
-  bangumi_limit: 30
-  games_limit: 30
-  max_video_metadata_items: 120
-  request_delay_seconds: 0
-  timeout_seconds: 5
-perception:
-  peer_discovery:
-    candidate_limit: 20
-    recent_videos: 8
-    recent_dynamics: 8
-    max_formal_peers: 8
-ai:
-  api: chat_completions
-  base_url: http://127.0.0.1:9/v1
-  api_key: test
-  model: m5b-data
-  reasoning:
-    enabled: false
-  agent:
-    max_turns: 4
-    run_retries: 0
-  max_output_tokens: 131072
-report:
-  title: t
-"#;
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -65,7 +23,15 @@ fn fixture() -> Fixture {
     let config_path = tmp.path().join("config.yaml");
     std::fs::write(
         &config_path,
-        YAML_TEMPLATE.replace(
+        common::yaml_template(
+            None,
+            "m5b-data",
+            "SESSDATA=test",
+            "test",
+            "http://127.0.0.1:9/v1",
+            "m5b-data",
+        )
+        .replace(
             "OUTPUT_DIR",
             &output_dir.display().to_string().replace('\\', "/"),
         ),
@@ -234,7 +200,15 @@ async fn graph_endpoints_404_when_graph_absent() {
     let config_path = tmp.path().join("config.yaml");
     std::fs::write(
         &config_path,
-        YAML_TEMPLATE.replace(
+        common::yaml_template(
+            None,
+            "m5b-data",
+            "SESSDATA=test",
+            "test",
+            "http://127.0.0.1:9/v1",
+            "m5b-data",
+        )
+        .replace(
             "OUTPUT_DIR",
             &output_dir.display().to_string().replace('\\', "/"),
         ),

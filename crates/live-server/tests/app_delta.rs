@@ -14,6 +14,8 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+mod common;
+
 use live_server::app::{AppState, build_app};
 
 /// 时间戳从测试运行时时钟派生（ag6 日历炸弹修复：硬编码 2027-01 曾使任何
@@ -35,50 +37,6 @@ fn fixture_clock() -> Clock {
     }
 }
 
-const YAML_TEMPLATE: &str = r#"
-version: 6
-project:
-  name: m5d-delta
-  output_dir: OUTPUT_DIR
-bilibili:
-  room_id: "983"
-  streamer_uid: "9001"
-  cookie: "SESSDATA=test"
-  additional_viewer_ids: []
-collection:
-  max_guards: 50
-  per_viewer_request_budget: 12
-  followings_limit: 50
-  recent_videos: 10
-  recent_dynamics: 30
-  favorite_folders: 3
-  favorite_items_per_folder: 30
-  bangumi_limit: 30
-  games_limit: 30
-  max_video_metadata_items: 120
-  request_delay_seconds: 0
-  timeout_seconds: 5
-perception:
-  peer_discovery:
-    candidate_limit: 20
-    recent_videos: 8
-    recent_dynamics: 8
-    max_formal_peers: 8
-ai:
-  api: chat_completions
-  base_url: http://127.0.0.1:9/v1
-  api_key: test-key
-  model: m5d-delta
-  reasoning:
-    enabled: false
-  agent:
-    max_turns: 4
-    run_retries: 0
-  max_output_tokens: 131072
-report:
-  title: t
-"#;
-
 async fn get(app: &axum::Router, path: &str) -> (u16, Value) {
     let request = Request::builder()
         .uri(path)
@@ -98,7 +56,15 @@ fn stage_delta_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
     let config_path = tmp.path().join("config.yaml");
     std::fs::write(
         &config_path,
-        YAML_TEMPLATE.replace(
+        common::yaml_template(
+            None,
+            "m5d-delta",
+            "SESSDATA=test",
+            "test-key",
+            "http://127.0.0.1:9/v1",
+            "m5d-delta",
+        )
+        .replace(
             "OUTPUT_DIR",
             &output_dir.display().to_string().replace('\\', "/"),
         ),

@@ -25,51 +25,9 @@ use live_core::episodes::baseline::build_factual_baseline;
 use live_core::graph::store::mention_id_of;
 use live_core::models::MentionSpan;
 use live_server::app::{AppState, build_app};
-use live_server::registry::Registry;
 
-const YAML_TEMPLATE: &str = r#"
-version: 6
-project:
-  name: m5d-single
-  output_dir: OUTPUT_DIR
-bilibili:
-  room_id: "983"
-  streamer_uid: "9001"
-  cookie: "SESSDATA=test"
-  additional_viewer_ids: []
-collection:
-  max_guards: 50
-  per_viewer_request_budget: 12
-  followings_limit: 50
-  recent_videos: 10
-  recent_dynamics: 30
-  favorite_folders: 3
-  favorite_items_per_folder: 30
-  bangumi_limit: 30
-  games_limit: 30
-  max_video_metadata_items: 120
-  request_delay_seconds: 0
-  timeout_seconds: 5
-perception:
-  peer_discovery:
-    candidate_limit: 20
-    recent_videos: 8
-    recent_dynamics: 8
-    max_formal_peers: 8
-ai:
-  api: chat_completions
-  base_url: LLM_URI
-  api_key: test-key
-  model: m5d-single
-  reasoning:
-    enabled: false
-  agent:
-    max_turns: 4
-    run_retries: 0
-  max_output_tokens: 131072
-report:
-  title: t
-"#;
+mod common;
+use live_server::registry::Registry;
 
 // ---------------------------------------------------------------------------
 // wiremock 布景：Bilibili 17 挂载（与 live-core collect_mock mount_baseline 同源）
@@ -383,12 +341,19 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
     let tmp = tempfile::tempdir().unwrap();
     let out_dir: PathBuf = tmp.path().join("out");
     std::fs::create_dir_all(&out_dir).unwrap();
-    let yaml = YAML_TEMPLATE
-        .replace(
-            "OUTPUT_DIR",
-            &out_dir.display().to_string().replace('\\', "/"),
-        )
-        .replace("LLM_URI", &llm.uri());
+    let yaml = common::yaml_template(
+        None,
+        "m5d-single",
+        "SESSDATA=test",
+        "test-key",
+        "LLM_URI",
+        "m5d-single",
+    )
+    .replace(
+        "OUTPUT_DIR",
+        &out_dir.display().to_string().replace('\\', "/"),
+    )
+    .replace("LLM_URI", &llm.uri());
     let config_path = tmp.path().join("config.yaml");
     std::fs::write(&config_path, yaml).unwrap();
 

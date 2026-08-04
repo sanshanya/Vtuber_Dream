@@ -12,52 +12,10 @@ use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
+mod common;
+
 use live_server::app::{AppState, MAX_REQUEST_BODY_BYTES, MAX_VIEWER_UID_CHARS, build_app};
 use live_server::registry::{Registry, RunRecord};
-
-const YAML_TEMPLATE: &str = r#"
-version: 6
-project:
-  name: m5b-runs
-  output_dir: OUTPUT_DIR
-bilibili:
-  room_id: "983"
-  streamer_uid: "9001"
-  cookie: "SESSDATA=test"
-  additional_viewer_ids: []
-collection:
-  max_guards: 50
-  per_viewer_request_budget: 12
-  followings_limit: 50
-  recent_videos: 10
-  recent_dynamics: 30
-  favorite_folders: 3
-  favorite_items_per_folder: 30
-  bangumi_limit: 30
-  games_limit: 30
-  max_video_metadata_items: 120
-  request_delay_seconds: 0
-  timeout_seconds: 5
-perception:
-  peer_discovery:
-    candidate_limit: 20
-    recent_videos: 8
-    recent_dynamics: 8
-    max_formal_peers: 8
-ai:
-  api: chat_completions
-  base_url: http://127.0.0.1:9/v1
-  api_key: test-key
-  model: m5b-runs
-  reasoning:
-    enabled: false
-  agent:
-    max_turns: 4
-    run_retries: 0
-  max_output_tokens: 131072
-report:
-  title: t
-"#;
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -72,7 +30,15 @@ fn fixture(demo: bool, bilibili_hosts: Option<(String, String)>) -> Fixture {
     std::fs::create_dir_all(&out_dir).unwrap();
     std::fs::write(
         &config_path,
-        YAML_TEMPLATE.replace(
+        common::yaml_template(
+            None,
+            "m5b-runs",
+            "SESSDATA=test",
+            "test-key",
+            "http://127.0.0.1:9/v1",
+            "m5b-runs",
+        )
+        .replace(
             "OUTPUT_DIR",
             &out_dir.display().to_string().replace('\\', "/"),
         ),
