@@ -148,7 +148,7 @@ export default function App() {
       </header>
       <main className="container">
         {/* Z4：唯一懒加载边界——任何路由切页 fallback 一律走空态文案（T1 三态前的中性态）。 */}
-        <Suspense fallback={<div className="empty">载入页面…</div>}>{page}</Suspense>
+        <Suspense fallback={<div className="state-loading">载入页面…</div>}>{page}</Suspense>
       </main>
       <footer className="container footer">
         公开信息感知原型 · 平台事实、AI语义、状态判断和行动建议分层展示

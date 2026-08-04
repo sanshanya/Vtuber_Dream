@@ -9,6 +9,7 @@ import { useState } from "react";
 
 import { api } from "../api";
 import { LeadsBlock } from "../components/LeadsBlock";
+import { errText } from "../format";
 
 export function Leads({ roomId }: { roomId: string }) {
   const queryClient = useQueryClient();
@@ -25,7 +26,8 @@ export function Leads({ roomId }: { roomId: string }) {
       setBusyLeadId(leadId);
     },
     onError: (error) => {
-      setApproveError(String(error instanceof Error ? error.message : error));
+      // F1 errText 单家（R3-F3 归一：不再手抄同形表达式）。
+      setApproveError(errText(error));
       setBusyLeadId(null);
     },
     onSuccess: () => {
@@ -34,7 +36,7 @@ export function Leads({ roomId }: { roomId: string }) {
       void queryClient.invalidateQueries({ queryKey: ["overview", roomId] });
     },
   });
-  if (overview.isLoading) return <div className="empty">载入线索账本…</div>;
+  if (overview.isLoading) return <div className="state-loading">载入线索账本…</div>;
   if (overview.isError) {
     return (
       <section className="section card">

@@ -11,9 +11,17 @@
 //! 派生物）。探针一次读扫 ≈数 MB、毫秒级；若内容零变化，读面命中直接服务
 //! `web-graph.<etag>.json{,.gz,.br}` 三件套，零 project 重算。
 //!
-//! 内容模型注意：图面 append-only + 关闭态整行进投影（valid_to 是投影内容的一部分），
-//! 故探针覆盖 (node_id, properties_json) 与 (edge_id, predicate, valid_to COALESCE) 即
-//! 足以界定「投影可见内容」。
+//! 内容模型（G2-E 盲评 R1-F1 立单修复）：图面**并非纯 append-only**——
+//! upsert_edge 原地合入（RELATED_TO interpretation / INTERESTED_IN evidence+confidence
+//! 跨 run 变化）、entity_merge 重指坐标（source/target 变而 valid_to 不动）、upsert_node
+//! 改名——三条原地写路径若逃逸指纹，AI 重跑/维护合并后物化将静默服旧字节。
+//! 探针列集 =「cytoscape payload 可见列」+「project SQL 过滤臂谓词列」的并集：
+//! nodes(node_id,node_type,name,properties_json) /
+//! edges(edge_id,source,target,predicate,confidence,evidence_json,properties_json,
+//!       source_kind,run_id,valid_to)；
+//! valid_from/first_seen_at/last_seen_at/viewer_id 为装饰列（不进 DTO 不进过滤臂）——
+//! 拿掉它们的代价是主理会话 rerun 后 etag 必翻但 payload 不变的「如实幂等」仍有：
+//! run_id 随活跃边换代是写面语义（新 run 的新活跃集 = 新内容身份），立此为据。
 
 use std::io::Read;
 
@@ -48,12 +56,14 @@ fn hash_rows(
 }
 
 /// 探针：投影可见内容 + 白名单的 sha256 前缀 = 指纹 = ETag。
+/// 列集拟定依据 =「DTO 可见列 ∪ project SQL 过滤臂谓词列」（卷首注 G2-E R1-F1）。
 pub fn content_probe(store: &Store, kinds_csv: &str) -> StoreResult<String> {
     let mut hasher = sha2::Sha256::new();
     {
-        let mut stmt = store
-            .conn
-            .prepare("SELECT node_id || char(31) || properties_json FROM nodes ORDER BY node_id")?;
+        let mut stmt = store.conn.prepare(
+            "SELECT node_id || char(31) || node_type || char(31) || name || char(31) \
+             || properties_json FROM nodes ORDER BY node_id",
+        )?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
         hash_rows(
             &mut rows.map(|row| row.map_err(StoreError::from)),
@@ -62,7 +72,10 @@ pub fn content_probe(store: &Store, kinds_csv: &str) -> StoreResult<String> {
     }
     {
         let mut stmt = store.conn.prepare(
-            "SELECT edge_id || char(31) || predicate || char(31) || coalesce(valid_to, '') \
+            "SELECT edge_id || char(31) || source_id || char(31) || target_id || char(31) \
+             || predicate || char(31) || coalesce(cast(confidence as text), '') || char(31) \
+             || evidence_json || char(31) || properties_json || char(31) || source_kind \
+             || char(31) || coalesce(run_id, '') || char(31) || coalesce(valid_to, '') \
              FROM edges ORDER BY edge_id",
         )?;
         let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;

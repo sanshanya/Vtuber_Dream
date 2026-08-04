@@ -674,7 +674,7 @@ async fn room_overview(
         "ai": read_json(&root.join("ai").join("state.json")),
         "situation": read_json(&root.join("ai").join("situation.json")),
         "leads": {
-            "summary": live_core::leads::summary_line(&rows, None),
+            // R3-F2：summary 键零消费者（FE 不渲、真消费者是 pipeline annex）——砍。
             "totals": {
                 "pending_approval": count(live_core::leads::LeadStatus::PendingApproval),
                 "approved": count(live_core::leads::LeadStatus::Approved),
@@ -682,7 +682,8 @@ async fn room_overview(
                 "rejected": count(live_core::leads::LeadStatus::Rejected),
                 "deferred": count(live_core::leads::LeadStatus::Deferred),
             },
-            // 人工审批面：pending 明细直出（前端列表渲染；响度按 viewer 分组）
+            // 人工审批面：pending 明细直出（前端列表渲染；写账序直出，
+            // 「响度按 viewer 分组」未做——高层待阅时再议排序，G2-F4 裁向在案）
             "pending": rows.iter()
                 .filter(|r| r.status == live_core::leads::LeadStatus::PendingApproval)
                 .collect::<Vec<_>>(),

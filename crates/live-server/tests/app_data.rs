@@ -693,6 +693,54 @@ async fn graph_artifact_etag_follows_store_content() {
     );
 }
 
+/// G2-E 盲评 R1-F1 立单修复钉：三条原地写路径（upsert_edge 合入 / upsert_node 改名 /
+/// merge 重指坐标）必使内容寻址 ETag 翻面——逃逸指纹 = 物化静默服旧字节。
+#[tokio::test(flavor = "multi_thread")]
+async fn graph_artifact_etag_flips_on_in_place_writes() {
+    let fx = fixture();
+    let etag_now = || async {
+        let (_, hdrs, _) = request_raw(&fx.app, "/api/rooms/983/graph", &[]).await;
+        hdrs.get("etag").unwrap().to_str().unwrap().to_string()
+    };
+    let conn =
+        || rusqlite::Connection::open(fx.data_root.join("graph/perception.sqlite3")).unwrap();
+
+    // 1) upsert_edge 原地保活臂：同 (source,predicate,target) 的活跃边 evidence/confidence
+    //    跨 run 变化 → 列变 → etag 必翻。
+    let e0 = etag_now().await;
+    conn()
+        .execute(
+            "UPDATE edges SET confidence = confidence / 2.0, \
+             evidence_json = '[\"mention:g2e-flip\"]' WHERE rowid = (SELECT min(rowid) FROM edges WHERE predicate = 'INTERESTED_IN')",
+            [],
+        )
+        .unwrap();
+    let e1 = etag_now().await;
+    assert_ne!(e0, e1, "INTERESTED_IN 原地合入必翻面");
+
+    // 2) upsert_node 改名臂：name 列变 → etag 必翻。
+    conn()
+        .execute(
+            "UPDATE nodes SET name = name || '·g2e' \
+             WHERE rowid = (SELECT min(rowid) FROM nodes WHERE node_type = 'Entity')",
+            [],
+        )
+        .unwrap();
+    let e2 = etag_now().await;
+    assert_ne!(e1, e2, "节点改名必翻面");
+
+    // 3) merge 重指坐标臂：边 endpoint 换绑（valid_to 不动）→ etag 必翻。
+    conn()
+        .execute(
+            "UPDATE edges SET target_id = (SELECT node_id FROM nodes WHERE node_type = 'Entity' LIMIT 1) \
+             WHERE rowid = (SELECT min(rowid) FROM edges WHERE predicate = 'INTERESTED_IN')",
+            [],
+        )
+        .unwrap();
+    let e3 = etag_now().await;
+    assert_ne!(e2, e3, "merge 重指坐标必翻面");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn graph_endpoints_404_when_graph_absent() {
     let tmp = tempfile::tempdir().unwrap();
@@ -758,4 +806,47 @@ async fn viewer_tree_graph_reject_traversal_vids_404() {
     // 合法 demo vid 不得被误伤（正向对照）。
     let (status, _) = get(&fx.app, "/api/rooms/983/viewers/demo-1/tree").await;
     assert_eq!(status, 200, "demo-1 tree 应通行");
+}
+
+/// Z7 补钉（R5-F1b）：overview 读面的 MXA-1 端点响铃——legacy leads.jsonl 含坏行时
+/// 必须 500（绝不带病半账出面）、文件原地 .bak 缺席。
+#[tokio::test(flavor = "multi_thread")]
+async fn overview_with_bad_legacy_jsonl_rings_500() {
+    let fx = fixture();
+    std::fs::write(
+        fx.data_root.join("leads.jsonl"),
+        "{\"dedupe_key\":\"k-bad\"}\n{不是合法 json\n",
+    )
+    .unwrap();
+    let (status, body) = get(&fx.app, "/api/rooms/983/overview").await;
+    assert_eq!(status, 500, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|s| s.contains("迁移守卫停火")),
+        "{body}"
+    );
+    assert!(fx.data_root.join("leads.jsonl").exists());
+    assert!(!fx.data_root.join("leads.jsonl.bak").exists());
+}
+
+/// Z7 补钉（R5-F3）：overview 的 leads.autonomy 徽标数据面双布景钉——
+/// 默认 0（人工审批文化）；config 写 leads_autonomy: 1 → 投影 1（徽标跟随）。
+#[tokio::test(flavor = "multi_thread")]
+async fn overview_leads_autonomy_projects_config_flag() {
+    let fx = fixture();
+    let (_, body) = get(&fx.app, "/api/rooms/983/overview").await;
+    assert_eq!(body["leads"]["autonomy"], 0, "默认 L0：{body}");
+
+    let yaml = std::fs::read_to_string(&fx.config_path).unwrap();
+    std::fs::write(
+        &fx.config_path,
+        yaml.replace(
+            "  max_video_metadata_items: 120",
+            "  max_video_metadata_items: 120\n  leads_autonomy: 1",
+        ),
+    )
+    .unwrap();
+    let (_, body2) = get(&fx.app, "/api/rooms/983/overview").await;
+    assert_eq!(body2["leads"]["autonomy"], 1, "L1 徽标跟随：{body2}");
 }

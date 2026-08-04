@@ -8,7 +8,6 @@
  */
 
 export interface LeadsView {
-  summary?: string;
   totals?: {
     pending_approval?: number;
     approved?: number;
@@ -18,7 +17,7 @@ export interface LeadsView {
   };
   /** G2-B：自治位读取面（0=纯人工 / 1=L1 自动批准+预算消费）。 */
   autonomy?: number;
-  /** 账本直出行（leads.rs LedgerRow serde 形：type 重命名进 lead_type 由本层承担）。 */
+  /** 账本直出行（leads.rs LedgerRow serde 形；type 是服务端 serde rename 出的 wire 键）。 */
   pending?: Array<{
     dedupe_key?: string;
     type?: string;

@@ -83,7 +83,7 @@ export function Live({ roomId }: { roomId: string }) {
     queryKey: ["overview", roomId],
     queryFn: () => api.overview(roomId),
   });
-  if (overview.isLoading) return <div className="empty">载入直播数据…</div>;
+  if (overview.isLoading) return <div className="state-loading">载入直播数据…</div>;
   if (overview.isError) {
     return (
       <section className="section card">

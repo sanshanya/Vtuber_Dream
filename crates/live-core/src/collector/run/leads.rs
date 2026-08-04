@@ -258,6 +258,36 @@ mod tests {
         );
     }
 
+    /// Z7 补钉（R5-F2）：失败的尝试同样烧预算槽——两行 approved + 预算 1 + 恒 Err
+    /// → fetch 恰被调用 1 次；k1 留痕、k2 未触碰；预算槽不可被「失败免烧」洞穿。
+    #[test]
+    fn failing_attempt_burns_budget_slot() {
+        let store = mem_store();
+        seed(
+            &store,
+            &[
+                row("k1", "video", LeadStatus::Approved),
+                row("k2", "video", LeadStatus::Approved),
+            ],
+        );
+        let mut calls = 0_usize;
+        let n = consume_approved_leads(
+            &store,
+            1,
+            &mut |_r| {
+                calls += 1;
+                Err("biu".to_string())
+            },
+            &mut |_: &str| {},
+        );
+        assert_eq!(calls, 1, "失败也烧槽：尝试恰一次");
+        assert_eq!(n, 0);
+        let back = leads::read_rows(&store).unwrap();
+        assert_eq!(back[0].status, LeadStatus::Approved);
+        assert!(back[0].resolution_note.contains("biu"), "k1 留痕");
+        assert!(back[1].resolution_note.is_empty(), "k2 未触碰");
+    }
+
     /// 抓取失败 = 烧预算但保持 approved + 留痕，下轮重试。
     #[test]
     fn failure_keeps_approved_with_note() {

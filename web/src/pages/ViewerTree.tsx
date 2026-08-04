@@ -15,7 +15,7 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
     queryFn: () => api.viewerTree(roomId, vid),
   });
 
-  if (tree.isLoading) return <div className="empty">载入个人树…</div>;
+  if (tree.isLoading) return <div className="state-loading">载入个人树…</div>;
   if (tree.isError)
     return (
       <div className="notice">
@@ -25,7 +25,7 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
   const data = tree.data;
   if (!data) {
     // 同 Streamer：pending-not-fetching 静水变体的显式空态（运行期不可达）。
-    return <div className="empty">载入个人树…</div>;
+    return <div className="state-loading">载入个人树…</div>;
   }
   // 200 面服务端拼装恒带 viewer（缺档直接 404 先行），不再 ?? {} 防御。
   const viewer = data.viewer;

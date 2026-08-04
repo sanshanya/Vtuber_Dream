@@ -333,7 +333,7 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
       : "";
   const detailRows = selected ? describeNode(selectedData, identitySignals(selected)) : null;
 
-  if (graph.isLoading) return <div className="empty">载入图谱…</div>;
+  if (graph.isLoading) return <div className="state-loading">载入图谱…</div>;
   if (graph.isError)
     return (
       <div className="notice">

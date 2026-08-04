@@ -29,7 +29,7 @@ export function Streamer({ roomId }: { roomId: string }) {
   });
 
   if (overview.isLoading) {
-    return <div className="empty">载入主播资料…</div>;
+    return <div className="state-loading">载入主播资料…</div>;
   }
   if (overview.isError) {
     const error: unknown = overview.error;
@@ -56,7 +56,7 @@ export function Streamer({ roomId }: { roomId: string }) {
   if (!data) {
     // react-query 类型面有 pending-not-fetching 变体（isLoading/isError 双守卫外的静水区；
     // 本查询无 enabled 门、运行期不可达）——显式落空态，不裸解引用。
-    return <div className="empty">载入主播资料…</div>;
+    return <div className="state-loading">载入主播资料…</div>;
   }
   const collection = data.collection ?? {};
   const ai = data.ai ?? {};
@@ -207,7 +207,7 @@ export function Streamer({ roomId }: { roomId: string }) {
             ))}
           </div>
         ) : viewers.isLoading ? (
-          <div className="empty">载入舰长…</div>
+          <div className="state-loading">载入舰长…</div>
         ) : (
           <div className="empty">舰长名单为空——跑一轮全量感知或到「舰长列表」单查。</div>
         )}

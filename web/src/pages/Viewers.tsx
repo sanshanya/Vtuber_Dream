@@ -30,7 +30,7 @@ export function Viewers({ roomId }: { roomId: string }) {
   }
 
   if (viewers.isLoading) {
-    return <div className="empty">载入观众列表…</div>;
+    return <div className="state-loading">载入观众列表…</div>;
   }
   if (viewers.isError) {
     // ag5-F5：错别字修正（面面→列表）。

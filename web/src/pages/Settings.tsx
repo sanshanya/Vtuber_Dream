@@ -39,7 +39,7 @@ export function Settings() {
     }
   }
 
-  if (config.isLoading) return <div className="empty">载入设置…</div>;
+  if (config.isLoading) return <div className="state-loading">载入设置…</div>;
   if (config.isError)
     return (
       <div className="notice">
@@ -49,7 +49,7 @@ export function Settings() {
   const data = config.data;
   if (!data) {
     // 查询缓存层（严格模式下 status 收窄不保证 data 非空）——显式守卫。
-    return <div className="empty">载入设置…</div>;
+    return <div className="state-loading">载入设置…</div>;
   }
 
   return (

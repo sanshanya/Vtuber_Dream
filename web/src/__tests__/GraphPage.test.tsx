@@ -257,3 +257,12 @@ describe("cose numIter 随规模降档", () => {
     expect(graphLayoutIterations(50_000)).toBe(400);
   });
 });
+
+describe("Z6/P0-6：整体图折叠提示", () => {
+  it("整体图谱（无 vid）呈现默认折叠提示；局部图（有 vid）不呈现", async () => {
+    stubFetch({ elements: ELEMENTS });
+    renderGraph();
+    await screen.findByTestId("graph-fold-hint");
+    expect(screen.getByTestId("graph-fold-hint").textContent).toContain("默认折叠视图");
+  });
+});

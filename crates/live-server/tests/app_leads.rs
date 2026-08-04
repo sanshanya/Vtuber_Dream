@@ -283,3 +283,38 @@ async fn approve_migrates_legacy_jsonl_then_flips_row() {
     assert_eq!(rows[0].dedupe_key, "k-pending");
     assert_eq!(rows[0].lead_type, "search");
 }
+
+/// Z7 补钉（R5-F1a）：approve 缝的 MXA-1 端点响铃——legacy leads.jsonl 含坏行时
+/// 必须 500（守卫停火）、文件原地、归档缺席、表不被半份导入。
+#[tokio::test(flavor = "multi_thread")]
+async fn approve_with_bad_legacy_jsonl_rings_500_and_stays_put() {
+    let fx = fixture();
+    std::fs::write(
+        leads::ledger_path(&fx.data_root),
+        "{\"dedupe_key\":\"k-bad\"}\n{不是合法 json\n",
+    )
+    .unwrap();
+    // 表起初有自己的合法行也不许被坏账本扰动：借 k-pending 走 approve → 500。
+    let (status, body) = post(&fx.app, "/api/rooms/983/leads/k-pending/approve").await;
+    assert_eq!(status, 500, "{body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .is_some_and(|s| s.contains("迁移守卫停火")),
+        "{body}"
+    );
+    // 守卫的三不倒：文件原地、.bak 缺席、表行零翻动（k-pending 仍未批）。
+    assert!(leads::ledger_path(&fx.data_root).exists(), "坏账本须原地");
+    assert!(
+        !fx.data_root.join("leads.jsonl.bak").exists(),
+        "守卫停火绝不归档"
+    );
+    assert!(
+        ledger_rows(&fx.data_root)
+            .iter()
+            .all(|row| row.status == LeadStatus::PendingApproval
+                || row.status != LeadStatus::Approved
+                || row.dedupe_key != "k-pending"),
+        "表行零翻动"
+    );
+}
