@@ -94,11 +94,12 @@ describe("Situ 四层 badge（ag1-F1：计数与逐项同层）", () => {
       ],
     };
     render(<Situ analysis={cal} />);
-    const block = screen.getByTestId("situ-calendar");
-    expect(block.textContent).toContain("异环1.2版本探索直播");
-    expect(block.textContent).toContain("近期（1-2周内）");
-    expect(block.textContent).toContain("激活舰长互动");
-    expect(block.textContent).toContain("验证信号：舰长弹幕/评论互动量");
+    const blocks = screen.queryAllByTestId("situ-calendar");
+    expect(blocks.length).toBe(1);
+    expect(blocks[0].textContent).toContain("异环1.2版本探索直播");
+    expect(blocks[0].textContent).toContain("近期（1-2周内）");
+    expect(blocks[0].textContent).toContain("激活舰长互动");
+    expect(blocks[0].textContent).toContain("验证信号：舰长弹幕/评论互动量");
   });
 
   it("Z2b：摘要以「## 整体态势」开场 → 首标题行剥除（卡名不叠罗汉）", () => {
@@ -119,5 +120,29 @@ describe("Situ 四层 badge（ag1-F1：计数与逐项同层）", () => {
       (el) => el.textContent,
     );
     expect(titles).toEqual(["态势摘要", "兴趣实体", "观众社群", "关键态势", "行动建议与排期"]);
+  });
+
+  it("Z3：兴趣实体表化（situation-interests 表，实体 strong + 状态 state 徽标 + 关注角度）", () => {
+    render(<Situ analysis={ANALYSIS} />);
+    const table = screen.getByTestId("situ-interests");
+    expect(table.querySelectorAll("tbody tr").length).toBe(1);
+    const row = table.querySelector("tbody tr");
+    expect(row?.querySelector("td strong")?.textContent).toBe("异环");
+    expect(row?.querySelector("td .badge.state")?.textContent).toBe("近期上升");
+    expect(row?.textContent).toContain("两名观众独立收藏");
+  });
+
+  it("Z3：关键态势/社群/行动项卡格化（article.card + h3 标题）", () => {
+    const { container } = render(
+      <Situ analysis={{ ...ANALYSIS, content_calendar: [{ theme: "t", session: "近期" }] }} />,
+    );
+    const cards = container.querySelectorAll("article.card");
+    // 1 社群 + 1 态势 + 1 建议 + 1 排期 = 4
+    expect(cards.length).toBe(4);
+    const h3s = Array.from(cards).map((c) => c.querySelector("h3")?.textContent);
+    expect(h3s).toContain("异环城市与演出讨论群");
+    expect(h3s).toContain("共同讨论入口");
+    expect(h3s).toContain("观看+投票");
+    expect(h3s).toContain("t");
   });
 });

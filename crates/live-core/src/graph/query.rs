@@ -436,6 +436,25 @@ use serde_json::json;
 ///   （valid_from <= t AND (valid_to IS NULL OR valid_to > t)）；
 /// - guards 口径 = GUARD_OF 边在 (from.completed_at, to.completed_at] 窗口内的开/闭。
 ///
+/// 首页指标条数据面（Z3：旧版 report 顶部数字条的透传口径——与 project.rs
+/// 的 stats 段同款 COUNT SQL，「全存量」口径无 run_id 过滤）。`relations` = 全部
+/// 当前有效边（valid_to IS NULL）；`interest_states` 为其中 AI 状态子集。
+pub fn graph_stats(store: &Store) -> Result<Value> {
+    let count = |sql: &str| -> Result<i64> {
+        let value: i64 = store.conn.prepare(sql)?.query_row([], |row| row.get(0))?;
+        Ok(value)
+    };
+    Ok(json!({
+        "episodes": count("SELECT COUNT(*) FROM episodes")?,
+        "mentions": count("SELECT COUNT(*) FROM mentions")?,
+        "entities": count("SELECT COUNT(*) FROM nodes WHERE node_type='Entity'")?,
+        "relations": count("SELECT COUNT(*) FROM edges WHERE valid_to IS NULL")?,
+        "interest_states": count(
+            "SELECT COUNT(*) FROM edges WHERE predicate='INTERESTED_IN' \
+             AND source_kind='ai_state' AND valid_to IS NULL")?,
+    }))
+}
+
 /// 键形（冻结给面板 DTO）——见模块测试：
 /// `{ baseline_only, from_run_id, to_run_id,
 ///    interest: { opened, closed, changed }, guards: { added, removed } }`。

@@ -572,10 +572,19 @@ async fn room_overview(
     let rows = live_core::leads::read_ledger(&live_core::leads::ledger_path(&root));
     let count =
         |status: live_core::leads::LeadStatus| rows.iter().filter(|r| r.status == status).count();
-    let delta = match open_graph(&root) {
-        Some(store) => live_core::graph::query::run_pair_delta(&store)
+    let store = open_graph(&root);
+    let delta = match &store {
+        Some(store) => live_core::graph::query::run_pair_delta(store)
             .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
         None => serde_json::from_str(BASELINE_DELTA).expect("literal parses"),
+    };
+    // Z3 首页指标条：无图态 → null 空态（前端呈现「—」而非臆造数字）。
+    let graph_stats = match &store {
+        Some(store) => Some(
+            live_core::graph::query::graph_stats(store)
+                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
+        ),
+        None => None,
     };
     Ok(Json(json!({
         "room_id": config.bilibili.room_id,
@@ -588,6 +597,8 @@ async fn room_overview(
         // 直播数据页档案面：shared/live_records.json 整场记录原样透传
         //（status/count/records[]；空态 status="empty" 由前端解说）。
         "live": read_json(&root.join("shared").join("live_records.json")),
+        // Z3：图存量指标面（旧版报告顶部数字条）。
+        "graph_stats": graph_stats,
         "collection": collection,
         "ai": read_json(&root.join("ai").join("state.json")),
         "situation": read_json(&root.join("ai").join("situation.json")),
@@ -645,6 +656,12 @@ async fn room_viewers(
             "uid": uid,
             "name": viewer["viewer"]["name"].as_str()
                 .or_else(|| viewer["profile"]["name"].as_str()),
+            // Z3：大航海 API 一发即带的身份面（旧版站的舰长签名：头像+舰长等级+勋章）——
+            // face 是 hdslb 图床 URL，呈现侧须 referrerPolicy="no-referrer"。
+            "face": viewer["viewer"]["face"].as_str()
+                .or_else(|| viewer["profile"]["face"].as_str()),
+            "guard_level": viewer["viewer"]["guard_level"].as_i64(),
+            "medal_level": viewer["viewer"]["medal_level"].as_i64(),
             "collected_at": viewer["collected_at"],
             "ai_status": cached.as_ref().map(|c| c["status"].clone()),
             // 空池引导位约定：front-end 按 completed=false + viewer 数=0 渲染引导。

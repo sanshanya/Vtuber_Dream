@@ -49,6 +49,11 @@ export interface RunRecordView {
 export interface ViewerRow {
   uid: string;
   name: string | null;
+  /** Z3d：大航海身份面（face 为空串 → null 由服务端 as_str 直接漏空，前端须判空）。 */
+  face: string | null;
+  /** 大航海等级：3=舰长 / 2=提督 / 1=总督。 */
+  guard_level: number | null;
+  medal_level: number | null;
   collected_at: string | null;
   ai_status: string | null;
   ai_completed: boolean;

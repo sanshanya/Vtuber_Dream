@@ -96,6 +96,9 @@ export function Viewers({ roomId }: { roomId: string }) {
   );
 }
 
+/** 大航海等级字面（B站 guard_level 语义：3=舰长 / 2=提督 / 1=总督）。 */
+const GUARD_LABELS: Record<number, string> = { 1: "总督", 2: "提督", 3: "舰长" };
+
 function ViewerTable({ rows }: { rows: ViewerRow[] }) {
   return (
     <div className="table-wrap">
@@ -103,6 +106,8 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
         <thead>
           <tr>
             <th>观众</th>
+            <th>大航海</th>
+            <th>勋章</th>
             <th>uid</th>
             <th>采集于</th>
             <th>Perception</th>
@@ -112,7 +117,37 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
         <tbody>
           {rows.map((row) => (
             <tr key={row.uid}>
-              <td>{row.name ?? "—"}</td>
+              {/* Z3d：身份列（大航海 API 一发即带 face/guard_level/medal_level——
+                  旧版站的观众签名是「头像+名字」，有头像是人能认出人的前提）。 */}
+              <td>
+                <span className="viewer-cell">
+                  {row.face ? (
+                    // hdslb 图片防盗链：必须 referrerPolicy="no-referrer"。
+                    <img
+                      src={row.face}
+                      alt=""
+                      className="avatar avatar-sm"
+                      referrerPolicy="no-referrer"
+                      loading="lazy"
+                    />
+                  ) : (
+                    <span className="avatar avatar-sm avatar-fallback">
+                      {(row.name ?? "?").slice(0, 1)}
+                    </span>
+                  )}
+                  <a href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>{row.name ?? "—"}</a>
+                </span>
+              </td>
+              <td>
+                {row.guard_level !== null ? (
+                  <span className="badge state">
+                    {GUARD_LABELS[row.guard_level] ?? `Lv${row.guard_level}`} {row.guard_level}
+                  </span>
+                ) : (
+                  "—"
+                )}
+              </td>
+              <td>{row.medal_level !== null ? `Lv${row.medal_level}` : "—"}</td>
               <td className="protocol">{row.uid}</td>
               <td>{fmtTime(row.collected_at)}</td>
               <td>
@@ -121,7 +156,7 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
                 </span>
               </td>
               <td>
-                <a href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>个人树</a> ·{" "}
+                <a href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>舰长态势</a> ·{" "}
                 <a href={`#/viewers/${encodeURIComponent(row.uid)}/graph`}>局部图</a>
               </td>
             </tr>

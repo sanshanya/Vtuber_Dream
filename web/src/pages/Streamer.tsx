@@ -46,6 +46,17 @@ export function Streamer({ roomId }: { roomId: string }) {
   const situation = data.situation ?? {};
   const usage: UsageRow | undefined = ai.usage ?? undefined;
   const cost = estimateCostCny(usage);
+  const stats: Record<string, unknown> | null =
+    data.graph_stats && typeof data.graph_stats === "object"
+      ? (data.graph_stats as Record<string, unknown>)
+      : null;
+  const statNum = (key: string): number | null =>
+    stats && typeof stats[key] === "number" ? (stats[key] as number) : null;
+  const analysis = situation.analysis as Record<string, unknown> | undefined;
+  const situationCount =
+    situation.status === "complete" && Array.isArray(analysis?.situations)
+      ? (analysis?.situations as unknown[]).length
+      : null;
 
   return (
     <>
@@ -54,6 +65,37 @@ export function Streamer({ roomId }: { roomId: string }) {
         streamerUid={String(data.streamer_uid ?? "")}
         roomId={String(data.room_id ?? "")}
       />
+
+      {/* Z3：旧版站签名指标条（大图数）——感知引擎的存量自豪位。
+          graph_stats 缺图态 → 「—」，不臆造数字。 */}
+      <section className="section">
+        <div className="grid stats static" data-testid="kpi-strip">
+          <div className="card stat">
+            <strong>{fmtInt(collection.viewer_count ?? null)}</strong>
+            <span>舰长</span>
+          </div>
+          <div className="card stat">
+            <strong>{fmtInt(statNum("episodes"))}</strong>
+            <span>Episode事实</span>
+          </div>
+          <div className="card stat">
+            <strong>{fmtInt(statNum("mentions"))}</strong>
+            <span>精确Mention</span>
+          </div>
+          <div className="card stat">
+            <strong>{fmtInt(statNum("entities"))}</strong>
+            <span>动态实体</span>
+          </div>
+          <div className="card stat">
+            <strong>{fmtInt(statNum("relations"))}</strong>
+            <span>当前关系</span>
+          </div>
+          <div className="card stat">
+            <strong>{fmtInt(situationCount)}</strong>
+            <span>态势项</span>
+          </div>
+        </div>
+      </section>
 
       <section className="section card">
         <div className="section-title">
@@ -79,6 +121,21 @@ export function Streamer({ roomId }: { roomId: string }) {
             工具调用 {fmtInt(usage?.tool_calls)} 次
           </p>
         )}
+        {/* 旧版站四层语色 legend（分层哲学肉眼可见）。 */}
+        <div className="legend">
+          <span>
+            <i className="dot fact"></i>平台事实
+          </span>
+          <span>
+            <i className="dot ai"></i>AI语义
+          </span>
+          <span>
+            <i className="dot state"></i>状态判断
+          </span>
+          <span>
+            <i className="dot action"></i>行动建议
+          </span>
+        </div>
       </section>
 
       <section className="section card">
@@ -90,6 +147,12 @@ export function Streamer({ roomId }: { roomId: string }) {
           <div className="guard-strip" data-testid="guard-strip">
             {viewers.data.map((row) => (
               <a className="guard-chip" key={row.uid} href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>
+                {row.face ? (
+                  // hdslb 图片防盗链：必须 referrerPolicy="no-referrer"。
+                  <img src={row.face} alt="" className="avatar avatar-xs" referrerPolicy="no-referrer" loading="lazy" />
+                ) : (
+                  <span className="avatar avatar-xs avatar-fallback">{(row.name ?? "?").slice(0, 1)}</span>
+                )}
                 <strong>{row.name ?? row.uid}</strong>
                 <span className={`badge${row.ai_completed ? " state" : ""}`}>
                   {row.ai_status ?? "—"}

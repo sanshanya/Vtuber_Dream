@@ -78,94 +78,117 @@ export function Situ({ analysis, synthetic = false }: { analysis: SituAnalysis; 
       </section>
 
       {interests.length > 0 && (
+        // Z3：兴趣实体表化（旧版站「具体兴趣图」五列结构收敛到我们的三实键：实体/状态/关注角度——
+        // 涉及观众/置信度不在 audience 提交键形里，不臆造补上）。
         <section className="section card situ-part">
           <div className="section-title">
             <h2>兴趣实体</h2>
             <span className="badge ai">{interests.length} 项</span>
           </div>
-          <div className="badges">
-            {interests.map((item, i) => (
-              <span className="badge ai" key={`g${i}`} title={text(item.evidence_summary)}>
-                {text(item.entity, "?")}
-                {text(item.status) ? ` · ${text(item.status)}` : ""}
-              </span>
-            ))}
+          <div className="table-wrap">
+            <table className="data-table" data-testid="situ-interests">
+              <thead>
+                <tr>
+                  <th>实体</th>
+                  <th>状态</th>
+                  <th>关注角度（证据据点）</th>
+                </tr>
+              </thead>
+              <tbody>
+                {interests.map((item, i) => (
+                  <tr key={`g${i}`}>
+                    <td>
+                      <strong>{text(item.entity, "?")}</strong>
+                    </td>
+                    <td>
+                      <span className="badge state">{text(item.status, "未标")}</span>
+                    </td>
+                    <td className="muted">{text(item.evidence_summary)}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </section>
       )}
 
       {communities.length > 0 && (
-        <section className="section card situ-part">
+        <section className="section situ-part">
           <div className="section-title">
             <h2>观众社群</h2>
+            <span className="badge ai">{communities.length} 个</span>
           </div>
-          <ul className="delta-list" data-testid="situ-communities">
+          {/* Z3 卡格化（旧版站 article.card 结构）：单社群=单卡。 */}
+          <div className="grid three" data-testid="situ-communities">
             {communities.map((item, i) => (
-              <li key={`c${i}`}>
-                <strong>{text(item.name, "?")}</strong>
+              <article className="card" key={`c${i}`}>
                 {/* W2/r1-F5：communities 是 audience 提交的 AI 群体推断产物 → 推断层色。 */}
-                <span className="badge ai" style={{ margin: "0 6px" }}>
-                  {`观众 ${Array.isArray(item.viewer_ids) ? item.viewer_ids.length : 0}`}
-                </span>
-                <span className="muted">{text(item.description)}</span>
-              </li>
+                <div className="badges">
+                  <span className="badge ai">
+                    {`观众 ${Array.isArray(item.viewer_ids) ? item.viewer_ids.length : 0}`}
+                  </span>
+                </div>
+                <h3>{text(item.name, "?")}</h3>
+                <p>{text(item.description)}</p>
+              </article>
             ))}
-          </ul>
+          </div>
         </section>
       )}
 
       {situations.length > 0 && (
-        <section className="section card situ-part">
+        <section className="section situ-part">
           <div className="section-title">
             <h2>关键态势</h2>
+            <span className="badge state">{situations.length} 项</span>
           </div>
-          <ul className="delta-list">
+          <div className="grid three">
             {situations.map((item, i) => (
-              <li key={`s${i}`}>
-                <strong>{text(item.title, "?")}</strong>
-                <span className="badge state" style={{ margin: "0 6px" }}>
-                  {text(item.status, "?")}
-                </span>
-                <span className="muted">{text(item.description)}</span>
-              </li>
+              <article className="card" key={`s${i}`}>
+                <div className="badges">
+                  <span className="badge state">{text(item.status, "?")}</span>
+                </div>
+                <h3>{text(item.title, "?")}</h3>
+                <p>{text(item.description)}</p>
+              </article>
             ))}
-          </ul>
+          </div>
         </section>
       )}
 
       {(opportunities.length > 0 || calendars.length > 0) && (
-        <section className="section card situ-part">
+        <section className="section situ-part">
           <div className="section-title">
             <h2>行动建议与排期</h2>
+            <span className="badge action">
+              {opportunities.length + calendars.length} 项
+            </span>
           </div>
-          {opportunities.length > 0 && (
-            <ul className="delta-list">
-              {opportunities.map((item, i) => (
-                <li key={`o${i}`}>
-                  <strong>{text(item.title, text(item.entity, "?"))}</strong>
-                  {text(item.format) ? (
-                    <span className="badge action">{text(item.format)}</span>
-                  ) : null}{" "}
-                  <span className="muted">{text(item.why_now)}</span>
-                </li>
-              ))}
-            </ul>
-          )}
-          {/* Z2b：content_calendar 旧实现只计数不呈现——排期项与建议同卡下层。 */}
-          {calendars.length > 0 && (
-            <ul className="delta-list" data-testid="situ-calendar">
-              {calendars.map((item, i) => (
-                <li key={`k${i}`}>
-                  <strong>{text(item.theme, "?")}</strong>
-                  {text(item.session) ? <span className="badge action">{text(item.session)}</span> : null}{" "}
-                  <span className="muted">{text(item.goal)}</span>
-                  {text(item.validation_signal) ? (
-                    <span className="muted">（验证信号：{text(item.validation_signal)}）</span>
-                  ) : null}
-                </li>
-              ))}
-            </ul>
-          )}
+          <div className="grid two">
+            {opportunities.map((item, i) => (
+              <article className="card" key={`o${i}`}>
+                <div className="badges">
+                  {text(item.format) ? <span className="badge action">{text(item.format)}</span> : null}
+                </div>
+                <h3>{text(item.title, text(item.entity, "?"))}</h3>
+                <p>{text(item.why_now)}</p>
+              </article>
+            ))}
+            {/* Z2b：content_calendar 旧实现只计数不呈现——排期项与建议同格同形。
+                多卡同 testid 属 RTL 的 queryAll* 语义（排期钉按 queryAllByTestId 取）。 */}
+            {calendars.map((item, i) => (
+              <article className="card" key={`k${i}`} data-testid="situ-calendar">
+                <div className="badges">
+                  {text(item.session) ? <span className="badge action">{text(item.session)}</span> : null}
+                </div>
+                <h3>{text(item.theme, "?")}</h3>
+                <p>{text(item.goal)}</p>
+                {text(item.validation_signal) ? (
+                  <div className="small muted">验证信号：{text(item.validation_signal)}</div>
+                ) : null}
+              </article>
+            ))}
+          </div>
         </section>
       )}
     </>

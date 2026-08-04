@@ -199,4 +199,72 @@ describe("Streamer 主播卡（Z2）", () => {
     renderStreamer();
     await waitFor(() => expect(screen.getByText(/舰长名单为空/)).toBeTruthy());
   });
+
+  it("Z3：指标条=旧版站签名（舰长/Episode/Mention/实体/关系/态势项），graph_stats 面透传", async () => {
+    stubFetchMap({
+      overview: {
+        status: 200,
+        body: {
+          ...base,
+          graph_stats: {
+            episodes: 998,
+            mentions: 652,
+            entities: 1473,
+            relations: 4477,
+            interest_states: 58,
+          },
+          situation: {
+            status: "complete",
+            analysis: { executive_summary: "s", situations: [{}, {}, {}] },
+          },
+        },
+      },
+      viewers: { status: 200, body: [] },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByTestId("kpi-strip")).toBeTruthy());
+    const strip = screen.getByTestId("kpi-strip");
+    expect(strip.textContent).toContain("998");
+    expect(strip.textContent).toContain("1,473");
+    expect(strip.textContent).toContain("4,477");
+    expect(strip.textContent).toContain("态势项");
+    expect(strip.querySelectorAll(".card.stat").length).toBe(6);
+  });
+
+  it("Z3：graph_stats 缺图态 → 指标条落「—」不臆造数字", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: { ...base, graph_stats: null } },
+      viewers: { status: 200, body: [] },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByTestId("kpi-strip")).toBeTruthy());
+    expect(screen.getByTestId("kpi-strip").textContent).toContain("—");
+    expect(screen.getByTestId("kpi-strip").textContent).not.toContain("998");
+  });
+
+  it("Z3d：舰长 chip 有 face → 头像 no-referrer；face 空 → 首字回退块", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: { ...base } },
+      viewers: {
+        status: 200,
+        body: [
+          {
+            uid: "u1",
+            name: "有头",
+            face: "https://i0.hdslb.com/bfs/face/a.jpg",
+            guard_level: 3,
+            medal_level: 25,
+            ai_status: "complete",
+            ai_completed: true,
+          },
+          { uid: "u2", name: "无头", face: "", ai_status: "pending", ai_completed: false },
+        ],
+      },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByTestId("guard-strip")).toBeTruthy());
+    const img = document.querySelector<HTMLImageElement>(".guard-chip img.avatar-xs");
+    expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(document.querySelector(".guard-chip .avatar-fallback")?.textContent).toBe("无");
+  });
 });

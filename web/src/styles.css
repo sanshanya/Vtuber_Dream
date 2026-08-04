@@ -83,3 +83,9 @@ table.data-table td{vertical-align:middle}
 .guard-chip:hover{border-color:var(--accent)}
 .guard-chip strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .situ-part{margin-top:16px}
+
+/* Z3 追加段：舰长头像列 / 指标条 / 观众单元 */
+.avatar-xs{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--panel2);border:1px solid var(--line);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:12px;font-weight:700;color:var(--muted)}
+.avatar-fallback{align-items:center}
+.viewer-cell{display:flex;align-items:center;gap:8px}
+.guard-chip strong{flex:1;min-width:0}

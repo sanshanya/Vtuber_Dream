@@ -99,6 +99,12 @@ async fn overview_combines_collection_ai_leads_and_baseline_delta() {
     assert!(keys.contains_key("live"), "{body}");
     assert!(body["streamer"].is_null(), "{body}");
     assert!(body["live"].is_null(), "{body}");
+    // Z3：首页指标条 graph_stats（demo 布景图存在 → 非 null 且 episodes/entities ≥ 1）。
+    let stats = &body["graph_stats"];
+    assert!(stats.is_object(), "demo 布景有图 → 指标面必须建账：{body}");
+    assert!(stats["episodes"].as_i64().unwrap_or(0) > 0, "{stats}");
+    assert!(stats["entities"].as_i64().unwrap_or(0) > 0, "{stats}");
+    assert!(stats.get("relations").is_some() && stats.get("interest_states").is_some());
     // 未知 uid → 404
     let (status, body) = get(&fx.app, "/api/rooms/999/overview").await;
     assert_eq!(status, 404, "{body}");
@@ -157,6 +163,16 @@ async fn viewers_list_reports_ai_completion_per_viewer() {
         "{body}"
     );
     assert!(viewers.iter().any(|v| v["name"] == "演示观众A"), "{body}");
+    // Z3：大航海身份面透传——face/guard_level/medal_level 键恒在（demo face 空串 = 未采到，
+    // 呈现侧 fallback；guard/medal 是有意义数字必须原样到面）。
+    for row in viewers {
+        let obj = row.as_object().expect("viewer row object");
+        for key in ["face", "guard_level", "medal_level"] {
+            assert!(obj.contains_key(key), "观众行缺 {key}：{row}");
+        }
+    }
+    assert_eq!(viewers[0]["guard_level"], 3, "{body}");
+    assert_eq!(viewers[0]["medal_level"], 20, "{body}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
