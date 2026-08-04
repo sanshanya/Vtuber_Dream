@@ -360,3 +360,40 @@ async fn config_put_atomic_write_leaves_no_tmp_residue() {
         .collect();
     assert!(residue.is_empty(), "tmp 残渣：{residue:?}");
 }
+
+/// ag6-F1/X3：D9 魔数与状态机字面的持久钉——盲评裁定「命名魔数必须有测试」，
+/// 本钉把数值/字面锁到现形；有意调整需先改钉并说明。
+#[test]
+fn named_security_knobs_and_state_machine_litera_pin() {
+    use live_server::app::{
+        DEFAULT_PORT, MAX_PUT_VALUE_CHARS, MAX_REQUEST_BODY_BYTES, MAX_VID_PATH_CHARS,
+        MAX_VIEWER_UID_CHARS, WRITABLE_CONFIG_KEYS,
+    };
+    assert_eq!(DEFAULT_PORT, 3781);
+    assert_eq!(MAX_REQUEST_BODY_BYTES, 64 * 1024);
+    assert_eq!(MAX_PUT_VALUE_CHARS, 4096);
+    assert_eq!(MAX_VIEWER_UID_CHARS, 32);
+    assert_eq!(MAX_VID_PATH_CHARS, 64);
+    assert_eq!(
+        WRITABLE_CONFIG_KEYS,
+        [
+            ("bilibili", "cookie"),
+            ("ai", "api_key"),
+            ("ai", "base_url"),
+            ("ai", "model")
+        ]
+    );
+    assert_eq!(
+        live_server::registry::RUN_STATES,
+        [
+            "queued",
+            "collecting",
+            "episodes",
+            "per_viewer_ai",
+            "audience",
+            "done",
+            "failed"
+        ]
+    );
+    assert_eq!(live_server::registry::RUN_KINDS, ["full", "viewer"]);
+}

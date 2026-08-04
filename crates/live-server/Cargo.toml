@@ -24,6 +24,8 @@ tower = { version = "0.4", features = ["util"] }
 http-body-util = "0.1"
 wiremock = "0.6"
 tempfile = "3"
+# app_delta 布景时钟：delta 时间戳从运行时刻派生（日历炸弹免疫），与 live-core 同版系。
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # M5-D2 delta 布景：手工 SQL 栽 graph_runs/edges（graph_delta.rs 同法）。
 # 版本必须与 live-core 的对齐：libsqlite3-sys links=sqlite3 单链接约束。
 rusqlite = { version = "0.32", features = ["bundled"] }

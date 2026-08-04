@@ -9,16 +9,31 @@
 use std::path::{Path, PathBuf};
 
 use axum::http::Request;
+use chrono::{Duration, Utc};
 use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tower::ServiceExt;
 
 use live_server::app::{AppState, build_app};
 
-// 时间戳全部未来式（运行日 2026-08+；恰佳「相邻 complete」= run-delta-b vs run-delta-a）
-const T1: &str = "2027-01-01T00:00:00";
-const T_EDGE: &str = "2027-01-01T06:00:00";
-const T2: &str = "2027-01-02T00:00:00";
+/// 时间戳从测试运行时时钟派生（ag6 日历炸弹修复：硬编码 2027-01 曾使任何
+/// 更晚的构建日让 demo 自己的 complete 行顶替「相邻」位而必红）。
+/// 形状与 live_core::episodes::now_iso 同齿（秒 + +00:00）。
+struct Clock {
+    t1_base: String,
+    t_edge: String,
+    t2: String,
+}
+
+fn fixture_clock() -> Clock {
+    let now = Utc::now();
+    let stamp = |at: chrono::DateTime<Utc>| at.format("%Y-%m-%dT%H:%M:%S+00:00").to_string();
+    Clock {
+        t1_base: stamp(now + Duration::hours(8)),
+        t_edge: stamp(now + Duration::hours(25)),
+        t2: stamp(now + Duration::hours(49)),
+    }
+}
 
 const YAML_TEMPLATE: &str = r#"
 version: 6
@@ -95,6 +110,7 @@ fn stage_delta_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
 
     let graph_db = demo_root.join("graph").join("perception.sqlite3");
     let conn = rusqlite::Connection::open(&graph_db).expect("graph opens");
+    let clock = fixture_clock();
     // 异环实体（demo 自己的 NEW_ENTITY mint；rfind 语义 = node 行后写入者胜）
     let entity_id: String = conn
         .query_row(
@@ -104,10 +120,13 @@ fn stage_delta_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
         )
         .expect("demo 图含 异环 实体");
     // 两个未来 complete run（相邻由 completed_at 排序确立）
-    for (run_id, at) in [("run-delta-a", T1), ("run-delta-b", T2)] {
+    for (run_id, at) in [
+        ("run-delta-a", clock.t1_base.as_str()),
+        ("run-delta-b", clock.t2.as_str()),
+    ] {
         conn.execute(
             "INSERT INTO graph_runs(run_id, started_at, completed_at) VALUES(?,?,?)",
-            [run_id, T1, at],
+            [run_id, clock.t1_base.as_str(), at],
         )
         .unwrap();
     }
@@ -115,7 +134,7 @@ fn stage_delta_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
     conn.execute(
         "INSERT OR IGNORE INTO nodes(node_id,node_type,name,source_kind,first_seen_at,last_seen_at) \
          VALUES('room:983', 'Room', '983', 'platform_fact', ?1, ?1)",
-        [T1],
+        [clock.t1_base.as_str()],
     )
     .unwrap();
     let edge = |edge_id: &str,
@@ -137,10 +156,10 @@ fn stage_delta_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
                 serde_json::to_string(&props).unwrap(),
                 kind,
                 0.9,
-                T_EDGE,
+                clock.t_edge.as_str(),
                 Option::<&str>::None,
-                T_EDGE,
-                T_EDGE,
+                clock.t_edge.as_str(),
+                clock.t_edge.as_str(),
                 "run-delta-b",
             ],
         )
@@ -170,14 +189,14 @@ fn stage_delta_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
     conn.execute(
         "INSERT INTO nodes(node_id,node_type,name,source_kind,first_seen_at,last_seen_at) \
          VALUES('entity:gs-os', 'Entity', '原神', 'grounded_ai', ?1, ?1)",
-        [T_EDGE],
+        [clock.t_edge.as_str()],
     )
     .unwrap();
     conn.execute(
         "INSERT INTO entities(entity_id,canonical_name,normalized_name,entity_type,source_kind,\
          first_seen_at,last_seen_at) \
          VALUES('entity:gs-os','原神','原神','游戏','grounded_ai',?1,?1)",
-        [T_EDGE],
+        [clock.t_edge.as_str()],
     )
     .unwrap();
     edge(
