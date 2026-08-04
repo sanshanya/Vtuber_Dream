@@ -35,7 +35,7 @@ export function LeadsBlock({ leads }: { leads: LeadsView }) {
   const pending = leads.pending ?? [];
   return (
     <div>
-      <p className="muted">{leads.summary ?? "—"}</p>
+      <p className="muted">{typeof leads.summary === "string" ? leads.summary : "—"}</p>
       <div className="badges">
         {TOTAL_LABELS.map(([key, label]) => (
           <span className="badge" key={key}>
@@ -46,10 +46,12 @@ export function LeadsBlock({ leads }: { leads: LeadsView }) {
       {pending.length > 0 && (
         <ul className="delta-list">
           {pending.map((row, i) => (
+            // ag4-F6：leads 系工具产物快照——入 JSX 的键一律 String() 护栏。
             <li key={i}>
-              <span className="badge fact">{row.type ?? "?"}</span> {row.locator ?? "?"}
-              {row.viewer_id ? <span className="muted"> @{row.viewer_id}</span> : null}
-              {row.motivation ? <span className="muted"> · {row.motivation}</span> : null}
+              <span className="badge fact">{String(row.type ?? "?")}</span>{" "}
+              {String(row.locator ?? "?")}
+              {row.viewer_id ? <span className="muted"> @{String(row.viewer_id)}</span> : null}
+              {row.motivation ? <span className="muted"> · {String(row.motivation)}</span> : null}
             </li>
           ))}
         </ul>

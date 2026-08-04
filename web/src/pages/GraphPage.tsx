@@ -29,8 +29,20 @@ const EDGE_LABELS: Record<string, string> = {
   CONTAINS_MENTION: "含有",
 };
 
-/** cose 布局迭代上限（演示数据规模 < 500 节点；Render 域魔数命名，cytoscape 型键 numIter）。 */
-const GRAPH_LAYOUT_MAX_ITERATIONS = 1000;
+/**
+ * cose 布局迭代随规模降档（ag5-F9/ag4-F9）：小图跑满收敛即可，大图压档保响应
+ * （animate:false 同步语义下 numIter 直接决定主线程阻塞时长）。
+ */
+const GRAPH_LAYOUT_THRESHOLD_NODES = 500;
+const GRAPH_LAYOUT_ITERATIONS_SMALL = 1000;
+const GRAPH_LAYOUT_ITERATIONS_LARGE = 400;
+
+/** 节点数 → cose numIter（vitest 唯一定点）。 */
+export function graphLayoutIterations(nodeCount: number): number {
+  return nodeCount < GRAPH_LAYOUT_THRESHOLD_NODES
+    ? GRAPH_LAYOUT_ITERATIONS_SMALL
+    : GRAPH_LAYOUT_ITERATIONS_LARGE;
+}
 
 function stylePreset(): Stylesheet[] {
   return [
@@ -115,6 +127,9 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
 
   useEffect(() => {
     if (!mount.current || elements.length === 0) return;
+    // ag4-F9：cy 随新数据重建 → 侧栏选中态必须清，不得残留旧节点 JSON。
+    setSelected(null);
+    setSelectedData(null);
     const shaped: ElementDefinition[] = (elements as any[]).map((element) => {
       const data = { ...(element?.data ?? {}) };
       if (typeof data.predicate === "string") {
@@ -132,7 +147,7 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
       container: mount.current,
       elements: shaped,
       style: stylePreset(),
-      layout: { name: "cose", numIter: GRAPH_LAYOUT_MAX_ITERATIONS, animate: false },
+      layout: { name: "cose", numIter: graphLayoutIterations(shaped.length), animate: false },
     });
     cy.on("select", "node", (event) => {
       const node = event.target;

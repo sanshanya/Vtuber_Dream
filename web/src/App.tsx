@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "./api";
+import { RunButton } from "./components/RunButton";
 import { Dashboard } from "./pages/Dashboard";
 import { GraphPage } from "./pages/GraphPage";
 import { Settings } from "./pages/Settings";
@@ -16,9 +17,16 @@ export default function App() {
 
   let page;
   if (rooms.isError) {
-    page = <div className="notice">服务连接失败：{String(rooms.error)}</div>;
-  } else if (rooms.isLoading || !roomId) {
+    page = (
+      <div className="notice">
+        服务连接失败：{rooms.error instanceof Error ? rooms.error.message : String(rooms.error)}
+      </div>
+    );
+  } else if (rooms.isLoading) {
     page = <div className="empty">正在连接 live-server…</div>;
+  } else if (!roomId) {
+    // ag4-F7：查询成功但空数组不得悬挂「正在连接」——显式空态。
+    page = <div className="notice">服务端未配置任何房间（/api/rooms 返回空）。</div>;
   } else if (segments.length === 0) {
     page = <Dashboard roomId={roomId} />;
   } else if (segments[0] === "viewers" && segments.length === 1) {
@@ -53,6 +61,10 @@ export default function App() {
             <a href="#/graph">图谱</a>
             <a href="#/settings">设置</a>
           </nav>
+        </div>
+        {/* design §10「全部页头触发钮」裁决：hero 单点挂载；追踪态由 RunTracker 全局共享。 */}
+        <div className="container hero-runbar">
+          <RunButton />
         </div>
       </header>
       <main className="container">{page}</main>

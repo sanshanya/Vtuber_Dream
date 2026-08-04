@@ -1,9 +1,9 @@
 import { useQuery } from "@tanstack/react-query";
 
-import { api } from "../api";
+import { api, isApiError } from "../api";
 import { DeltaBlock } from "../components/DeltaBlock";
 import { LeadsBlock } from "../components/LeadsBlock";
-import { RunButton } from "../components/RunButton";
+import { Situ } from "../components/Situ";
 import { estimateCostCny, fmtCny, fmtInt, fmtTime, type UsageRow } from "../format";
 
 /** 房间面板（D3）：collection 状态 + ai 状态 + delta 区块 + leads 区块 + token/费用公示。 */
@@ -17,14 +17,15 @@ export function Dashboard({ roomId }: { roomId: string }) {
     return <div className="empty">载入房间面板…</div>;
   }
   if (overview.isError) {
-    const message = String(overview.error instanceof Error ? overview.error.message : overview.error);
-    const missing = message.includes("collection");
+    const error: unknown = overview.error;
+    // ag5-F6：空态判别走 ApiError.status（404 = 尚无采集快照），不再子串匹配文案。
+    const missing = isApiError(error) && error.status === 404;
+    const message = String(error instanceof Error ? error.message : error);
     return (
       <section className="section card">
         <h2>房间面板</h2>
         <div className="notice">
-          {missing ? "还没有采集数据——先触发一次运行：" : message}{" "}
-          {missing && <RunButton />}
+          {missing ? "还没有采集数据——用页面右上角的「触发全量感知」跑一轮：" : message}
         </div>
       </section>
     );
@@ -50,7 +51,6 @@ export function Dashboard({ roomId }: { roomId: string }) {
       <section className="section">
         <div className="section-title">
           <h2>房间面板</h2>
-          <RunButton />
         </div>
         <div className="grid stats">
           {stats.map(([label, value]) => (
@@ -81,7 +81,7 @@ export function Dashboard({ roomId }: { roomId: string }) {
           <h2>整体态势</h2>
         </div>
         {situation.status === "complete" && situation.analysis ? (
-          <Situ analysis={situation.analysis} />
+          <Situ analysis={situation.analysis} synthetic={situation.synthetic_demo === true} />
         ) : (
           <div className="empty">整体态势尚未形成（跑完 Audience 阶段后呈现）</div>
         )}
@@ -93,61 +93,6 @@ export function Dashboard({ roomId }: { roomId: string }) {
         </div>
         <LeadsBlock leads={data.leads ?? {}} />
       </section>
-    </>
-  );
-}
-
-/**
- * situation.analysis 直渲（键与 demo.rs / AudienceSituationSubmission 同源：
- * executive_summary / interest_graph[entity,status,confidence,angles] /
- * situations[title,status,description] / content_opportunities[title,entity,format]）。
- */
-function Situ({ analysis }: { analysis: any }) {
-  const interests = Array.isArray(analysis.interest_graph) ? analysis.interest_graph : [];
-  const situations = Array.isArray(analysis.situations) ? analysis.situations : [];
-  const opportunities = Array.isArray(analysis.content_opportunities)
-    ? analysis.content_opportunities
-    : [];
-  const calendars = Array.isArray(analysis.content_calendar) ? analysis.content_calendar : [];
-  return (
-    <>
-      {analysis.executive_summary && <p>{String(analysis.executive_summary)}</p>}
-      <div className="badges">
-        <span className="badge state">兴趣实体 {interests.length}</span>
-        <span className="badge ai">态势项 {situations.length}</span>
-        <span className="badge action">内容机会 {opportunities.length}</span>
-        <span className="badge fact">排期 {calendars.length}</span>
-      </div>
-      {interests.map((item: any, i: number) => (
-        <span className="badge ai" key={`g${i}`} title={item.evidence_summary ?? ""}>
-          {item.entity ?? "?"}
-          {item.status ? ` · ${item.status}` : ""}
-        </span>
-      ))}
-      {situations.length > 0 && (
-        <ul className="delta-list">
-          {situations.map((item: any, i: number) => (
-            <li key={`s${i}`}>
-              <strong>{item.title ?? "?"}</strong>
-              <span className="badge state" style={{ margin: "0 6px" }}>
-                {item.status ?? "?"}
-              </span>
-              <span className="muted">{item.description ?? ""}</span>
-            </li>
-          ))}
-        </ul>
-      )}
-      {opportunities.length > 0 && (
-        <ul className="delta-list">
-          {opportunities.map((item: any, i: number) => (
-            <li key={`c${i}`}>
-              <strong>{item.title ?? item.entity ?? "?"}</strong>
-              {item.format ? <span className="badge action">{item.format}</span> : null}{" "}
-              <span className="muted">{item.why_now ?? ""}</span>
-            </li>
-          ))}
-        </ul>
-      )}
     </>
   );
 }

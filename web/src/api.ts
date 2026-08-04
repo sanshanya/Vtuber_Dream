@@ -6,6 +6,24 @@
 
 const API_BASE = "/api";
 
+/**
+ * 结构化错误：HTTP status + 用户可读文案（ag5-F4/F6）。
+ * Dashboard 空态等分支用 status 判别，绝不再子串匹配 message。
+ */
+export class ApiError extends Error {
+  constructor(
+    public readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+export function isApiError(error: unknown): error is ApiError {
+  return error instanceof ApiError;
+}
+
 export interface Room {
   id: string;
   project_name: string;
@@ -62,13 +80,21 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
-  const payload = text.length === 0 ? null : JSON.parse(text);
+  // ag5-F4：HTML 错误页/半截代理体曾直接崩 JSON.parse 成裸 SyntaxError 糊脸。
+  let payload: unknown = null;
+  if (text.length > 0) {
+    try {
+      payload = JSON.parse(text);
+    } catch {
+      throw new ApiError(response.status, `服务返回非 JSON 响应（HTTP ${response.status}）`);
+    }
+  }
   if (!response.ok) {
     const detail =
       payload && typeof payload === "object" && "error" in payload
         ? String((payload as { error: unknown }).error)
         : `HTTP ${response.status}`;
-    throw new Error(detail);
+    throw new ApiError(response.status, detail);
   }
   return payload as T;
 }

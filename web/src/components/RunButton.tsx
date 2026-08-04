@@ -1,67 +1,71 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import { api, type RunRecordView } from "../api";
-import { RUN_EVENTS_CAP, RUN_POLL_INTERVAL_MS } from "../constants";
+import { RUN_EVENTS_CAP } from "../constants";
 import { fmtTime } from "../format";
+import { useRunTracker } from "./RunTracker";
 
-const TERMINAL_STATES = ["done", "failed"];
+/** outcome.error 摘取（failed 终局体的唯一用户可读位；非对象 outcome → null）。 */
+function outcomeErrorOf(outcome: unknown): string | null {
+  if (outcome && typeof outcome === "object" && "error" in outcome) {
+    return String((outcome as { error: unknown }).error);
+  }
+  return null;
+}
 
-export function isRunActive(record: RunRecordView | undefined): boolean {
-  return record !== undefined && !TERMINAL_STATES.includes(record.status);
+/** ag5-F8：partial 徽标的解释走 title（服务端不重复造词，前端一次性说清语义）。 */
+export function partialTitle(record: RunRecordView): string {
+  const base = `触发于 ${fmtTime(record.started_at)}`;
+  return record.partial
+    ? `${base} · partial = 完成但仍保留观众级失败（详见 events 与 leads）`
+    : base;
 }
 
 /**
- * 页头触发钮（design §10：全部页头）+ 轮询（D8：仅 run active 期启用）。
- * run 到达终态 → 当拍失效全部数据查询（面板/viewers/tree/graph）。
+ * hero 单点触发钮（design §10「全部页头」裁决）+ 状态徽标。
+ * run 追踪的全部状态位由 RunTracker 共享层供给——本组件不再自持 runId（ag4-F1）。
  */
 export function RunButton() {
-  const queryClient = useQueryClient();
-  const [runId, setRunId] = useState<string | null>(null);
+  const tracker = useRunTracker();
   const [submitError, setSubmitError] = useState<string | null>(null);
-
-  const record = useQuery({
-    queryKey: ["run", runId],
-    queryFn: () => api.run(runId!),
-    enabled: runId !== null,
-    refetchInterval: (query) => (isRunActive(query.state.data) ? RUN_POLL_INTERVAL_MS : false),
-  });
-  const active = isRunActive(record.data);
-  const status = record.data?.status;
-  const previousStatus = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    const before = previousStatus.current;
-    previousStatus.current = status;
-    if (status !== undefined && status !== before && TERMINAL_STATES.includes(status)) {
-      queryClient.invalidateQueries();
-    }
-  }, [status, queryClient]);
 
   async function trigger() {
     setSubmitError(null);
     try {
       const { run_id } = await api.startRun({ kind: "full" });
-      setRunId(run_id);
+      tracker.track(run_id);
     } catch (error) {
       setSubmitError(String(error instanceof Error ? error.message : error));
     }
   }
 
-  const data = record.data;
+  const data = tracker.record;
   const events = (data?.events ?? []).slice(-RUN_EVENTS_CAP);
+  const outcomeError = outcomeErrorOf(data?.outcome);
   return (
     <span className="run-trigger">
-      <button className="primary" disabled={active} onClick={() => void trigger()}>
-        {active ? "运行中…" : "触发全量感知"}
+      <button className="primary" disabled={tracker.active} onClick={() => void trigger()}>
+        {tracker.active ? "运行中…" : "触发全量感知"}
       </button>
       {data && (
-        <span className={`badge run-status-${data.status}`} title={fmtTime(data.started_at)}>
+        <span className={`badge run-status-${data.status}`} title={partialTitle(data)}>
           {data.status}
           {data.partial ? "(partial)" : ""}
         </span>
       )}
+      {tracker.lost && (
+        <button
+          className="badge danger"
+          title="点击消除"
+          onClick={() => tracker.dismissLost()}
+        >
+          {tracker.lost}
+        </button>
+      )}
+      {outcomeError && <span className="badge danger">{outcomeError}</span>}
       {submitError && <span className="badge danger">{submitError}</span>}
-      {active && events.length > 0 && (
+      {/* ag5-F2：events 不再只在 active 时渲染——终态恰是最需要排查的时刻。 */}
+      {data && events.length > 0 && (
         <details className="run-events">
           <summary>events ({events.length})</summary>
           <pre>{events.join("\n")}</pre>

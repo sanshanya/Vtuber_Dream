@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api, type ViewerRow } from "../api";
+import { useRunTracker } from "../components/RunTracker";
 import { fmtTime } from "../format";
 
 /**
@@ -38,6 +39,7 @@ export function EmptyPoolHint(props: {
 
 export function Viewers({ roomId }: { roomId: string }) {
   const viewers = useQuery({ queryKey: ["viewers", roomId], queryFn: () => api.viewers(roomId) });
+  const tracker = useRunTracker();
   const [singleUid, setSingleUid] = useState("");
   const [singleError, setSingleError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -49,7 +51,9 @@ export function Viewers({ roomId }: { roomId: string }) {
     try {
       const { run_id } = await api.startRun({ kind: "viewer", viewer_uid: singleUid.trim() });
       setSubmittedRun(run_id);
-      // 单查到达终态时的全量刷新由页头 RunButton 轮询链承担，这里只标已发。
+      // ag4-F1/ag5-F3：单查 run 登记进全局 RunTracker——hero 徽标轮询 + 终态全失效
+      // 兑现「完成后列表自动刷新」。
+      tracker.track(run_id);
     } catch (error) {
       setSingleError(String(error instanceof Error ? error.message : error));
     } finally {
@@ -61,7 +65,8 @@ export function Viewers({ roomId }: { roomId: string }) {
     return <div className="empty">载入观众列表…</div>;
   }
   if (viewers.isError) {
-    return <div className="notice">观众面面加载失败：{String(viewers.error instanceof Error ? viewers.error.message : viewers.error)}</div>;
+    // ag5-F5：错别字修正（面面→列表）。
+    return <div className="notice">观众列表加载失败：{String(viewers.error instanceof Error ? viewers.error.message : viewers.error)}</div>;
   }
   const rows = viewers.data ?? [];
 
@@ -84,7 +89,7 @@ export function Viewers({ roomId }: { roomId: string }) {
       {submittedRun && (
         <p className="muted small">
           已触发单查 run：<code>{submittedRun}</code>
-          ——回到 <a href="#/">房间面板</a> 看 events 流。
+          ——完成后列表自动刷新；进度与 events 流见页面右上角徽标。
         </p>
       )}
     </section>

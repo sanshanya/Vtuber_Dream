@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api";
 import { MentionText, type MentionSpanLike } from "../components/MentionText";
+import { SingleViewerRunButton } from "../components/SingleViewerRunButton";
 import { fmtTime } from "../format";
 
 interface MentionRow extends MentionSpanLike {
@@ -69,7 +70,13 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
 
       <div className="section card">
         <h3>Episode 时间线（{episodes.length}）</h3>
-        {episodes.length === 0 && <div className="empty">尚无 Episode</div>}
+        {episodes.length === 0 && (
+          // ag5-F7：空轴不再 dead-end——附单查引导按钮。
+          <div className="empty">
+            尚无 Episode ——
+            <SingleViewerRunButton vid={vid} />
+          </div>
+        )}
         <div className="timeline">
           {episodes.map((episode) => (
             <div className="timeline-item" key={episode.episode_id}>

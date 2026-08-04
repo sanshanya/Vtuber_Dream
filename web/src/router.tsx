@@ -25,7 +25,4 @@ export function useHashPath(): string[] {
     .filter(Boolean)
     .map((segment) => decodeURIComponent(segment));
 }
-
-export function navigate(segments: string[]): void {
-  window.location.hash = `/${segments.map((s) => encodeURIComponent(s)).join("/")}`;
-}
+// 注：ag4-F10——navigate() 助函数曾导出而零调用，已删；链接纪律 = href="#/..." + 手写编码。

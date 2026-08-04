@@ -22,6 +22,12 @@ describe("金额换算唯一真源（D8：服务端只出原始 token 数）", (
     expect(estimateCostCny(undefined)).toBeNull();
   });
 
+  it("ag4-F5：有 usage 但 input/output 任一缺键 → null（不许静默 0 化；同屏 fmtInt 显 —，口径一致）", () => {
+    expect(estimateCostCny({ input_tokens: 2_000_000 })).toBeNull();
+    expect(estimateCostCny({ output_tokens: 500_000 })).toBeNull();
+    expect(estimateCostCny({ llm_requests: 3 })).toBeNull();
+  });
+
   it("fmtCny 阈值切档", () => {
     expect(fmtCny(0.0042)).toBe("¥0.0042");
     expect(fmtCny(CNY_TINY_THRESHOLD)).toBe("¥0.01");
