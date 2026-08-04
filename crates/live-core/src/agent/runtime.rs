@@ -25,12 +25,15 @@
 //! forced Agent 只挂终局工具），dispatch 仍按名字查表——比原文献节约一次 handler 迁移问题。
 
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::config::AiConfig;
+
+use super::throttle::Throttle;
 
 // ---------------------------------------------------------------------------
 // BYO wire 类型（chat completions；形状对齐 Python agents SDK 实际出网 JSON）
@@ -383,6 +386,12 @@ pub const FORCED_TURNS_MIN: usize = 4;
 pub const FORCED_TURNS_CAP: usize = 16;
 /// HTTP 层瞬时错误附加尝试（Python `AsyncOpenAI(max_retries=2)` 等价）。
 const HTTP_EXTRA_ATTEMPTS: usize = 2;
+/// Z3/P0-4：HTTP 内层重试基础退避（秒）。attempt n 的退避为 base * 2^(n-1) + jitter，
+/// 封顶 BACKOFF_CAP_SECONDS；Retry-After 头（经 redact 消息信标回传）优先并向下取 max。
+const HTTP_BACKOFF_BASE_SECONDS: f64 = 1.0;
+const HTTP_BACKOFF_CAP_SECONDS: f64 = 30.0;
+/// Retry-After 秒数的可接受上限；超过则放弃重试（避免单 agent 挂死整批）。
+const RETRY_AFTER_MAX_SECONDS: f64 = 60.0;
 
 pub fn truncate_chars(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
@@ -396,6 +405,8 @@ pub struct AgentRuntime {
     thinking_enabled: bool,
     /// false → 回放 assistant 消息前剥离 reasoning_content（Python should_replay 开关）。
     replay_reasoning: bool,
+    /// Z3/P0-4：全局 LLM 请求漏桶；None = 不限速（config max_llm_rpm=0 默认）。
+    throttle: Option<Arc<Throttle>>,
 }
 
 impl AgentRuntime {
@@ -481,18 +492,32 @@ impl AgentRuntime {
             },
             thinking_enabled: reasoning_enabled,
             replay_reasoning,
+            throttle: None,
         }
     }
 
+    /// Z3/P0-4：挂载 run 级共享漏桶。同一 Arc 在 viewer 任务间克隆共享，
+    /// 故全 run 的出队 LLM 请求（全部 agent 的每一轮）合并限速。
+    pub fn with_throttle(mut self, throttle: Arc<Throttle>) -> Self {
+        self.throttle = Some(throttle);
+        self
+    }
+
     /// 单次 chat + 瞬时重试。非流式 + 网关超时：以 retry 兜住（S0 实测 0 失败）。
+    /// Z3/P0-4：过闸放行后才出网（许可即请求，1:1）；退避升级为指数 + 全区间抖动，
+    /// 429/503 携带 Retry-After 时取其秒数（封顶 RETRY_AFTER_MAX_SECONDS）与指数退避取大者。
     pub async fn chat(
         &self,
         request: &OaiChatRequest,
     ) -> Result<OaiChatResponse, AgentRuntimeError> {
+        if let Some(throttle) = &self.throttle {
+            throttle.acquire().await;
+        }
         let mut last_error: Option<async_openai::error::OpenAIError> = None;
+        let mut retry_after: Option<f64> = None;
         for attempt in 0..=HTTP_EXTRA_ATTEMPTS {
             if attempt > 0 {
-                tokio::time::sleep(Duration::from_secs_f64(attempt as f64)).await;
+                tokio::time::sleep(http_backoff(attempt, retry_after)).await;
             }
             match self.client.chat().create_byot(request).await {
                 Ok(response) => return Ok(response),
@@ -503,6 +528,7 @@ impl AgentRuntime {
                             super::redact::redact_openai_error(&err),
                         ));
                     }
+                    retry_after = retry_after_seconds(&err);
                     last_error = Some(err);
                 }
             }
@@ -720,6 +746,61 @@ fn is_transient(err: &async_openai::error::OpenAIError) -> bool {
         }
         _ => false,
     }
+}
+
+/// Z3/P0-4：内层重试退避 = 指数（base·2^(attempt-1)，封顶 30s）× 全区间抖动。
+/// Retry-After 提供时与指数退避取大者。抖动由 attempt 索引确定的轻量哈希产生——
+/// 无 RNG 依赖、单进程内可复现；测试可用 VTD_LIVE_CORE_TEST_JITTER_SEED 固定为 0 抖动。
+fn http_backoff(attempt: usize, retry_after: Option<f64>) -> Duration {
+    let exp = HTTP_BACKOFF_BASE_SECONDS
+        * 2f64
+            .powi(attempt.saturating_sub(1) as i32)
+            .min(HTTP_BACKOFF_CAP_SECONDS);
+    let jitter = jitter_fraction(attempt);
+    let backoff = exp * jitter;
+    let seconds = match retry_after {
+        Some(hint) => backoff.max(hint),
+        None => backoff,
+    };
+    Duration::from_secs_f64(seconds)
+}
+
+/// 全区间抖动系数 ∈ [0, 1]；环境变量 VTD_LIVE_CORE_TEST_JITTER_SEED 存在时恒 0（测试确定性）。
+fn jitter_fraction(attempt: usize) -> f64 {
+    if std::env::var_os("VTD_LIVE_CORE_TEST_JITTER_SEED").is_some() {
+        return 0.0;
+    }
+    // SplitMix64 一步：以 attempt 与进程 id 混合，低成本去同步化，避免惊群同步重试。
+    let mut state = (attempt as u64)
+        .wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        .wrapping_add(std::process::id() as u64);
+    state = (state ^ (state >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    state = (state ^ (state >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    let mixed = state ^ (state >> 31);
+    (mixed >> 11) as f64 / (1u64 << 53) as f64
+}
+
+/// Z3/P0-4：从 429/503 错误提取 Retry-After 秒数。
+/// async-openai 的 ApiError 不暴露响应头，退而求其次：redact 已在消息中保留
+/// "Retry-After: <秒>" 片段时解析之；仅 429/503 状态尝试（其他状态无该语义）。
+fn retry_after_seconds(err: &async_openai::error::OpenAIError) -> Option<f64> {
+    use async_openai::error::OpenAIError;
+    let OpenAIError::ApiError(resp) = err else {
+        return None;
+    };
+    if !matches!(resp.status_code.as_u16(), 429 | 503) {
+        return None;
+    }
+    let message = super::redact::redact_openai_error(err);
+    let marker = "Retry-After:";
+    let start = message.find(marker)? + marker.len();
+    let token: String = message[start..]
+        .trim_start()
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '.')
+        .collect();
+    let seconds: f64 = token.parse().ok()?;
+    (seconds <= RETRY_AFTER_MAX_SECONDS).then_some(seconds)
 }
 
 /// [`run_toolcall_agent`] 的参数包。

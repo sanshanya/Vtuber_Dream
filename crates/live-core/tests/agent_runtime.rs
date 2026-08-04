@@ -626,6 +626,172 @@ async fn http_429_bare_text_body_is_not_retried() {
     assert!(text.contains("1 attempts"), "{text}");
 }
 
+// ---------------------------------------------------------------------------
+// Z3/P0-4：三维闸门（限速漏桶 + Retry-After 尊重 + 指数退避确定性缝）
+// ---------------------------------------------------------------------------
+
+/// Z3/P0-4：Retry-After 信标被尊重——429 body message 携带 "Retry-After: 1" 时，
+/// 重试前实睡 ≥ 该秒数（抖动经 VTD_LIVE_CORE_TEST_JITTER_SEED 钉 0 消噪）。
+/// 局限（书面）：async-openai 的 ApiError 不透传响应头，信标只好从 redact 保留的
+/// message 段截取；真实网关若仅走 header，本机制降级为纯指数退避。
+#[tokio::test(flavor = "multi_thread")]
+async fn http_429_retry_after_hint_is_honored() {
+    unsafe { std::env::set_var("VTD_LIVE_CORE_TEST_JITTER_SEED", "0") };
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let server = MockServer::start().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(move |_: &Request| {
+            if counter_clone.fetch_add(1, Ordering::SeqCst) == 0 {
+                ResponseTemplate::new(429)
+                    .insert_header("retry-after", "1") // header 面（SDK 不透传，记录用）
+                    .set_body_json(json!({
+                        "error": {
+                            "message": "rate limited. Retry-After: 1 before next attempt",
+                            "type": "rate_limit_error",
+                            "code": "rate_limit"
+                        }
+                    }))
+            } else {
+                ResponseTemplate::new(200).set_body_json(assistant_tool_call(
+                    "call-ok",
+                    "submit_probe_result",
+                    json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+                    None,
+                ))
+            }
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let started = std::time::Instant::now();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("Retry-After 提示后应恢复");
+    assert_eq!(outcome.submission.total, 21);
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+    assert!(
+        started.elapsed().as_secs_f64() >= 0.9,
+        "Retry-After: 1 未被尊重（耗时 {:?}）",
+        started.elapsed()
+    );
+}
+
+/// Z3/P0-4 实验门核心钉：run 级漏桶 cap=2 req/min（30s/许可）下，3 个并发 agent
+/// 的第 3 张许可必落在 ~60s 处——即同一 60 秒滑窗内出队请求数 ≤ 2+1。
+/// makespan ∈ [59s, 70s] 同时钉「闸门生效」（≥59s）与「压缩不失真」（≤70s：
+/// 若每个等待者各自完整串行睡眠则 ≥120s）。许可即请求（单轮终局 ⇒ 每 agent 恰 1 请求）。
+#[tokio::test(flavor = "multi_thread")]
+async fn throttle_caps_requests_in_sliding_minute_window() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let server = MockServer::start().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(move |_: &Request| {
+            let n = counter_clone.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(200).set_body_json(assistant_tool_call(
+                &format!("call-{n}"),
+                "submit_probe_result",
+                json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+                None,
+            ))
+        })
+        .mount(&server)
+        .await;
+    let runtime = std::sync::Arc::new(test_runtime(&server).with_throttle(std::sync::Arc::new(
+        live_core::agent::throttle::Throttle::limited(2),
+    )));
+    let started = std::time::Instant::now();
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..3 {
+        let runtime = runtime.clone();
+        set.spawn(async move {
+            let mut spec = probe_spec();
+            let mut ctx = ProbeContext::new(7);
+            let mut trace = Trace::none();
+            run_toolcall_agent::<ProbeContext, ProbeResult>(
+                &runtime,
+                &mut spec,
+                plan("开始", 8),
+                &mut ctx,
+                &mut trace,
+            )
+            .await
+            .expect("限速下 agent 应成功")
+            .submission
+            .total
+        });
+    }
+    let mut results = Vec::new();
+    while let Some(joined) = set.join_next().await {
+        results.push(joined.expect("task join"));
+    }
+    let elapsed = started.elapsed();
+    assert_eq!(results.len(), 3);
+    assert!(results.iter().all(|total| *total == 21));
+    assert_eq!(counter.load(Ordering::SeqCst), 3);
+    assert!(
+        elapsed >= std::time::Duration::from_secs(59),
+        "3 并发 @2rpm：第 3 许可应在 ~60s，实测 {elapsed:?}——闸门未生效"
+    );
+    assert!(
+        elapsed <= std::time::Duration::from_secs(70),
+        "3 并发 @2rpm 应在 ~60s 完成，实测 {elapsed:?}——串行化失真"
+    );
+}
+
+/// Z3/P0-4 对照臂：Throttle::disabled（config 默认 max_llm_rpm=0）完全不减速。
+#[tokio::test(flavor = "multi_thread")]
+async fn throttle_disabled_never_waits() {
+    let server = MockServer::start().await;
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(assistant_tool_call(
+                "call-ok",
+                "submit_probe_result",
+                json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+                None,
+            )),
+        )
+        .mount(&server)
+        .await;
+    let runtime = std::sync::Arc::new(test_runtime(&server));
+    let started = std::time::Instant::now();
+    let mut set = tokio::task::JoinSet::new();
+    for _ in 0..3 {
+        let runtime = runtime.clone();
+        set.spawn(async move {
+            let mut spec = probe_spec();
+            let mut ctx = ProbeContext::new(7);
+            let mut trace = Trace::none();
+            run_toolcall_agent::<ProbeContext, ProbeResult>(
+                &runtime,
+                &mut spec,
+                plan("开始", 8),
+                &mut ctx,
+                &mut trace,
+            )
+            .await
+            .expect("无限速 agent 应成功")
+        });
+    }
+    while set.join_next().await.is_some() {}
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(10),
+        "关闭态不应引入等待，实测 {:?}",
+        started.elapsed()
+    );
+}
+
 /// 协议 m5：forced 期间 dispatch 收窄——非终局名得 SDK 文本 not found 而后终局可成。
 #[tokio::test(flavor = "multi_thread")]
 async fn forced_dispatch_rejects_non_terminal_with_python_text() {
@@ -780,6 +946,8 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
             run_retries: 0,
             retry_backoff_seconds: 0.0,
             viewer_token_budget: 200_000,
+            max_parallel_viewers: 4,
+            max_llm_rpm: 0,
         },
         search_results_per_query: 5,
         rules: vec![],

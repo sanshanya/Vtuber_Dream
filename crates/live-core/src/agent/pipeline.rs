@@ -449,6 +449,7 @@ use tokio::sync::Semaphore;
 use super::prompts::{audience_user_prompt, trace_run_start, viewer_user_prompt};
 use super::runtime::{AgentRuntime, AttemptPlan, RuntimeStats, Trace, run_toolcall_agent};
 use super::specs::{audience_agent_spec, viewer_agent_spec};
+use super::throttle::Throttle;
 use super::tools::{AudienceAgentCtx, ResearchService, ViewerAgentCtx};
 use super::validators::{validate_audience_submission, validate_viewer_submission};
 use crate::bilibili::BilibiliClient;
@@ -461,6 +462,8 @@ use crate::models::{AudienceSituationSubmission, ViewerPerceptionSubmission};
 use crate::storage::{self, load_viewers};
 
 /// Python asyncio.Semaphore(4)（ADR-0004 同构）。
+/// Z3/P0-4：作为 config `ai.agent.max_parallel_viewers` 的默认锚保留；
+/// 实际并发上限由 config 决定（pipeline 扇出处消费），本常量不再直接驱动 Semaphore。
 pub const INVESTIGATE_CONCURRENCY: usize = 4;
 
 #[derive(Debug, Error)]
@@ -1118,7 +1121,10 @@ pub async fn run_pipeline(
 ) -> Result<Value, PipelineError> {
     let runtime = Arc::new(
         AgentRuntime::from_ai_config(&config.ai)
-            .map_err(|err| PipelineError::Message(err.to_string()))?,
+            .map_err(|err| PipelineError::Message(err.to_string()))?
+            // Z3/P0-4 闸门二：run 级限速漏桶（max_llm_rpm=0 → Throttle::disabled，空操作）。
+            // viewer 任务克隆 Arc<AgentRuntime> 共享同一桶；audience 臂同一 runtime 引用。
+            .with_throttle(Arc::new(Throttle::build(config.ai.agent.max_llm_rpm))),
     );
     // Python 次序：research(master) 在 begin_graph_run 之前构造；其失败走裸传播（不 umbrella）。
     // 含 blocking client → 构造与处置都走 spawn_blocking（D-2）。
@@ -1343,7 +1349,10 @@ async fn run_pipeline_inner(
     // 并发扇出 + 有序应用栅栏（M5-B3：状态机 hook——queued/collecting/episodes 由
     // registry 自己直接进入 per_viewer_ai）。
     stage_say(knobs, STAGE_PER_VIEWER_AI);
-    let semaphore = Arc::new(Semaphore::new(INVESTIGATE_CONCURRENCY));
+    // Z3/P0-4 闸门一：并行 viewer 数由 config 驱动（默认锚 = INVESTIGATE_CONCURRENCY）。
+    let semaphore = Arc::new(Semaphore::new(
+        config.ai.agent.max_parallel_viewers.max(1) as usize
+    ));
     let mut set: tokio::task::JoinSet<(String, ViewerStage)> = tokio::task::JoinSet::new();
     for uid in &viewer_ids {
         let profile = baseline_profiles

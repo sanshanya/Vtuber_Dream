@@ -89,6 +89,13 @@ pub struct AgentRuntimeConfig {
     /// r1-F1 单观众 token 预算熔断：默认 200_000（u32 域，非负），该 viewer agent
     /// 每轮 LLM 请求后核对累计 total_tokens，超限即触顶终止并记 viewer_failure。
     pub viewer_token_budget: u32,
+    /// Z3/P0-4 闸门一：并行 viewer agent 上限（Semaphore 许可数）。默认 4
+    /// （Python asyncio.Semaphore(4)，ADR-0004 同构；INVESTIGATE_CONCURRENCY 为其锚）。
+    pub max_parallel_viewers: i64,
+    /// Z3/P0-4 闸门二：全 run 级 LLM 出队请求上限（requests/min，漏桶）。
+    /// 0 = 关闭（默认，S0 实测零 429 故默认既不限速也不改变既有行为）；>0 时
+    /// 每个 LLM 请求前 acquire 一个许可，许可即请求 1:1。
+    pub max_llm_rpm: i64,
 }
 
 pub const ALLOWED_APIS: [&str; 2] = ["chat_completions", "responses"];
@@ -418,6 +425,8 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 retry_backoff_seconds: number(runtime, "retry_backoff_seconds", 0.0, Some(3.0))?,
                 viewer_token_budget: integer(runtime, "viewer_token_budget", 0, Some(200_000))?
                     .clamp(0, u32::MAX as i64) as u32,
+                max_parallel_viewers: integer(runtime, "max_parallel_viewers", 1, Some(4))?,
+                max_llm_rpm: integer(runtime, "max_llm_rpm", 0, Some(0))?,
             },
             search_results_per_query: integer(ai, "search_results_per_query", 1, Some(20))?,
             rules,
@@ -813,5 +822,31 @@ report:
         );
         let err = load_config(write_temp(&bad).path()).unwrap_err();
         assert!(err.to_string().contains("viewer_token_budget"), "{err}");
+    }
+
+    /// Z3/P0-4：`ai.agent.max_parallel_viewers` 默认 4（最低 1）；
+    /// `max_llm_rpm` 默认 0（关闭），负值拒绝。
+    #[test]
+    fn elevator_gates_default_override_and_reject() {
+        let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
+        assert_eq!(ok.ai.agent.max_parallel_viewers, 4);
+        assert_eq!(ok.ai.agent.max_llm_rpm, 0);
+
+        let overridden = EXAMPLE_YAML.replace(
+            "    run_retries: 2",
+            "    run_retries: 2\n    max_parallel_viewers: 2\n    max_llm_rpm: 300",
+        );
+        let ok2 = load_config(write_temp(&overridden).path()).unwrap();
+        assert_eq!(ok2.ai.agent.max_parallel_viewers, 2);
+        assert_eq!(ok2.ai.agent.max_llm_rpm, 300);
+
+        for (key, value) in [("max_parallel_viewers", "0"), ("max_llm_rpm", "-10")] {
+            let bad = EXAMPLE_YAML.replace(
+                "    run_retries: 2",
+                &format!("    run_retries: 2\n    {key}: {value}"),
+            );
+            let err = load_config(write_temp(&bad).path()).unwrap_err();
+            assert!(err.to_string().contains(key), "{key}: {err}");
+        }
     }
 }

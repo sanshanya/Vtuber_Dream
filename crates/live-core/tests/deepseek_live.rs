@@ -36,6 +36,8 @@ fn ai_config(api_key: &str) -> AiConfig {
             run_retries: 1,
             retry_backoff_seconds: 3.0,
             viewer_token_budget: 200_000,
+            max_parallel_viewers: 4,
+            max_llm_rpm: 0,
         },
         search_results_per_query: 20,
         rules: vec![],
