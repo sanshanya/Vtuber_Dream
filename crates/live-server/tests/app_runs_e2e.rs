@@ -201,6 +201,8 @@ type Cell = Arc<(Mutex<HashMap<&'static str, Value>>, Condvar)>;
 struct DynamicSubmit {
     cell: Cell,
     model: String,
+    /// 剧本化失败面（partial=true e2e 钉）：audience 终局恒 500，不等 cell。
+    fail_audience: bool,
 }
 
 impl Respond for DynamicSubmit {
@@ -222,6 +224,10 @@ impl Respond for DynamicSubmit {
                     .set_body_string(format!("动态响应未识别的请求面：{content:?}"));
             }
         };
+        if self.fail_audience && kind == "audience" {
+            return ResponseTemplate::new(500)
+                .set_body_string("audience 终局剧本化失败（partial=true 钉脚）");
+        }
         let (lock, cond) = &*self.cell;
         // 先验后等：cell 常由主线程先行填满，先 wait 会把「无 waiter 的 notify」
         // 吞掉并白耗整段 timeout（已咬过一次：首回合 60s×2 拖跨测试时限）。
@@ -323,76 +329,12 @@ fn read(path: &Path) -> Value {
 // 主验收：全链 walk
 // ---------------------------------------------------------------------------
 
-#[tokio::test(flavor = "multi_thread")]
-async fn single_viewer_run_walks_whole_chain_to_done() {
-    let bilibili = MockServer::start().await;
-    mount_bilibili_baseline(&bilibili).await;
-    let llm = MockServer::start().await;
-    let cell: Cell = Arc::new((Mutex::new(HashMap::new()), Condvar::new()));
-    Mock::given(method("POST"))
-        .and(path("/chat/completions"))
-        .respond_with(DynamicSubmit {
-            cell: cell.clone(),
-            model: "m5d-single".to_string(),
-        })
-        .mount(&llm)
-        .await;
-
-    let tmp = tempfile::tempdir().unwrap();
-    let out_dir: PathBuf = tmp.path().join("out");
-    std::fs::create_dir_all(&out_dir).unwrap();
-    let yaml = common::yaml_template(
-        None,
-        "m5d-single",
-        "SESSDATA=test",
-        "test-key",
-        "LLM_URI",
-        "m5d-single",
-    )
-    .replace(
-        "OUTPUT_DIR",
-        &out_dir.display().to_string().replace('\\', "/"),
-    )
-    .replace("LLM_URI", &llm.uri());
-    let config_path = tmp.path().join("config.yaml");
-    std::fs::write(&config_path, yaml).unwrap();
-
-    let registry = Registry::new();
-    let app = build_app(AppState {
-        config_path: config_path.clone(),
-        web_root: tmp.path().join("no-dist"),
-        registry: registry.clone(),
-        demo: false,
-        data_root: None,
-        bilibili_hosts: Some((bilibili.uri(), bilibili.uri())),
-    });
-
-    // 触发：kind=viewer → CollectMode::SingleViewer
-    let (status, body) = oneshot(
-        &app,
-        "POST",
-        "/api/runs",
-        Some(json!({"kind": "viewer", "viewer_uid": "1003"})),
-    )
-    .await;
-    assert_eq!(status, 202, "{body}");
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-
-    // 门①：collect 落定（collection.json 终写 complete）
-    let collection_path = out_dir.join("collection.json");
-    let collected = wait_until(Duration::from_secs(30), || {
-        std::fs::read_to_string(&collection_path)
-            .ok()
-            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-            .is_some_and(|c| c["status"] == "complete")
-    });
-    assert!(collected, "collect 未在 30s 内落定");
-    let viewer_file = out_dir.join("viewers").join("1003.json");
-    assert!(viewer_file.exists(), "单查应只落 viewers/1003.json");
-
-    // 门②：惰性构造两个终局提交体（确定性 id 链）
-    let analysis = build_factual_baseline(&out_dir, 1000).expect("baseline");
-    let raw = read(&viewer_file);
+/// 从 collect 落定后的 out_dir 惰性推导 viewer/audience 双终局提交体
+/// （episode/mention/entity id 与 live-core mint 公式同一算法）。
+/// 返回 (viewer_submission, audience_submission)。
+fn derive_submissions(out_dir: &Path) -> (Value, Value) {
+    let analysis = build_factual_baseline(out_dir, 1000).expect("baseline");
+    let raw = read(&out_dir.join("viewers").join("1003.json"));
     let profile = analysis["viewer_profiles"]
         .as_array()
         .unwrap()
@@ -486,6 +428,79 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
         "individual_highlights": [], "content_calendar": [],
         "data_gaps": [], "safety_notes": [], "leads": []
     });
+    (viewer_submission, audience_submission)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn single_viewer_run_walks_whole_chain_to_done() {
+    let bilibili = MockServer::start().await;
+    mount_bilibili_baseline(&bilibili).await;
+    let llm = MockServer::start().await;
+    let cell: Cell = Arc::new((Mutex::new(HashMap::new()), Condvar::new()));
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(DynamicSubmit {
+            cell: cell.clone(),
+            model: "m5d-single".to_string(),
+            fail_audience: false,
+        })
+        .mount(&llm)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let out_dir: PathBuf = tmp.path().join("out");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let yaml = common::yaml_template(
+        None,
+        "m5d-single",
+        "SESSDATA=test",
+        "test-key",
+        "LLM_URI",
+        "m5d-single",
+    )
+    .replace(
+        "OUTPUT_DIR",
+        &out_dir.display().to_string().replace('\\', "/"),
+    )
+    .replace("LLM_URI", &llm.uri());
+    let config_path = tmp.path().join("config.yaml");
+    std::fs::write(&config_path, yaml).unwrap();
+
+    let registry = Registry::new();
+    let app = build_app(AppState {
+        config_path: config_path.clone(),
+        web_root: tmp.path().join("no-dist"),
+        registry: registry.clone(),
+        demo: false,
+        data_root: None,
+        bilibili_hosts: Some((bilibili.uri(), bilibili.uri())),
+    });
+
+    // 触发：kind=viewer → CollectMode::SingleViewer
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "viewer", "viewer_uid": "1003"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+
+    // 门①：collect 落定（collection.json 终写 complete）
+    let collection_path = out_dir.join("collection.json");
+    let collected = wait_until(Duration::from_secs(30), || {
+        std::fs::read_to_string(&collection_path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .is_some_and(|c| c["status"] == "complete")
+    });
+    assert!(collected, "collect 未在 30s 内落定");
+    let viewer_file = out_dir.join("viewers").join("1003.json");
+    assert!(viewer_file.exists(), "单查应只落 viewers/1003.json");
+
+    // 门②：惰性构造两个终局提交体（确定性 id 链）
+    let (viewer_submission, audience_submission) = derive_submissions(&out_dir);
     fill(&cell, "viewer", viewer_submission);
     fill(&cell, "audience", audience_submission);
 
@@ -577,4 +592,106 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
         !graph["elements"].as_array().unwrap().is_empty(),
         "局部图应非空：{graph}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// partial=true e2e（kickoff M6-B 挂账消化 2）：audience 期失败 → failed(partial)
+// ---------------------------------------------------------------------------
+
+/// viewer 阶段完整走完 + audience 终局 500 → finalize(failed, partial=true)，
+/// 且 ai/state.json 契约键 viewer_stage_status=complete 现场可查（ag3-F1 的端到端面）。
+#[tokio::test(flavor = "multi_thread")]
+async fn single_viewer_run_audience_failure_marks_partial_true() {
+    let bilibili = MockServer::start().await;
+    mount_bilibili_baseline(&bilibili).await;
+    let llm = MockServer::start().await;
+    let cell: Cell = Arc::new((Mutex::new(HashMap::new()), Condvar::new()));
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(DynamicSubmit {
+            cell: cell.clone(),
+            model: "m5d-single".to_string(),
+            fail_audience: true,
+        })
+        .mount(&llm)
+        .await;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let out_dir: PathBuf = tmp.path().join("out");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    let yaml = common::yaml_template(
+        None,
+        "m5d-single",
+        "SESSDATA=test",
+        "test-key",
+        "LLM_URI",
+        "m5d-single",
+    )
+    .replace(
+        "OUTPUT_DIR",
+        &out_dir.display().to_string().replace('\\', "/"),
+    )
+    .replace("LLM_URI", &llm.uri());
+    let config_path = tmp.path().join("config.yaml");
+    std::fs::write(&config_path, yaml).unwrap();
+
+    let registry = Registry::new();
+    let app = build_app(AppState {
+        config_path: config_path.clone(),
+        web_root: tmp.path().join("no-dist"),
+        registry: registry.clone(),
+        demo: false,
+        data_root: None,
+        bilibili_hosts: Some((bilibili.uri(), bilibili.uri())),
+    });
+
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "viewer", "viewer_uid": "1003"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+
+    // collect 落定后 fill viewer 终局（audience 故意不填——fail_audience 使其无用）。
+    let collection_path = out_dir.join("collection.json");
+    let collected = wait_until(Duration::from_secs(30), || {
+        std::fs::read_to_string(&collection_path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+            .is_some_and(|c| c["status"] == "complete")
+    });
+    assert!(collected, "collect 未在 30s 内落定");
+    let (viewer_submission, _audience) = derive_submissions(&out_dir);
+    fill(&cell, "viewer", viewer_submission);
+
+    let record = registry.get(&run_id).expect("run registered");
+    let finished = wait_until(Duration::from_secs(90), || {
+        let r = record.lock().expect("record poisoned");
+        r.status == "done" || r.status == "failed"
+    });
+    let snapshot = live_server::registry::run_to_json(&record.lock().expect("record poisoned"));
+    assert!(finished, "run 未在 90s 内到终：{snapshot}");
+    assert_eq!(snapshot["status"], "failed", "{snapshot}");
+    assert_eq!(
+        snapshot["partial"], true,
+        "viewer 阶段已完成 + audience 失败必须如实 partial=true：{snapshot}"
+    );
+    assert!(
+        snapshot["events"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|line| line.as_str().unwrap_or("").contains("状态 → failed")),
+        "events 须带 failed 足迹：{snapshot}"
+    );
+    // 契约键现场：fail_run_and_state 必须写 viewer_stage_status=complete。
+    let state = read(&out_dir.join("ai").join("state.json"));
+    assert_eq!(
+        state["viewer_stage_status"], "complete",
+        "pipeline 契约键现场：{state}"
+    );
+    assert_eq!(state["status"], "failed", "{state}");
 }
