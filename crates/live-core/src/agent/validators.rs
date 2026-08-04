@@ -460,6 +460,62 @@ pub fn validate_viewer_submission(
     errors
 }
 
+// ---------------------------------------------------------------------------
+// Z5/C1 front_brief 结构校验（P0-5）
+// ---------------------------------------------------------------------------
+
+/// 简报句数上限（终裁：弹性、不收刚性 3+3+1，但 payload 必须有界）。
+pub const BRIEF_SENTENCE_CAP: usize = 12;
+/// 单句结论长度上限（字符）。
+pub const BRIEF_TEXT_MAX_CHARS: usize = 500;
+
+/// ISO 日期/时间字符串可解析（YYYY-MM-DD 或 RFC3339）。
+fn parse_iso_moment(text: &str) -> Option<chrono::NaiveDateTime> {
+    chrono::DateTime::parse_from_rfc3339(text)
+        .map(|dt| dt.naive_utc())
+        .ok()
+        .or_else(|| {
+            chrono::NaiveDate::parse_from_str(text, "%Y-%m-%d")
+                .map(|date| date.and_hms_opt(0, 0, 0).expect("午夜恒合法"))
+                .ok()
+        })
+}
+
+/// Z5/C1 结构面：句数上限 / 非空结论 / 句句带出处（≥1 episode_ref）/ 覆盖时段
+/// 可解析且 from<=to。episode 存在性闭包不在此——图谱 append-only，存在性只在
+/// specs 终局闭包一次性核验（references 通道），restore 复核天然保持。
+pub fn validate_front_brief(brief: &crate::models::FrontBrief) -> Vec<String> {
+    let mut errors: Vec<String> = Vec::new();
+    if brief.sentences.len() > BRIEF_SENTENCE_CAP {
+        errors.push(format!(
+            "front_brief.sentences exceeds cap {BRIEF_SENTENCE_CAP}"
+        ));
+    }
+    for (index, sentence) in brief.sentences.iter().enumerate() {
+        let label = format!("front_brief.sentences[{index}]");
+        if sentence.text.trim().is_empty() {
+            errors.push(format!("{label} text cannot be empty"));
+        } else if sentence.text.chars().count() > BRIEF_TEXT_MAX_CHARS {
+            errors.push(format!("{label} text exceeds {BRIEF_TEXT_MAX_CHARS} chars"));
+        }
+        if sentence.episode_refs.is_empty() {
+            errors.push(format!("{label} must reference at least one episode"));
+        }
+        if let Some([from, to]) = &sentence.coverage_time_range {
+            match (parse_iso_moment(from), parse_iso_moment(to)) {
+                (Some(from_m), Some(to_m)) if from_m <= to_m => {}
+                (Some(_), Some(_)) => {
+                    errors.push(format!("{label} coverage_time_range from must be <= to"))
+                }
+                _ => errors.push(format!(
+                    "{label} coverage_time_range must be ISO date/datetime strings"
+                )),
+            }
+        }
+    }
+    errors
+}
+
 /// 整体态势终局校验（Python `validate_audience_submission` 平移 + 修复 1/6b/8 + leads）。
 /// 四个 id 集合均由调用方按本运行组装（viewer 提交并集 / 图实体 / 图 mention / 搜索注册表）。
 pub fn validate_audience_submission(
@@ -469,7 +525,8 @@ pub fn validate_audience_submission(
     mention_ids: &HashSet<String>,
     search_result_ids: &HashSet<String>,
 ) -> Vec<String> {
-    let mut errors: Vec<String> = Vec::new();
+    // Z5/C1：front_brief 结构先于栏目闭包（简报是首屏面，错误要早现）。
+    let mut errors: Vec<String> = validate_front_brief(&submission.front_brief);
 
     let check_viewers = |values: &[String], label: String, errors: &mut Vec<String>| {
         let unknown = unknown_items(values, viewer_ids);

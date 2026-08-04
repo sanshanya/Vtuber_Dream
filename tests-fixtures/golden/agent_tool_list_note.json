@@ -18,5 +18,8 @@
   ],
   "audience_must_not_include": [
     "verify_videos"
+  ],
+  "schema_delta_log": [
+    "2026-08-05 Z5/C1（终裁 P0-5，五席签字）：submit_audience_situation 终局 schema 增 front_brief{sentences[{text,episode_refs,coverage_time_range?}]}——纯字段增量，工具名清单不动（viewer 4+1 冻结、audience 4+1 冻结均不变），PROMPTS_VERSION 同升 m3d-2026-08-05，TOOL_SPECS_VERSION 升 2026-08-05.v1。episode_refs 存在性走 episodes 桶 references 闭包（图谱 append-only，restore 免复验）。"
   ]
 }

@@ -528,6 +528,8 @@ pub const STAGE_AUDIENCE: &str = "audience";
 /// r3-F3：analysis 落盘剥「空 leads」——Python 模型 extra=forbid：键存在即拒；
 /// 空期双通（Rust serde 有 default 补齐、Python 无解码阻力）；非空 leads 是 M4.x
 /// 新能力，跨实现缓存复用本就有界（登记 design-Δ）。
+/// Z5/C1：空 front_brief（sentences 空数组）同型剥键——沉默以「键缺席」落盘，
+/// 前端 BriefingCard 依「缺席必可见」呈空缺位。
 fn strip_empty_leads(mut analysis: Value) -> Value {
     if analysis
         .get("leads")
@@ -538,6 +540,17 @@ fn strip_empty_leads(mut analysis: Value) -> Value {
             .as_object_mut()
             .expect("analysis object")
             .remove("leads");
+    }
+    let brief_empty = analysis
+        .get("front_brief")
+        .and_then(|brief| brief.get("sentences"))
+        .and_then(Value::as_array)
+        .is_some_and(Vec::is_empty);
+    if brief_empty {
+        analysis
+            .as_object_mut()
+            .expect("analysis object")
+            .remove("front_brief");
     }
     analysis
 }
@@ -896,12 +909,17 @@ async fn run_audience_stage(
     };
     // Z5：哈希件走 audience_input_hash_material（过程指标摘出——同数据重采同哈希），
     // 提示面 input 原样保真（golden 对账不漂移）。
+    // Z5/C1：协议版本串入哈希——终局 schema 或指令文本一改，situation 缓存即失效
+    // （认知层正确性条款：否则新字段如 front_brief 永不被补算）。viewer 面另有
+    // reasoning/rules 成分但暂未入版本串——登记为统一化设计债。
     let input_hash = stable_hash(&json!({
         "runtime": CACHE_RUNTIME_AUDIENCE,
         "model": config.ai.model,
         "api": config.ai.api,
         "reasoning": reasoning_json(config),
         "rules": config.ai.rules,
+        "prompts_version": super::prompts::PROMPTS_VERSION,
+        "tool_specs_version": super::specs::TOOL_SPECS_VERSION,
         "input": audience_input_hash_material(&input),
     }));
     let cache_path = config.output_dir.join("ai").join("situation.json");

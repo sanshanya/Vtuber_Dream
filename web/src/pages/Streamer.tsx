@@ -7,6 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api, isApiError } from "../api";
 import { AiStaleBadge } from "../components/AiStaleBadge";
+import { BriefingCard } from "../components/BriefingCard";
 import { Avatar } from "../components/Avatar";
 import { KindRunButton } from "../components/KindRunButton";
 import { RunButton } from "../components/RunButton";
@@ -80,6 +81,16 @@ export function Streamer({ roomId }: { roomId: string }) {
         profile={data.streamer ?? null}
         streamerUid={String(data.streamer_uid ?? "")}
         roomId={String(data.room_id ?? "")}
+      />
+
+      {/* Z5/C1（终裁 P0-5）：制片人简报 = 首屏第一卡——「发生了什么/该干嘛/该信谁」
+          免滚动可答；未生成/沉默两态同样具名呈现（缺席必可见）。 */}
+      <BriefingCard
+        roomId={roomId}
+        analysis={analysis}
+        situationStatus={situation.status}
+        aiCompletedAt={ai.completed_at ?? null}
+        stale={(viewers.data ?? []).some((row) => row.ai_stale === true)}
       />
 
       {/* Z4d 动作落页：本页住「全量感知」（敏感谨慎钮，双段确认）与「主播 AI 分析」

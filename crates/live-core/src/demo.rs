@@ -60,13 +60,18 @@ fn python_order<T: serde::Serialize>(submission: &T, order: &[&str]) -> Value {
     let value = serde_json::to_value(submission).expect("submission 可序列化");
     let map = value.as_object().expect("顶层是对象");
     // r4：表外键静默丢弃必须有声——白名单外仅允许已登记的 leads（M4.x 模型面后加，
-    // Python 字面不含、有意剥落）；其余任意新键 = 投影表需要同步的证据。
+    // Python 字面不含、有意剥落）与 front_brief（Z5/C1：合成 demo 有意让简报缺席，
+    // BriefingCard 空缺位即演示面）；其余任意新键 = 投影表需要同步的证据。
     debug_assert!(
         map.keys()
-            .all(|key| key == "leads" || order.contains(&key.as_str())),
-        "python_order 表外键(除 leads): {:?}",
+            .all(|key| key == "leads" || key == "front_brief" || order.contains(&key.as_str())),
+        "python_order 表外键(除 leads/front_brief): {:?}",
         map.keys()
-            .filter(|key| key.as_str() != "leads" && !order.contains(&key.as_str()))
+            .filter(|key| {
+                key.as_str() != "leads"
+                    && key.as_str() != "front_brief"
+                    && !order.contains(&key.as_str())
+            })
             .collect::<Vec<_>>()
     );
     let mut out = serde_json::Map::new();
@@ -542,6 +547,8 @@ pub fn build_demo(config: &Config, output_dir: Option<&Path>) -> Result<Value, D
             executive_summary:
                 "合成Demo显示：两名观众通过不同内容角度连接到《异环》，另一名观众形成Vocaloid与Blender创作型独立兴趣。"
                     .to_string(),
+            // Z5/C1：合成 demo 同样让 front_brief 缺席——BriefingCard 空缺位即演示面。
+            front_brief: crate::models::FrontBrief::default(),
             audience_structure: vec![
                 "具体作品共同兴趣".to_string(),
                 "创作型独立兴趣".to_string(),

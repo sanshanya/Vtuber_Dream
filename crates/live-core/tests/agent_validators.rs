@@ -6,8 +6,8 @@ use std::collections::{BTreeMap, HashSet};
 use live_core::agent::validators::{validate_audience_submission, validate_viewer_submission};
 use live_core::episodes::{Episode, EpisodeField};
 use live_core::models::{
-    AudienceSituationSubmission, ContentOpportunity, EntityProposal, GraphInterestItem,
-    InterestStateProposal, Lead, MentionSpan, RelationProposal, ViewerAction,
+    AudienceSituationSubmission, BriefSentence, ContentOpportunity, EntityProposal,
+    GraphInterestItem, InterestStateProposal, Lead, MentionSpan, RelationProposal, ViewerAction,
     ViewerPerceptionSubmission,
 };
 use serde_json::json;
@@ -546,6 +546,7 @@ fn valid_audience() -> AudienceSituationSubmission {
     AudienceSituationSubmission {
         executive_summary: "观众围绕塞尔达系列形成单一高粘社区，近期对新作内容需求上升。"
             .to_string(),
+        front_brief: Default::default(),
         audience_structure: vec![],
         interest_graph: vec![GraphInterestItem {
             entity_id: "ent1".to_string(),
@@ -578,6 +579,114 @@ fn check_audience(sub: &AudienceSituationSubmission) -> Vec<String> {
 #[test]
 fn valid_audience_submission_passes() {
     assert_eq!(check_audience(&valid_audience()), Vec::<String>::new());
+}
+
+// ---------------------------------------------------------------------------
+// Z5/C1 front_brief 校验钉：结构规则 + 沉默可呈现（空 sentences 恒合法）。
+// 存在性闭包钉在 pipeline_run.rs 集成层（specs 终局闭包走 graph references）。
+// ---------------------------------------------------------------------------
+
+fn brief_sentence(text: &str, refs: Vec<&str>, range: Option<(&str, &str)>) -> BriefSentence {
+    BriefSentence {
+        text: text.to_string(),
+        episode_refs: refs.into_iter().map(str::to_string).collect(),
+        coverage_time_range: range.map(|(f, t)| [f.to_string(), t.to_string()]),
+    }
+}
+
+/// 沉默可呈现：front_brief 缺席/空句集恒合法（valid_audience 默认即空）。
+#[test]
+fn brief_silence_is_presentable() {
+    let sub = valid_audience();
+    assert!(
+        sub.front_brief.sentences.is_empty(),
+        "valid_audience 默认沉默"
+    );
+    assert_eq!(check_audience(&sub), Vec::<String>::new());
+}
+
+/// 合规简报通过结构校验：句号、带出处、覆盖时段有序。
+#[test]
+fn brief_sentence_wellformed_passes() {
+    let mut sub = valid_audience();
+    sub.front_brief.sentences = vec![brief_sentence(
+        "《塞尔达》内容需求在最近一周显著升温。",
+        vec!["episode:v1:ep1"],
+        Some(("2026-08-01", "2026-08-04T00:00:00+00:00")),
+    )];
+    assert_eq!(check_audience(&sub), Vec::<String>::new());
+}
+
+/// 无出处之句必拒（哲学桩一），哪怕 refs 是空数组也拒。
+#[test]
+fn brief_sentence_without_refs_rejected() {
+    let mut sub = valid_audience();
+    sub.front_brief.sentences = vec![brief_sentence("无出处的一句话。", vec![], None)];
+    let errors = check_audience(&sub);
+    assert!(
+        has(
+            &errors,
+            "front_brief.sentences[0] must reference at least one episode"
+        ),
+        "{errors:?}"
+    );
+}
+
+/// 空文本、超长文本、乱序/坏形 coverage 三类结构缺陷各自具名。
+#[test]
+fn brief_structural_defects_named() {
+    let mut sub = valid_audience();
+    sub.front_brief.sentences = vec![
+        brief_sentence("   ", vec!["episode:v1:ep1"], None),
+        brief_sentence(&"长".repeat(501), vec!["episode:v1:ep1"], None),
+        brief_sentence(
+            "时段乱序",
+            vec!["episode:v1:ep1"],
+            Some(("2026-08-04", "2026-08-01")),
+        ),
+        brief_sentence(
+            "坏时段",
+            vec!["episode:v1:ep1"],
+            Some(("not-a-date", "2026-08-01")),
+        ),
+    ];
+    let errors = check_audience(&sub);
+    assert!(
+        has(&errors, "front_brief.sentences[0] text cannot be empty"),
+        "{errors:?}"
+    );
+    assert!(
+        has(&errors, "front_brief.sentences[1] text exceeds 500 chars"),
+        "{errors:?}"
+    );
+    assert!(
+        has(
+            &errors,
+            "front_brief.sentences[2] coverage_time_range from must be <= to"
+        ),
+        "{errors:?}"
+    );
+    assert!(
+        has(
+            &errors,
+            "front_brief.sentences[3] coverage_time_range must be ISO date/datetime strings"
+        ),
+        "{errors:?}"
+    );
+}
+
+/// 句数超帽具名拒绝（12 之上皆拒）。
+#[test]
+fn brief_sentence_cap_enforced() {
+    let mut sub = valid_audience();
+    sub.front_brief.sentences = (0..13)
+        .map(|i| brief_sentence(&format!("第{i}句"), vec!["episode:v1:ep1"], None))
+        .collect();
+    let errors = check_audience(&sub);
+    assert!(
+        has(&errors, "front_brief.sentences exceeds cap 12"),
+        "{errors:?}"
+    );
 }
 
 #[test]

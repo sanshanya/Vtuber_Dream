@@ -258,9 +258,9 @@ async fn golden_viewer_reject_then_accept() {
         trace_text.contains("\"event\":\"run_start\""),
         "{trace_text}"
     );
-    assert!(trace_text.contains("m3d-2026-08-04"), "{trace_text}");
+    assert!(trace_text.contains("m3d-2026-08-05"), "{trace_text}");
     assert!(
-        trace_text.contains("2026-08-04.v2"),
+        trace_text.contains("2026-08-05.v1"),
         "R1-4 工具规格版本串必须随 run_start 入 trace（G2-A1 入装配 ≥ v2）：{trace_text}"
     );
     assert!(
@@ -314,6 +314,12 @@ async fn golden_audience_happy_path() {
             "submit_audience_situation",
             json!({"submission": {
                 "executive_summary": "观众围绕塞尔达形成单一高粘社区，近期对新作内容需求上升。",
+                // Z5/C1：简报带真实入库 episode 引用（ep-a1 已于本 fixture upsert）。
+                "front_brief": {"sentences": [{
+                    "text": "舰长甲近期围绕《塞尔达》开荒实况持续活跃，新作需求升温。",
+                    "episode_refs": ["ep-a1"],
+                    "coverage_time_range": ["2026-08-01", "2026-08-04"]
+                }]},
                 "audience_structure": [],
                 "interest_graph": [{
                     "entity_id": "ent1", "entity": "塞尔达传说", "entity_type": "游戏",
@@ -413,6 +419,13 @@ async fn golden_audience_happy_path() {
     assert_eq!(outcome.submission.interest_graph.len(), 1);
     let accepted = slot_value.expect("终局接受必落槽");
     assert_eq!(accepted["interest_graph"][0]["entity_id"], json!("ent1"));
+    // Z5/C1：带有效 episode 引用的简报全链落槽（终局闭包过 episodes 桶闭包校验）。
+    assert_eq!(
+        accepted["front_brief"]["sentences"][0]["episode_refs"][0],
+        json!("ep-a1"),
+        "简报 refs 原样入槽：{accepted}"
+    );
+    assert_eq!(outcome.submission.front_brief.sentences.len(), 1);
     drop(trace);
     let trace_text = std::fs::read_to_string(&trace_path).unwrap();
     assert!(
@@ -420,7 +433,7 @@ async fn golden_audience_happy_path() {
         "{trace_text}"
     );
     assert!(
-        trace_text.contains("2026-08-04.v2"),
+        trace_text.contains("2026-08-05.v1"),
         "R1-4 工具规格版本串必须随 run_start 入 trace（G2-A1 入装配 ≥ v2）：{trace_text}"
     );
     assert!(!trace_text.contains("核验单人"), "{trace_text}");

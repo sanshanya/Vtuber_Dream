@@ -421,6 +421,178 @@ async fn pipeline_green_path_and_fence_order() {
         .query_row("SELECT completed_at FROM graph_runs", [], |row| row.get(0))
         .unwrap();
     assert!(completed_at.is_some(), "run 行 completed_at 落盘");
+    // Z5/C1：本例 audience 提交未带 front_brief → 沉默以键缺席落盘。
+    assert!(
+        situation["analysis"]
+            .as_object()
+            .unwrap()
+            .get("front_brief")
+            .is_none(),
+        "空 front_brief 必须剥键（缺席=沉默可呈现面）"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 1b. Z5/C1 front_brief：有效简报全链落地 + 无出处引用被拒后具名重提交
+// ---------------------------------------------------------------------------
+
+/// audience 提交 + 有效 front_brief（cite 真实入库 episode）：终局接受、situation 缓存留痕。
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_audience_front_brief_lands_in_cache() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, _e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &_e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    let mut submission = audience_submission(&["g1", "g2"]);
+    submission.as_object_mut().unwrap().insert(
+        "front_brief".to_string(),
+        json!({
+            "sentences": [{
+                "text": "两名舰长分别围绕《异环》和《明日方舟》形成各自的内容焦点，暂无跨人共同体信号。",
+                "episode_refs": [e1],
+                "coverage_time_range": ["2026-07-01", "2026-08-04"]
+            }]
+        }),
+    );
+    mount_turn(
+        &server,
+        audience_gate(),
+        assistant_tool_call(
+            "call-a1",
+            "submit_audience_situation",
+            json!({"submission": submission}),
+            None,
+        ),
+    )
+    .await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+
+    let mut knobs = PipelineKnobs::default();
+    let result = run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("green run");
+    assert_eq!(result["status"], "complete");
+    let situation = read(&tmp.path().join("ai/situation.json"));
+    let brief = &situation["analysis"]["front_brief"];
+    assert_eq!(brief["sentences"].as_array().unwrap().len(), 1, "{brief}");
+    assert_eq!(
+        brief["sentences"][0]["episode_refs"][0],
+        json!(e1),
+        "refs 原样留痕（可追溯原则）"
+    );
+    assert_eq!(
+        brief["sentences"][0]["coverage_time_range"],
+        json!(["2026-07-01", "2026-08-04"])
+    );
+}
+
+/// 句句带出处是硬闸：引用不存在 episode 的简报必被终局拒收，模型修错后才接受。
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_audience_front_brief_unknown_episode_rejected() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, _e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    // audience turn 1：编一个库内不存在的 episode → 终局拒收（错误具名回喂）。
+    let mut bad = audience_submission(&["g1"]);
+    bad.as_object_mut().unwrap().insert(
+        "front_brief".to_string(),
+        json!({"sentences": [{"text": "凭空的一句结论。", "episode_refs": ["episode:ghost"]}]}),
+    );
+    mount_turn(
+        &server,
+        audience_gate(),
+        assistant_tool_call(
+            "call-a1",
+            "submit_audience_situation",
+            json!({"submission": bad}),
+            None,
+        ),
+    )
+    .await;
+    // audience turn 2：修正为真实入库 episode → 接受。
+    let (m1, _) = mention_ids();
+    mount_turn(
+        &server,
+        |body: &Value| messages_len(4)(body) && body["messages"][2]["tool_calls"].is_array(),
+        assistant_tool_call(
+            "call-a2",
+            "submit_audience_situation",
+            json!({"submission": {
+                "executive_summary": "观众甲围绕《异环》形成单一内容焦点，证据链完整。",
+                "front_brief": {"sentences": [{
+                    "text": "观众甲近期收藏集中于《异环》相关内容。",
+                    "episode_refs": [e1]
+                }]},
+                "audience_structure": [],
+                "interest_graph": [{
+                    "entity_id": SEED_ENTITY, "entity": "演示聚合实体", "entity_type": "游戏",
+                    "parent_entities": [], "angles": [], "viewer_ids": ["g1"],
+                    "status": "无法判断", "confidence": 0.6, "evidence_summary": "",
+                    "evidence_mention_ids": [m1]
+                }],
+                "communities": [], "situations": [], "content_opportunities": [],
+                "individual_highlights": [], "content_calendar": [],
+                "data_gaps": [], "safety_notes": [], "leads": []
+            }}),
+            None,
+        ),
+    )
+    .await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+
+    // 只跑 g1：过滤 analysis 至单观众，复用 run_viewer_pipeline 语义之外的完整路径。
+    let mut one = analysis.clone();
+    one["viewer_profiles"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|p| p["viewer"]["id"].as_str() == Some("g1"));
+    let mut knobs = PipelineKnobs::default();
+    let result = run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &one,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("简报拒收后具名重提交应收敛");
+    assert_eq!(result["status"], "complete");
+    assert_eq!(
+        result["usage"]["llm_requests"], 3,
+        "g1 viewer 1 请求 + audience 拒收重交 2 请求"
+    );
+    let situation = read(&tmp.path().join("ai/situation.json"));
+    assert_eq!(situation["status"], "complete");
+    assert_eq!(
+        situation["analysis"]["front_brief"]["sentences"][0]["episode_refs"][0],
+        json!(e1),
+        "修正后的有效 refs 原样落盘"
+    );
 }
 
 // ---------------------------------------------------------------------------

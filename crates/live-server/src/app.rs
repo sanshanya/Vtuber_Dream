@@ -630,6 +630,28 @@ async fn room_overview(
         ),
         None => None,
     };
+    // Z5/C1：BriefingCard refs 可点的归属解析面——episode_id → {viewer_id, title}。
+    // 轻量投影（GRAPH_QUERY_LIMIT=500 帽，超出部分 ref 落未解析态、chip 不可点），
+    // 不抄整行（fields/platform_facts 大键留在 tree/graph 端点）。
+    let episode_index: Value = match &store {
+        Some(store) => {
+            let rows = live_core::graph::query::episodes(store, "", None)
+                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
+            let map = rows
+                .iter()
+                .filter_map(|row| {
+                    let episode_id = row["episode_id"].as_str()?;
+                    let viewer_id = row["viewer_id"].as_str()?;
+                    Some((
+                        episode_id.to_string(),
+                        json!({"viewer_id": viewer_id, "title": row["title"]}),
+                    ))
+                })
+                .collect::<serde_json::Map<String, Value>>();
+            Value::Object(map)
+        }
+        None => json!({}),
+    };
     Ok(Json(json!({
         "room_id": config.bilibili.room_id,
         "streamer_uid": config.bilibili.streamer_uid,
@@ -643,6 +665,8 @@ async fn room_overview(
         "live": read_json(&root.join("shared").join("live_records.json")),
         // Z3：图存量指标面（旧版报告顶部数字条）。
         "graph_stats": graph_stats,
+        // Z5/C1：BriefingCard ref → 归属观众树页的解析索引（无图态 → {} 空态）。
+        "episode_index": episode_index,
         "collection": collection,
         "ai": read_json(&root.join("ai").join("state.json")),
         "situation": read_json(&root.join("ai").join("situation.json")),

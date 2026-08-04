@@ -8,7 +8,7 @@ use super::runtime::Trace;
 use super::specs::TOOL_SPECS_VERSION;
 
 /// prompts/schema 版本串：写入 trace 的 run_start 事件；改指令文本或提交 schema 时同步更新。
-pub const PROMPTS_VERSION: &str = "m3d-2026-08-04";
+pub const PROMPTS_VERSION: &str = "m3d-2026-08-05";
 
 /// 个人 Perception Agent 指令（Python prompts.py:1-16 逐字）。
 pub const VIEWER_INSTRUCTIONS: &str = "你是直播观众态势感知系统中的个人 Perception Agent。
@@ -40,6 +40,9 @@ pub const AUDIENCE_INSTRUCTIONS: &str = "你是面向主播的整体 Situation A
 4. 任何当前性判断和具体素材必须经过工具验证；不得编造BV号、标题、作者或链接。
 5. 每个兴趣聚合、Situation和内容机会必须引用真实mention_id；内容机会还可以引用真实search_result_id。
 6. 每个行动必须说明为什么现在适合、覆盖哪些观众、执行流程、讨论点、观察指标和风险边界。
+6b. 除栏目聚合外，另在front_brief.sentences中产出制片人简报：每条是面向主播的一句话结论，
+    必须引用真实episode_refs（句句带出处），并尽量给出coverage_time_range=[from,to]覆盖时段；
+    简报宁缺毋滥——没有足够证据时sentences留空数组（沉默可呈现），绝不为凑数虚构。
 7. 所有结构化输出只能通过submit_audience_situation提交。普通文本不是有效最终结果。
 8. submit工具返回拒绝时必须修正并重新提交。
 9. 不推断敏感属性，不建议主播向观众暴露具体追踪来源。

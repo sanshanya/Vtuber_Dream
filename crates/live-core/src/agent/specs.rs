@@ -24,7 +24,8 @@ use super::validators::{validate_audience_submission, validate_viewer_submission
 /// 与 prompts::PROMPTS_VERSION 一同写入 trace 的 run_start（协议红线：变更可审计）。
 /// G2-A1：viewer 装配入 verify_videos（白名单增量，见 tools.rs 装配注与 golden
 /// 注记 fixture agent_tool_list_note.json）→ .v1 → .v2。
-pub const TOOL_SPECS_VERSION: &str = "2026-08-04.v2";
+/// Z5/C1：audience 终局 schema 增 front_brief（P0-5 制片人简报）→ 2026-08-05.v1。
+pub const TOOL_SPECS_VERSION: &str = "2026-08-05.v1";
 
 // ---------------------------------------------------------------------------
 // 终局工具厂 + Agent 装配（M3-D；Python submit_* + pipeline.py 组装逐字）
@@ -169,21 +170,64 @@ pub fn audience_terminal_tool() -> AgentTool<AudienceAgentCtx> {
                     return TerminalOutcome::Fatal(format!("graph references failed: {err}"));
                 }
             };
-            let to_hashset = |key: &str| -> HashSet<String> {
+            fn to_hashset_from(
+                references: &std::collections::HashMap<String, std::collections::BTreeSet<String>>,
+                key: &str,
+            ) -> HashSet<String> {
                 references
                     .get(key)
                     .map(|set| set.iter().cloned().collect())
                     .unwrap_or_default()
-            };
+            }
+            let to_hashset = |key: &str| -> HashSet<String> { to_hashset_from(&references, key) };
             let viewer_ids: HashSet<String> = ctx.viewer_analyses.keys().cloned().collect();
             let search_ids: HashSet<String> = known_search_result_ids(&ctx.research);
-            let errors = validate_audience_submission(
+            let mut errors = validate_audience_submission(
                 submission,
                 &viewer_ids,
                 &to_hashset("entities"),
                 &to_hashset("mentions"),
                 &search_ids,
             );
+            // Z5/C1：简报句句带出处——episode_refs 过 episodes 桶存在性闭包
+            // （references 通道同型；图谱 append-only，restore 面免复验）。
+            if !submission.front_brief.sentences.is_empty() {
+                let episode_refs: Vec<String> = submission
+                    .front_brief
+                    .sentences
+                    .iter()
+                    .flat_map(|sentence| sentence.episode_refs.iter().cloned())
+                    .collect();
+                match query::references(&ctx.store, &[], &episode_refs, &[]) {
+                    Ok(brief_refs) => {
+                        let known = to_hashset_from(&brief_refs, "episodes");
+                        for (index, sentence) in submission.front_brief.sentences.iter().enumerate()
+                        {
+                            let unknown: Vec<String> = sentence
+                                .episode_refs
+                                .iter()
+                                .filter(|episode_id| {
+                                    !episode_id.is_empty() && !known.contains(*episode_id)
+                                })
+                                .cloned()
+                                .collect();
+                            if !unknown.is_empty() {
+                                errors.push(format!(
+                                    "front_brief.sentences[{index}] references unknown episodes: {}",
+                                    unknown
+                                        .iter()
+                                        .map(|value| format!(r#""{value}""#))
+                                        .collect::<Vec<_>>()
+                                        .join(", ")
+                                ));
+                            }
+                        }
+                    }
+                    Err(err) => {
+                        return TerminalOutcome::Fatal(format!("graph references failed: {err}"));
+                    }
+                }
+            }
             if errors.is_empty() {
                 TerminalOutcome::Accept(json!({
                     "interest_items": submission.interest_graph.len(),
