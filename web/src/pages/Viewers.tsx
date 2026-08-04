@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api, type ViewerRow } from "../api";
+import { AiStaleBadge } from "../components/AiStaleBadge";
 import { KindRunButton } from "../components/KindRunButton";
 import { useRunTracker } from "../components/RunTracker";
 import { fmtTime } from "../format";
@@ -168,15 +169,7 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
                   {row.ai_status ?? "未运行"}
                 </span>
                 {/* Z5c 时效位：旧结论保留作参考但信源已翻 → 亮标不重删（重跑才落新结论）。 */}
-                {row.ai_stale === true && (
-                  <span
-                    className="badge action"
-                    data-testid="ai-stale-badge"
-                    title="该舰长的事实面（采集内容）已有更新，现有 AI 结论基于旧信源——重跑「舰长 AI 分析」后熄灭"
-                  >
-                    信源已更新·待重判
-                  </span>
-                )}
+                {row.ai_stale === true && <AiStaleBadge testId="ai-stale-badge" />}
               </td>
               <td>
                 <a href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>舰长态势</a> ·{" "}

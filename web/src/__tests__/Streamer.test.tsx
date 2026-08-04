@@ -272,3 +272,65 @@ describe("Streamer 主播卡（Z2）", () => {
     expect(document.querySelector(".guard-chip .avatar-fallback")?.textContent).toBe("无");
   });
 });
+
+describe("Streamer 舰长 strip 时效位徽标（Z5c）", () => {
+  const base = {
+    room_id: "1790370612",
+    streamer_uid: "3546595083683995",
+    collection: { status: "complete", finished_at: "2026-08-05T00:00:00+00:00" },
+    ai: { status: "complete" },
+  };
+  const chip = (uid: string, name: string, over: Record<string, unknown>) => ({
+    uid,
+    name,
+    ai_status: "complete",
+    ai_completed: true,
+    ai_stale: null,
+    ...over,
+  });
+
+  it("ai_stale=true → chip 亮「信源已更新·待重判」，且落在对号舰长卡", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: { ...base } },
+      viewers: {
+        status: 200,
+        body: [
+          chip("u1", "过期甲", { ai_stale: true }),
+          chip("u2", "绿灯乙", { ai_stale: false }),
+        ],
+      },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByTestId("ai-stale-badge-strip")).toBeTruthy());
+    const badges = screen.queryAllByTestId("ai-stale-badge-strip");
+    expect(badges.length).toBe(1);
+    const badge = badges[0];
+    expect(badge.textContent).toBe("信源已更新·待重判");
+    expect(badge.getAttribute("title")).toMatch(/重跑「舰长 AI 分析」后熄灭/);
+    expect(badge.closest(".guard-chip")?.textContent).toContain("过期甲");
+    expect(badge.closest(".guard-chip")?.textContent).not.toContain("绿灯乙");
+  });
+
+  it("ai_stale=false → 不亮（时效位绿灯安静）", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: { ...base } },
+      viewers: { status: 200, body: [chip("u1", "绿灯乙", { ai_stale: false })] },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByTestId("guard-strip")).toBeTruthy());
+    expect(screen.queryByTestId("ai-stale-badge-strip")).toBeNull();
+  });
+
+  it("ai_stale=null → 不亮（无参考旧结论的安静面）", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: { ...base } },
+      viewers: {
+        status: 200,
+        body: [chip("u1", "无旧丙", { ai_stale: null, ai_status: "pending", ai_completed: false })],
+      },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByText("无旧丙")).toBeTruthy());
+    expect(screen.queryByTestId("ai-stale-badge-strip")).toBeNull();
+  });
+});

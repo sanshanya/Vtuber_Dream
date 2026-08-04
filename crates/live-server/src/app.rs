@@ -770,16 +770,23 @@ async fn viewer_tree(
         // 图尚未落盘 → 信息空面（viewer 原料 + ai 缓存仍可读，写盘前态）。
         None => (Vec::new(), Vec::new()),
     };
+    let cached = read_json(
+        &root
+            .join("ai")
+            .join("perception")
+            .join("viewers")
+            .join(format!("{vid}.json")),
+    );
+    // Z5c 时效位：与 room_viewers 行完全同源——cached 存在且 complete 才判哈希；
+    // true=信源已更新待重判 / false=时效内绿灯 / null=无参考旧结论。
+    let ai_stale = cached
+        .as_ref()
+        .and_then(|c| live_core::agent::pipeline::viewer_perception_stale(&config, &viewer, c));
     Ok(Json(json!({
         "uid": vid,
         "viewer": viewer,
-        "ai": read_json(
-            &root
-                .join("ai")
-                .join("perception")
-                .join("viewers")
-                .join(format!("{vid}.json"))
-        ),
+        "ai": cached,
+        "ai_stale": ai_stale,
         "episodes": episodes,
         "mentions": mentions,
     })))

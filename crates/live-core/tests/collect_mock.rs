@@ -555,6 +555,63 @@ async fn single_viewer_mode_collects_one_manual_viewer() {
     assert_eq!(summary["viewer_count"], 1);
 }
 
+/// 险口 #1 回归钉：单查（SingleViewer）不得清场——archive 与 reset_output
+/// 都必须跳过，只覆写目标 uid 的 viewers/<uid>.json；其余舰长事实、site、
+/// shared 与 ai/ 哨兵一律字节级原样。
+#[tokio::test(flavor = "multi_thread")]
+async fn single_viewer_preserves_other_viewers_site_and_shared() {
+    let server = MockServer::start().await;
+    mount_baseline(&server).await;
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path();
+
+    // 预栽：两个观众事实 + site/shared/ai 哨兵（各写入识别串）
+    let u1_seed = "{\"viewer\":{\"id\":\"u1\",\"name\":\"预栽旧事实\"}}";
+    let u2_seed = "{\"viewer\":{\"id\":\"u2\",\"name\":\"舰长B待保\"}}";
+    std::fs::create_dir_all(root.join("viewers")).unwrap();
+    std::fs::write(root.join("viewers").join("u1.json"), u1_seed).unwrap();
+    std::fs::write(root.join("viewers").join("u2.json"), u2_seed).unwrap();
+    std::fs::create_dir_all(root.join("site")).unwrap();
+    std::fs::write(root.join("site").join("sentinel.txt"), "SITE-哨兵99").unwrap();
+    std::fs::create_dir_all(root.join("shared")).unwrap();
+    std::fs::write(root.join("shared").join("sentinel.txt"), "SHARED-哨兵99").unwrap();
+    std::fs::create_dir_all(root.join("ai")).unwrap();
+    std::fs::write(root.join("ai").join("sentinel.txt"), "AI-哨兵99").unwrap();
+
+    // 单查 u1：用既有 wiremock 布景完整采集一轮（与其余单查测试同铺）
+    let summary = run_collect(server, root, 12, CollectMode::SingleViewer("u1".into()))
+        .await
+        .expect("collect ok");
+    assert_eq!(summary["viewer_count"], 1);
+
+    // (a) 其余舰长事实字节级原样
+    assert_eq!(
+        std::fs::read_to_string(root.join("viewers").join("u2.json")).unwrap(),
+        u2_seed,
+        "单查不得销毁其余舰长的采集事实"
+    );
+    // (b) site/shared/ai 哨兵字节级原样
+    for (rel, want) in [
+        ("site/sentinel.txt", "SITE-哨兵99"),
+        ("shared/sentinel.txt", "SHARED-哨兵99"),
+        ("ai/sentinel.txt", "AI-哨兵99"),
+    ] {
+        assert_eq!(
+            std::fs::read_to_string(root.join(rel)).unwrap(),
+            want,
+            "{rel} 哨兵必须字节级原样（单查不清场不归档）"
+        );
+    }
+    // (c) 目标 uid 被重建：存在且为非预栽内容 + 带新采集痕迹
+    let raw_u1 = std::fs::read_to_string(root.join("viewers").join("u1.json")).unwrap();
+    assert_ne!(raw_u1, u1_seed, "u1.json 必须是本轮重建的结果");
+    assert!(!raw_u1.contains("预栽旧事实"), "u1.json 不得残留预栽旧事实");
+    let u1 = read(&root.join("viewers").join("u1.json"));
+    assert_eq!(u1["viewer"]["id"], "u1");
+    assert!(u1.get("collected_at").is_some(), "新采集痕迹：collected_at");
+    assert!(u1.get("sources").is_some(), "新采集痕迹：sources 面");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn single_viewer_empty_uid_is_rejected_after_login() {
     let server = MockServer::start().await;

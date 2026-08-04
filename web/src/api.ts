@@ -61,6 +61,19 @@ export interface ViewerRow {
   ai_stale: boolean | null;
 }
 
+/** 个人树面（/tree）：渲染面前进式取用 → viewer/ai/episodes/mentions 保持松散，
+ * ai_stale 是 Z5c 时效位的确定性面（三处消费面同源同型）。 */
+export interface ViewerTreeView {
+  uid: string;
+  /** 观众原料 JSON 原样透传（viewer/profile/collected_at…）。 */
+  viewer: any;
+  /** ai/perception/viewers/{uid}.json 缓存原样透传。 */
+  ai: any;
+  ai_stale: boolean | null;
+  episodes: any[];
+  mentions: any[];
+}
+
 export interface ConfigView {
   project_name: string;
   output_dir: string;
@@ -112,7 +125,7 @@ export const api = {
   viewers: (roomId: string) =>
     request<ViewerRow[]>("GET", `/rooms/${encodeURIComponent(roomId)}/viewers`),
   viewerTree: (roomId: string, vid: string) =>
-    request<any>(
+    request<ViewerTreeView>(
       "GET",
       `/rooms/${encodeURIComponent(roomId)}/viewers/${encodeURIComponent(vid)}/tree`,
     ),

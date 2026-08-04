@@ -288,6 +288,85 @@ async fn viewer_tree_joins_raw_ai_episodes_mentions() {
     assert_eq!(status, 404);
 }
 
+/// Z5c 时效位的 tree 面钉：与 room_viewers 行同源算法（同 config/raw/cached 三参）。
+/// 栽现行哈希 → false；栽死哈希 → true；哈希复位 → 熄灭。
+#[tokio::test(flavor = "multi_thread")]
+async fn viewer_tree_marks_stale_perception_hash_flips() {
+    let fx = fixture();
+    let config =
+        live_core::config::load_config(fx._tmp.path().join("config.yaml")).expect("config loads");
+
+    let write_cache = |uid: &str, hash: &str| {
+        let cached = serde_json::json!({
+            "status": "complete",
+            "input_hash": hash,
+            "analysis": {"profile_summary": "x"},
+        });
+        let path = fx
+            .data_root
+            .join("ai")
+            .join("perception")
+            .join("viewers")
+            .join(format!("{uid}.json"));
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_string_pretty(&cached).unwrap()).unwrap();
+    };
+    let current_hash_of = |uid: &str| -> String {
+        let raw = live_core::storage::read_json(
+            &fx.data_root.join("viewers").join(format!("{uid}.json")),
+        )
+        .expect("viewer reads")
+        .expect("viewer exists");
+        let profile = live_core::episodes::baseline::viewer_input(
+            &raw,
+            config.perception.max_evidence_per_viewer as usize,
+        );
+        let reasoning = serde_json::json!({
+            "enabled": config.ai.reasoning.enabled,
+            "effort": config.ai.reasoning.effort.clone(),
+            "replay_content": config.ai.reasoning.replay_content,
+        });
+        let bundle = live_core::agent::pipeline::viewer_input_bundle(
+            &raw,
+            &profile,
+            &config.ai.model,
+            &config.ai.api,
+            &reasoning,
+            &config.ai.rules,
+            config.perception.max_evidence_per_viewer as usize,
+        );
+        bundle.input_hash
+    };
+
+    // demo-2 栽现行哈希 → 绿灯；demo-1 栽死哈希 → 必亮过期。
+    write_cache("demo-2", &current_hash_of("demo-2"));
+    write_cache("demo-1", "deadbeef");
+    let (status, body) = get(&fx.app, "/api/rooms/983/viewers/demo-1/tree").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        body["ai_stale"],
+        Value::Bool(true),
+        "tree 面哈希翻 → 时效位必须亮：{body}"
+    );
+    let (status, body) = get(&fx.app, "/api/rooms/983/viewers/demo-2/tree").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        body["ai_stale"],
+        Value::Bool(false),
+        "tree 面哈希稳定 → 时效位绿灯：{body}"
+    );
+
+    // demo-1 补码现行哈希 → 过期位应熄灭（时效位跟据哈希实况，不是一次性旗帜）。
+    write_cache("demo-1", &current_hash_of("demo-1"));
+    let (status, body) = get(&fx.app, "/api/rooms/983/viewers/demo-1/tree").await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        body["ai_stale"],
+        Value::Bool(false),
+        "tree 面哈希复位 → 时效位熄灭：{body}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn graph_endpoints_cytoscape_shape_and_viewer_scope() {
     let fx = fixture();

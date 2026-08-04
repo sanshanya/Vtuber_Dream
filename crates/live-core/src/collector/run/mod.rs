@@ -97,7 +97,7 @@ pub enum CollectMode {
     StreamerOnly,
     /// 大航海名单 + 手工观众全量（一键分析全部大航海入口；当前 Python 行为）。
     Guards,
-    /// 单查按钮：只深采指定 uid（seed_source=manual）。
+    /// 单查按钮：只深采指定 uid（seed_source=manual）——不清场，其余观众事实保留。
     SingleViewer(String),
 }
 
@@ -117,13 +117,19 @@ pub fn collect_with_client(
     emit: &mut dyn FnMut(&str),
 ) -> Result<Value, CollectError> {
     let root = config.output_dir.clone();
-    if config.perception.preserve_raw_snapshots
-        && let Some(archived) =
-            storage::archive_current_snapshot(&root).map_err(CollectError::Storage)?
-    {
-        emit(&format!("[0/5] 已归档上一轮快照：{}", archived.display()));
+    // 险口 #1：单查（SingleViewer）不清场不归档——只覆写目标 uid 的
+    // viewers/<uid>.json；其余舰长事实、site、shared 全原样。其余模式
+    // （StreamerOnly/Guards）保持原清场+归档行为一字不差。
+    // 用引用判断以免改动 `mode` 的所有权流（其随后 move 进 collect_inner）。
+    if !matches!(&mode, CollectMode::SingleViewer(_)) {
+        if config.perception.preserve_raw_snapshots
+            && let Some(archived) =
+                storage::archive_current_snapshot(&root).map_err(CollectError::Storage)?
+        {
+            emit(&format!("[0/5] 已归档上一轮快照：{}", archived.display()));
+        }
+        storage::reset_output(&root).map_err(CollectError::Storage)?;
     }
-    storage::reset_output(&root).map_err(CollectError::Storage)?;
     let started_at = now_iso();
     let started = Instant::now();
     storage::write_json(

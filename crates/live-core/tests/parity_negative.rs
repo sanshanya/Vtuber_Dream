@@ -723,32 +723,11 @@ fn edge_case_long_dynamic_text_truncated_before_content_version() {
     let fixture = load_edge_cases_fixture();
     let blob = &fixture["viewers"][1];
     assert_eq!(blob["viewer"]["id"].as_str().unwrap(), "edge-2");
-    // fixture 原文路径 viewers[1].sources.dynamics.items[0].text（实测 1402 字符，
-    // 本身不超限）。viewer_evidence 只消费 raw["description"]（evidence.rs:206）、
-    // 不读 "text" 键，故测试内把原文放大 15 倍（21030 字符 > 20_000）栽到
-    // description 槽位；原 "text" 键原样保留，fixture 文件不动。
-    let base_text = blob["sources"]["dynamics"]["items"][0]["text"]
-        .as_str()
-        .unwrap()
-        .to_string();
-    let long_text = base_text.repeat(15);
-    assert!(
-        long_text.chars().count() > 20_000,
-        "栽入文本必须超过 20_000 字符才能观测截断"
-    );
-    let sources = json!({
-        "dynamics": {
-            "status": "ok",
-            "count": 1,
-            "items": [{
-                "id": "long-1",
-                "type": "DYNAMIC_TYPE_WORD",
-                "text": base_text,
-                "description": long_text,
-            }]
-        }
-    });
-    let viewer = edge_case_viewer_value(blob, sources);
+    // fixture 即真样本，无放大：sources.dynamics.items[0].description 已内置 text
+    // 原文 ×15（21030 字符 > 20_000，见 fixture 顶部 note 与文件本体），整个 sources
+    // 透传进 viewer（viewer_evidence 只消费 raw["description"]，见 evidence.rs:206，
+    // 不读 "text" 键）。
+    let viewer = edge_case_viewer_value(blob, blob["sources"].clone());
     let episodes = build_viewer_episodes(&viewer, 1000);
     // dynamics 恰一条 item → 恰 1 条 episode（profile 同为元数据块、无 sign 不出候选）。
     assert_eq!(episodes.len(), 1, "edge-2 应恰好产出 1 条 dynamic episode");

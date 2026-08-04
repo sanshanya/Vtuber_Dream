@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api";
+import { AiStaleBadge } from "../components/AiStaleBadge";
 import { MentionText, type MentionSpanLike } from "../components/MentionText";
 import { SingleViewerRunButton } from "../components/SingleViewerRunButton";
 import { fmtTime } from "../format";
@@ -38,9 +39,10 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
         {String(tree.error instanceof Error ? tree.error.message : tree.error)}
       </div>
     );
-  const data = tree.data;
+  const data = tree.data ?? ({} as NonNullable<typeof tree.data>);
   const viewer = data.viewer ?? {};
   const ai = data.ai ?? null;
+  const aiStale = data.ai_stale ?? null;
   const episodes: EpisodeRow[] = Array.isArray(data.episodes) ? data.episodes : [];
   const mentions: MentionRow[] = Array.isArray(data.mentions) ? data.mentions : [];
 
@@ -63,6 +65,8 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
             <span className={`badge ${ai?.status === "complete" ? "state" : ""}`}>
               Perception {ai?.status ?? "未运行"}
             </span>
+            {/* Z5c 时效位：旧 AI 结论保留作参考但信源已翻 → 感知区块亮标不重删。 */}
+            {aiStale === true && <AiStaleBadge testId="ai-stale-badge-tree" />}
           </div>
           {ai?.analysis?.profile_summary && <p>{String(ai.analysis.profile_summary)}</p>}
         </div>

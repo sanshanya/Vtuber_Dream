@@ -6,6 +6,7 @@
 import { useQuery } from "@tanstack/react-query";
 
 import { api, isApiError } from "../api";
+import { AiStaleBadge } from "../components/AiStaleBadge";
 import { KindRunButton } from "../components/KindRunButton";
 import { RunButton } from "../components/RunButton";
 import { Situ } from "../components/Situ";
@@ -187,6 +188,8 @@ export function Streamer({ roomId }: { roomId: string }) {
                 <span className={`badge${row.ai_completed ? " state" : ""}`}>
                   {row.ai_status ?? "—"}
                 </span>
+                {/* Z5c 时效位（strip 紧凑面）：与列表/tree 同源，复用 .badge.action。 */}
+                {row.ai_stale === true && <AiStaleBadge testId="ai-stale-badge-strip" />}
               </a>
             ))}
           </div>
