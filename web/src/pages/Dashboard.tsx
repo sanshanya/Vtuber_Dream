@@ -81,7 +81,16 @@ export function Dashboard({ roomId }: { roomId: string }) {
           <h2>整体态势</h2>
         </div>
         {situation.status === "complete" && situation.analysis ? (
-          <Situ analysis={situation.analysis} synthetic={situation.synthetic_demo === true} />
+          // synthetic_demo 徽标的数据面在 collection/ai/situation 任一分段（demo.rs 写位随工件；
+          // overview 原样透传读取文件，前端不臆造单一来源位）。
+          <Situ
+            analysis={situation.analysis}
+            synthetic={
+              collection.synthetic_demo === true ||
+              ai.synthetic_demo === true ||
+              situation.synthetic_demo === true
+            }
+          />
         ) : (
           <div className="empty">整体态势尚未形成（跑完 Audience 阶段后呈现）</div>
         )}
