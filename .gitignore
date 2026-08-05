@@ -11,3 +11,5 @@ config.local.yaml
 web/node_modules
 web/dist
 .DS_Store
+
+.playwright-mcp/
