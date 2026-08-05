@@ -433,6 +433,14 @@ async fn collect_full_run_happy_path() {
             "{file} 泄漏浅存在 uid"
         );
     }
+
+    // 验收钉④（迭代细则 v1 §1 P0-1）：房间语料三源独立记账进 source_status_counts
+    // （每源计 1 = 源级状态计数，与观众源的 viewer 计数分层共存）。
+    assert_eq!(counts["room_comments:ok"], 1, "评论源独立记账");
+    assert_eq!(counts["live_records:ok"], 1, "回放列表源独立记账");
+    assert_eq!(counts["replay_danmaku:ok"], 1, "回放弹幕源独立记账");
+    // 弹幕行必须带 shard_index 打标（P0-1 幂等身份 (rid, shard, 行序) 的物证）
+    assert_eq!(danmaku["records"][0]["messages"][0]["shard_index"], 0);
 }
 
 #[tokio::test(flavor = "multi_thread")]

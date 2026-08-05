@@ -4,7 +4,7 @@
 //! 客户端延迟=0；根地址指向 MockServer（生产路径与真地址相同，仅根不同）。
 
 use live_core::bilibili::{BilibiliClient, BilibiliError, DANMAKU_SHARD_CAP};
-use serde_json::json;
+use serde_json::{Value, json};
 use wiremock::matchers::{method, path, query_param};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -600,4 +600,47 @@ async fn search_videos_filters_junk_and_truncates_to_limit() {
     assert_eq!(rows.len(), 2);
     assert_eq!(rows[0]["bvid"], "BV1");
     assert_eq!(rows[1]["bvid"], "BV2");
+}
+
+/// P0-1（迭代细则 v1 §1 地基）：弹幕 shard 必须随行打标——
+/// Episode 身份公式 (rid, shard_index, 行序) 依赖上游保序与分片索引；
+/// 不打标则无法构造幂等身份。零新增请求：同一拉片循环内打标。
+#[tokio::test(flavor = "multi_thread")]
+async fn live_record_danmaku_rows_tag_shard_index() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/record/getInfoByLiveRecord"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": {"dm_info": {"num": 2, "total_num": 3}}})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/dM/getDMMsgByPlayBackID"))
+        .and(query_param("index", "0"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": {"dm": {"dm_info": [
+                {"text": "A1", "uid": "u1"}, {"text": "A2", "uid": "u2"}]}}})),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/dM/getDMMsgByPlayBackID"))
+        .and(query_param("index", "1"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"code": 0, "data": {"dm": {"dm_info": [{"text": "B1", "uid": "u3"}]}}}),
+        ))
+        .mount(&server)
+        .await;
+    let messages = call(server, |client| client.live_record_danmaku("R-shard"))
+        .await
+        .expect("danmaku");
+    assert_eq!(messages.len(), 3);
+    let tags: Vec<i64> = messages
+        .iter()
+        .map(|row| row.get("shard_index").and_then(Value::as_i64).unwrap_or(-1))
+        .collect();
+    assert_eq!(tags, [0, 0, 1], "每片行必须打贴本片片号: {messages:?}");
 }

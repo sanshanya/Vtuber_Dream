@@ -512,6 +512,20 @@ fn collect_inner(
     for key in &counter_order {
         status_counts.insert(key.clone(), Value::from(source_counter[key]));
     }
+    // 验收钉④（迭代细则 v1 §1 P0-1）：房间语料三源独立记账——此前只在 coverage
+    // 记行数/请求数，status 不进 source_status_counts（「独立记账」缺半边）。
+    // 每源三个 Boolean 量级固定计 1（源级状态，非行级），与观众源的 viewer
+    // 计数语义分层共存（键名前缀 disambiguate）。
+    for (name, payload) in [
+        ("room_comments", &cit.0),
+        ("live_records", &records.0),
+        ("replay_danmaku", &danmaku.0),
+    ] {
+        let status = pystr(payload.get("status"));
+        if !status.is_empty() {
+            status_counts.insert(format!("{name}:{status}"), Value::from(1));
+        }
+    }
     Ok(json!({
         "status": "complete",
         "project": config.project_name,

@@ -445,12 +445,20 @@ impl BilibiliClient {
                 false,
                 Some("https://live.bilibili.com/"),
             )?;
-            let chunk = data
+            let mut chunk = data
                 .get("dm")
                 .and_then(|d| d.get("dm_info"))
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
+            // P0-1（迭代细则 v1）：随行打贴本片片号——房间语料 Episode 的幂等身份
+            // 是 (rid, shard_index, 行序)，行序靠本循环的按序拼接，片号必须落在行上
+            // 才不会跨片漂移。零新增请求：纯内存打标。
+            for row in chunk.iter_mut() {
+                if let Value::Object(map) = row {
+                    map.insert("shard_index".to_string(), Value::from(index));
+                }
+            }
             messages.extend(chunk);
         }
         Ok(messages)

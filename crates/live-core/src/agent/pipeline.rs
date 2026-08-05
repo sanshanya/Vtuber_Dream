@@ -1349,6 +1349,30 @@ async fn run_pipeline_inner(
     };
     note.run_id = Some(run_id.clone());
     progress_say(knobs, "[GRAPH] 写入Episode、Mention、Entity和兴趣状态");
+    // P0-1（迭代细则 v1 §1）：房间语料 Episode 化收账——collect 只写 shared/*.json
+    // （replay_danmaku / room_comments），这里在观众扇出前转 Episode 走既有 ingest
+    // 通道落图（viewer 命名空间 = _room）。幂等语义继承 upsert_episode_inner；
+    // 入账失败是独立工作单元：响铃不绊管线（已完成的观众结果不受影响）。
+    {
+        let (corpus, corpus_counts) =
+            episodes::room_corpus::room_corpus_episodes(&config.output_dir.join("shared"));
+        let danmaku_count = corpus_counts["live_danmaku"].as_i64().unwrap_or(0);
+        let comment_count = corpus_counts["room_comment"].as_i64().unwrap_or(0);
+        match episodes::room_corpus::ingest_room_corpus(&store, &run_id, &corpus) {
+            Ok(()) => progress_say(
+                knobs,
+                &format!(
+                    "[GRAPH] 房间语料入账：弹幕 {danmaku_count} 行、评论 {comment_count} 条（_room 命名空间）"
+                ),
+            ),
+            Err(err) => progress_say(
+                knobs,
+                &format!(
+                    "[GRAPH] 房间语料入账失败：{err}（弹幕 {danmaku_count}、评论 {comment_count} 待重跑恢复）"
+                ),
+            ),
+        }
+    }
     match write_state(
         &state_path,
         json!({

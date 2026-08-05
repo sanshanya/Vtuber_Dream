@@ -1238,3 +1238,117 @@ async fn viewer_pipeline_filters_baseline_and_rejects_ghost() {
         "{error}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// P0-1 集成钉（迭代细则 v1 §1）：房间语料 Episode 化收账进 pipeline——
+// shared/*.json → _room 命名空间 Episode 落图；重跑幂等（行数不增）；
+// 观众 files 零污染（_room 只在图里，绝不成 viewers/ 文件）。
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_room_corpus_ingests_into_room_namespace_idempotently() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    // 播种语料：一场回放两行弹幕（跨两片）+ 一条评论。
+    let shared = tmp.path().join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::write(
+        shared.join("replay_danmaku.json"),
+        json!({"records": [{
+            "rid": "R9", "title": "回放置景",
+            "start_timestamp": 1700000000, "end_timestamp": 1700003600,
+            "message_count": 2,
+            "messages": [
+                {"text": "前排", "uid": "u1", "shard_index": 0, "ts": "1700000005"},
+                {"text": "主播晚安", "uid": "u2", "shard_index": 1, "ts": "1700003595"},
+            ],
+        }]})
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        shared.join("room_comments.json"),
+        json!({"rows": [{"rpid": "90001", "mid": "8877", "message": "评论区冒泡",
+            "ctime": "1700003000", "target_kind": "video", "target_oid": "BV-corpus", "like": "3"}]})
+        .to_string(),
+    )
+    .unwrap();
+    let (e1, e2) = episode_ids(tmp.path());
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    mount_audience_ok(&server, &["g1", "g2"]).await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+
+    let mut knobs = PipelineKnobs::default();
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("run1");
+
+    let room_rows = |root: &Path| -> i64 {
+        open_store(root)
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM episodes WHERE viewer_id='_room'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap()
+    };
+    let first = room_rows(tmp.path());
+    assert_eq!(first, 3, "弹幕2行+评论1条全部入账: {first}");
+    // 观景闸：语料 Episode 的 platform_facts 带 rid/rpid，事件类型可区分。
+    let store = open_store(tmp.path());
+    let danmaku_facts: String = store
+        .conn
+        .query_row(
+            "SELECT platform_facts_json FROM episodes WHERE viewer_id='_room' AND source='live_danmaku' AND json_extract(platform_facts_json,'$.line_index')=1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert!(
+        danmaku_facts.contains("\"shard_index\":1"),
+        "{danmaku_facts}"
+    );
+    assert!(danmaku_facts.contains("\"rid\":\"R9\""), "{danmaku_facts}");
+    drop(store);
+
+    // run2 全缓存恢复（无 LLM 调用）——验收钉①：重复 ingest 撞库行数不增。
+    let mut knobs2 = PipelineKnobs::default();
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs2,
+    )
+    .await
+    .expect("run2 must resume from cache");
+    assert_eq!(room_rows(tmp.path()), first, "重跑 _room 行数不得增长");
+
+    // 验收钉③：观众 files 零污染——_room 不得落在 viewers/。
+    let viewer_files: Vec<_> = std::fs::read_dir(tmp.path().join("viewers"))
+        .unwrap()
+        .map(|e| e.unwrap().file_name().into_string().unwrap())
+        .collect();
+    assert!(
+        !viewer_files.iter().any(|f| f.contains("_room")),
+        "viewers/ 不得出现 _room 文件: {viewer_files:?}"
+    );
+}
