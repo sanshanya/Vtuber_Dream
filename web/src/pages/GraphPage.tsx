@@ -60,6 +60,27 @@ export function graphLayoutIterations(nodeCount: number): number {
     : GRAPH_LAYOUT_ITERATIONS_LARGE;
 }
 
+/** 主播锚点颜色：橘黄（用户裁决 2026-08-06；var() 画布不吃，字面锚同步 styles.css）。 */
+const STREAMER_COLOR = "#ea580c";
+
+/**
+ * 主播锚标记：唯一权威锚 = 平台事实 creator 实体
+ * （id = `entity:creator:{streamer_uid}`，identity 来自 B 站本身，非 AI 推断）。
+ * 鉴注：观众各自对主播的 AI 变体实体（36 份）与 creator 锚的 SAME_AS 合流
+ * 是实体解析欠账（已挂 backlog），本标记只锚平台事实，不糊成一锅。
+ */
+export function markStreamer(elements: unknown[], streamerUid: string): unknown[] {
+  if (!streamerUid) return elements;
+  const anchorId = `entity:creator:${streamerUid}`;
+  return (elements as Array<{ data?: Record<string, unknown> }>).map((element) => {
+    const data = element?.data ?? {};
+    if (String(data.id) === anchorId) {
+      return { ...element, data: { ...data, streamer: true } };
+    }
+    return element;
+  });
+}
+
 // ---------------------------------------------------------------------------
 // FE-F2/R1#5：节点详情结构化
 // ---------------------------------------------------------------------------
@@ -206,6 +227,17 @@ function stylePreset(): Stylesheet[] {
       }),
     ),
     {
+      // 2026-08-06 用户裁决：主播锚橘黄高亮——旗由 markStreamer 打，样式只认 flag。
+      selector: "node[streamer]",
+      style: {
+        "background-color": STREAMER_COLOR,
+        width: 34,
+        height: 34,
+        "border-width": 2,
+        "border-color": "#fbbf24",
+      },
+    },
+    {
       selector: "edge",
       style: {
         label: "data(edge_label)",
@@ -258,12 +290,17 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
     queryKey: ["graph", roomId, vid ?? ""],
     queryFn: () => (vid ? api.viewerGraph(roomId, vid) : api.roomGraph(roomId)),
   });
+  // 主播锚上色数据源：rooms 已被 App 预取缓存——uid 找主播不花一分新请求。
+  const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const mount = useRef<HTMLDivElement | null>(null);
   const cyRef = useRef<cytoscapeTypes.Core | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedData, setSelectedData] = useState<unknown>(null);
 
-  const elements: unknown[] = Array.isArray(graph.data?.elements) ? graph.data.elements : [];
+  const elements: unknown[] = markStreamer(
+    Array.isArray(graph.data?.elements) ? graph.data.elements : [],
+    rooms.data?.[0]?.streamer_uid ?? "",
+  );
 
   useEffect(() => {
     if (!mount.current || elements.length === 0) return;
@@ -360,6 +397,7 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
           <span><i className="dot ai" /> Entity/兴趣</span>
           <span><i className="dot state" /> 状态</span>
           <span><i className="dot action" /> 行动机会</span>
+          <span><i className="dot" style={{ background: STREAMER_COLOR }} /> 主播</span>
         </div>
       </div>
       {elements.length === 0 ? (

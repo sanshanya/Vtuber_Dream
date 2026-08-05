@@ -38,7 +38,7 @@ vi.mock("cytoscape", () => ({
   },
 }));
 
-import { describeNode, GraphPage, graphLayoutIterations } from "../pages/GraphPage";
+import { describeNode, GraphPage, graphLayoutIterations, markStreamer } from "../pages/GraphPage";
 
 const NODE_VIEWER = {
   data: { id: "viewer:demo-1", label: "演示观众A", kind: "Viewer", properties: { viewer_id: "demo-1" } },
@@ -255,6 +255,22 @@ describe("cose numIter 随规模降档", () => {
     expect(graphLayoutIterations(499)).toBe(1000);
     expect(graphLayoutIterations(500)).toBe(400);
     expect(graphLayoutIterations(50_000)).toBe(400);
+  });
+});
+
+describe("2026-08-06 用户裁决：主播锚点橘黄标记", () => {
+  it("平台 creator 锚（entity:creator:{uid}）打 streamer 旗，其余节点不动", () => {
+    const elements = [
+      { data: { id: "entity:creator:3546595083683995", label: "芜湖奶芙一溺爱版", kind: "Entity", properties: { platform_id: "3546595083683995" } } },
+      { data: { id: "entity:虚拟主播_up主:12202a04", label: "芜湖奶芙一溺爱版", kind: "Entity", properties: {} } },
+      { data: { id: "viewer:demo-1", label: "演示观众A", kind: "Viewer", properties: {} } },
+    ];
+    const marked = markStreamer(elements, "3546595083683995") as any[];
+    expect(marked[0].data.streamer).toBe(true);
+    expect(marked[1].data.streamer).toBeUndefined();
+    expect(marked[2].data.streamer).toBeUndefined();
+    // uid 缺位 → 原样返回，不臆造锚点。
+    expect(markStreamer(elements, "")).toEqual(elements);
   });
 });
 
