@@ -562,3 +562,181 @@ fn episode_lead_linkage_write_face() {
         "episodes.lead_id 必须真外键：{err}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// P0-3 事实密度 annex 钉团（迭代细则 v1 §1 验收钉三连）：
+// ①零新增时 annex 与前轮逐字节一致；
+// ②每行可回链 lead→episode（行尾 anchor = episode_id 尾 12，且 real 查得回）；
+// ③总长度上限：超出即行边界断 + 封顶句（防账本滚大吞 prompt）。
+// ---------------------------------------------------------------------------
+
+fn annex_episode(episode_id: &str, viewer: &str, title: &str) -> live_core::episodes::Episode {
+    let mut e = episode(episode_id);
+    e.viewer_id = viewer.to_string();
+    e.title = title.to_string();
+    e
+}
+
+#[test]
+fn p0_3_annex_zero_new_byte_identical_and_link_pinnable() {
+    let store = mem_store();
+    let lead_consumed = LedgerRow {
+        dedupe_key: "k-cons".into(),
+        lead_type: "viewer".into(),
+        locator: "uid:3546".into(),
+        motivation: "m".into(),
+        expected_signal: "s".into(),
+        priority: "high".into(),
+        evidence_ids: vec![],
+        viewer_id: "1001".into(),
+        first_seen_run_id: "run:a".into(),
+        created_at: "t".into(),
+        status: LeadStatus::Consumed,
+        yield_count: 2,
+        resolution_note: String::new(),
+    };
+    let pending = row("k-pend", "viewer", LeadStatus::PendingApproval);
+    store
+        .insert_lead_rows(&[&lead_consumed, &pending], false)
+        .expect("seed leads");
+    store
+        .upsert_episode_with_lead(&annex_episode("ep:a", "1001", "动态一条"), Some("k-cons"))
+        .unwrap();
+    store
+        .upsert_episode_with_lead(
+            &annex_episode("ep:x-longer-than-12-tail", "1001", "唱歌回切片"),
+            Some("k-cons"),
+        )
+        .unwrap();
+    // 注：annex.go 的排序键是 episode_id 字典序 ASC——
+    // 「末条」= ep:x-longer-than-12-tail（语义仅排序确定性，不含时序表态）。
+
+    let rows = leads::read_rows(&store).unwrap();
+    // 钉①：同一库两次取 annex → 逐字节一致
+    let a = leads::consumed_annex_lines(&store, &rows)
+        .unwrap()
+        .join("\n");
+    let b = leads::consumed_annex_lines(&store, &rows)
+        .unwrap()
+        .join("\n");
+    assert_eq!(a, b, "零新增时 annex 必须逐字节一致");
+    assert!(a.contains("[lead_fact]"), "{a}");
+    assert!(a.contains("viewer:uid:3546"), "{a}");
+    assert!(a.contains("总证据 2"), "{a}");
+    assert!(a.contains("唱歌回切片"), "末条摘要姿: {a}");
+    // 钉②：回链锚 = episode_id 尾 12 （ep:x-longer-than-12-tail → 尾 12 = or-than-12-tail）
+    let tail: String = "ep:x-longer-than-12-tail"
+        .chars()
+        .rev()
+        .take(12)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .collect();
+    assert!(a.contains(&tail), "annex 必含 episode 回链 {tail}: {a}");
+    let verified = store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM episodes WHERE episode_id LIKE '%' || ?",
+            rusqlite::params![tail],
+            |r| r.get::<_, i64>(0),
+        )
+        .unwrap();
+    assert_eq!(verified, 1, "回链锚必须能查回单一 episode");
+    // 观众画像计数：1001 刷 2 条
+    assert!(a.contains("1001+2"), "{a}");
+    // pending 入账不进 annex（annex 是事实密度，不是状态列表）
+    assert!(!a.contains("k-pend"), "{a}");
+}
+
+#[test]
+fn p0_3_annex_monotone_drift_only_on_new_consumed() {
+    let store = mem_store();
+    let mut rows = leads::read_rows(&store).unwrap();
+    let base = leads::consumed_annex_lines(&store, &rows)
+        .unwrap()
+        .join("\n");
+    assert_eq!(base.trim(), "", "零账本 → 零 annex");
+
+    let a1 = LedgerRow {
+        dedupe_key: "k-1".into(),
+        lead_type: "viewer".into(),
+        locator: "uid:1".into(),
+        status: LeadStatus::Consumed,
+        ..row("k-1", "viewer", LeadStatus::Consumed)
+    };
+    store.insert_lead_rows(&[&a1], false).unwrap();
+    store
+        .upsert_episode_with_lead(&annex_episode("ep:1", "1001", "X"), Some("k-1"))
+        .unwrap();
+    rows = leads::read_rows(&store).unwrap();
+    let step1 = leads::consumed_annex_lines(&store, &rows)
+        .unwrap()
+        .join("\n");
+    assert!(step1.contains("uid:1"), "{step1}");
+
+    // 再插入一条 pending（不是新 consumed）→ annex 逐字节不变（单调漂移律）
+    let p1 = row("k-p", "viewer", LeadStatus::PendingApproval);
+    store.insert_lead_rows(&[&p1], false).unwrap();
+    rows = leads::read_rows(&store).unwrap();
+    let step2 = leads::consumed_annex_lines(&store, &rows)
+        .unwrap()
+        .join("\n");
+    assert_eq!(step1, step2, "pending 入账不得引起 annex 漂移");
+
+    // 新 consumed → annex 真实漂移（正变化：新增 consumed 事件）
+    let c2 = LedgerRow {
+        dedupe_key: "k-2".into(),
+        lead_type: "public_channel".into(),
+        locator: "uid:2".into(),
+        status: LeadStatus::Consumed,
+        ..row("k-2", "public_channel", LeadStatus::Consumed)
+    };
+    store.insert_lead_rows(&[&c2], false).unwrap();
+    rows = leads::read_rows(&store).unwrap();
+    let step3 = leads::consumed_annex_lines(&store, &rows)
+        .unwrap()
+        .join("\n");
+    assert_ne!(
+        step2.trim(),
+        step3.trim(),
+        "新增 consumed 必须使 annex 产生漂移（单调：只随 consumed 事件变）"
+    );
+    assert!(step3.contains("uid:2"), "{step3}");
+}
+
+#[test]
+fn p0_3_annex_total_chars_cap_and_line_boundary_cut() {
+    let store = mem_store();
+    // 三条 consumed lead，每条约 137 字（locator 24 截 + 观众块 + 40 字摘 + 回链锚）：
+    // 前两行 ≈274 字进账，第三行拱过 360 闸 → 行边界断 + 封顶句。
+    for (key, uid) in [("k-a", "观众甲"), ("k-b", "观众乙"), ("k-c", "观众丙")] {
+        let row_big = LedgerRow {
+            dedupe_key: key.into(),
+            lead_type: "public_channel".into(),
+            locator: format!("uid:anchor【{uid}】长定位"),
+            status: LeadStatus::Consumed,
+            ..row(key, "public_channel", LeadStatus::Consumed)
+        };
+        store.insert_lead_rows(&[&row_big], false).unwrap();
+        let e = annex_episode(
+            &format!("ep:{key}-tail-anchor"),
+            uid,
+            &"这是一个相当丰满的摘要切片文本填充到四十字符上限来拉长行".repeat(3),
+        );
+        store.upsert_episode_with_lead(&e, Some(key)).unwrap();
+    }
+    let rows = leads::read_rows(&store).unwrap();
+    let lines = leads::consumed_annex_lines(&store, &rows).unwrap();
+    let annex = lines.join("\n");
+    assert!(annex.contains("封因为其截断"), "超闸必须落封顶句: {annex}");
+    // 行边界断：截断句必为最后一行，且前半行数是整段前缀
+    let last = lines.last().unwrap();
+    assert!(last.contains("封因为其截断"), "{last}");
+    // 总量可容：含封顶句在内的全文仍压在闸+封顶句袋（不超 500 字——防滚大之本）
+    assert!(
+        annex.chars().count() <= 500,
+        "annex 总长度不得超过段包，实测 {}",
+        annex.chars().count()
+    );
+}

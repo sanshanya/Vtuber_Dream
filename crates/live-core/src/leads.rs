@@ -280,6 +280,166 @@ pub fn summary_line(rows: &[LedgerRow], viewer: Option<&str>) -> String {
     )
 }
 
+// ---------------------------------------------------------------------------
+// P0-3 消费回喂 annex（迭代细则 v1 §1）：summary_line 之外的事实密度段——
+// 每 consumed lead 一纸「事实密度」账单：触达的观众画像 + M 条证据摘要，
+// 行尾 episode_id 回链 lead→episode 链。幂等与单调漂移是铁律：
+// 零新增 → 同库逐字节一致；变化只随 consumed 漂移。
+// ---------------------------------------------------------------------------
+
+/// 每个 consumed lead 最多回链证据条数（细则：M ≤3 的 cap 防通胀位）。
+pub const ANNEX_FACTS_PER_LEAD: usize = 3;
+/// 每个 consumed lead 最多列名刷新画像的观众数（细则：N ≤3 的姊妹 cap）。
+pub const ANNEX_VIEWERS_CAP: usize = 3;
+/// 单行摘要字符上限：一句话密度（ANNEX_LOCATOR_CAP=80 的半格位）。
+pub const ANNEX_SNIPPET_CHARS: usize = 40;
+/// annex 全文总长度上限（防账本滚大吞 prompt 预算：超出即截尾、行边界断）。
+/// 定标：典型重行（locator 24 截 + N=3 观众 + M=3 摘区段 + 回链锚）≈110–130 字，
+/// LATEST_CONSUMED_CAP=3 行满载 ≈330–390——紧压 360：三条都活着时它刚好看不见，
+/// 但把 prompt 预算拱出线它立即响。
+pub const ANNEX_TOTAL_CHARS: usize = 360;
+
+pub fn consumed_annex_lines(store: &Store, rows: &[LedgerRow]) -> Result<Vec<String>, StoreError> {
+    let mut lines: Vec<String> = Vec::new();
+    let mut total = 0_usize;
+    let consumed: Vec<&LedgerRow> = rows
+        .iter()
+        .filter(|r| r.status == LeadStatus::Consumed)
+        .rev()
+        .take(LATEST_CONSUMED_CAP)
+        .collect();
+    let consumed_total = rows
+        .iter()
+        .filter(|r| r.status == LeadStatus::Consumed)
+        .count();
+    for row in &consumed {
+        let locator_short: String = row.locator.chars().take(24).collect();
+        let facts = query_episode_annex(store, &row.dedupe_key)?;
+        let mut viewer_counts: Vec<(String, i64)> = Vec::new();
+        let mut seen: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+        for fact in &facts {
+            match seen.get(&fact.viewer_id) {
+                Some(index) => viewer_counts[*index].1 += 1,
+                None => {
+                    seen.insert(fact.viewer_id.clone(), viewer_counts.len());
+                    viewer_counts.push((fact.viewer_id.clone(), 1));
+                }
+            }
+        }
+        let viewers_label = if viewer_counts.is_empty() {
+            "0 人".to_string()
+        } else {
+            let head = viewer_counts
+                .iter()
+                .take(ANNEX_VIEWERS_CAP)
+                .map(|(uid, n)| format!("{uid}+{n}"))
+                .collect::<Vec<_>>()
+                .join("、");
+            if viewer_counts.len() > ANNEX_VIEWERS_CAP {
+                format!("{head}…{} 人", viewer_counts.len())
+            } else {
+                head
+            }
+        };
+        let snippet_tail = facts
+            .last()
+            .map(|f| {
+                format!(
+                    "；末条《{}》",
+                    f.snippet
+                        .chars()
+                        .take(ANNEX_SNIPPET_CHARS)
+                        .collect::<String>()
+                )
+            })
+            .unwrap_or_else(|| "；尚无证据落图".to_string());
+        let line = format!(
+            "[lead_fact] {}:{} → 画像 {}（总证据 {}）{} 〔回链 {}〕",
+            row.lead_type,
+            locator_short,
+            viewers_label,
+            facts.len(),
+            snippet_tail,
+            facts
+                .last()
+                .map(|f| f.episode_tail.clone())
+                .unwrap_or_else(|| "—".to_string()),
+        );
+        // 总长闸：行边界断——不剖半行；断则追加封顶句且终盘。
+        if total + line.chars().count() > ANNEX_TOTAL_CHARS {
+            lines.push(format!(
+                "[lead_fact] …（共 {consumed_total} 条已消费，预算封因为其截断）"
+            ));
+            break;
+        }
+        total += line.chars().count();
+        lines.push(line);
+    }
+    Ok(lines)
+}
+
+struct AnnexFact {
+    viewer_id: String,
+    snippet: String,
+    episode_tail: String,
+}
+
+/// episodes.lead_id = discovery_leads.dedupe_key（FK 反向读面）。
+/// 排序 = episode_id 字典序：确定性锚（同一库零改变同输出——P0-3 松物料名需求）。
+fn query_episode_annex(store: &Store, dedupe_key: &str) -> Result<Vec<AnnexFact>, StoreError> {
+    let mut stmt = store
+        .conn
+        .prepare(
+            "SELECT episode_id,viewer_id,title,fields_json FROM episodes \
+             WHERE lead_id = ? ORDER BY episode_id ASC",
+        )
+        .map_err(|err| StoreError::Repo(format!("annex 查询准备失败: {err}")))?;
+    let rows = stmt
+        .query_map(rusqlite::params![dedupe_key], |row| {
+            let episode_id: String = row.get(0)?;
+            let viewer_id: String = row.get(1)?;
+            let title: String = row.get(2)?;
+            let fields_json: String = row.get(3)?;
+            Ok((episode_id, viewer_id, title, fields_json))
+        })
+        .map_err(|err| StoreError::Repo(format!("annex 查询失败: {err}")))?;
+    let mut out = Vec::new();
+    for row in rows {
+        let (episode_id, viewer_id, title, fields_json) =
+            row.map_err(|err| StoreError::Repo(format!("annex 行读失败: {err}")))?;
+        out.push(AnnexFact {
+            viewer_id,
+            snippet: annex_snippet_of(&title, &fields_json),
+            episode_tail: {
+                let chars: Vec<char> = episode_id.chars().collect();
+                chars.iter().skip(chars.len().saturating_sub(12)).collect()
+            },
+        });
+    }
+    Ok(out)
+}
+
+/// 文本摘要：title 优先；空则首条 fields.text；真无 → 明确「〔无文本〕」（不造句）。
+fn annex_snippet_of(title: &str, fields_json: &str) -> String {
+    let title = title.trim();
+    if !title.is_empty() {
+        return title.to_string();
+    }
+    serde_json::from_str::<serde_json::Value>(fields_json)
+        .ok()
+        .and_then(|fields| {
+            fields
+                .as_array()?
+                .first()?
+                .get("text")?
+                .as_str()
+                .map(str::to_string)
+        })
+        .map(|text| text.trim().to_string())
+        .filter(|text| !text.is_empty())
+        .unwrap_or_else(|| "〔无文本〕".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

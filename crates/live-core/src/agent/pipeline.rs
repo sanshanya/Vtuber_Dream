@@ -591,7 +591,16 @@ fn ledger_annex(store: &Store, viewer: Option<&str>, prompt: String) -> String {
     if rows.is_empty() {
         return prompt;
     }
-    format!("{prompt}\n\n{}", leads::summary_line(&rows, viewer))
+    let mut prompt = format!("{prompt}\n\n{}", leads::summary_line(&rows, viewer));
+    // P0-3（迭代细则 v1 §1）：事实密度 annex——每 consumed lead 的观众画像数
+    // + 证据摘要（行尾 episode 回链）。增益面纪律同人 comment：读错吞纳不绊管线。
+    if let Ok(lines) = leads::consumed_annex_lines(store, &rows)
+        && !lines.is_empty()
+    {
+        prompt.push('\n');
+        prompt.push_str(&lines.join("\n"));
+    }
+    prompt
 }
 
 fn reasoning_json(config: &Config) -> Value {
