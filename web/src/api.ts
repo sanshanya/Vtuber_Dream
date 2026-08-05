@@ -93,6 +93,8 @@ export interface OverviewView {
   ai?: AiJobView;
   /** ai/situation.json 透传（audience 段产物）。 */
   situation?: SituationView;
+  /** P0-2（迭代细则 v1 §1）：ai/recap.json 透传；缺文件 → null（前端「复盘尚未生成」）。 */
+  recap?: import("./components/RecapCard").RecapPayload | null;
   /** Z5/C1：BriefingCard refs 归属解析面 episode_id → 归属观众+标题；无图态 → {}。 */
   episode_index?: Record<string, { viewer_id?: string; title?: string | null }>;
   /** G2 表形态读面唯一源（discovery_leads 表）；型单源在 LeadsBlock。 */

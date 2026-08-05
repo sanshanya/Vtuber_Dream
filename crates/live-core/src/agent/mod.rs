@@ -6,6 +6,7 @@
 //! Z3/P0-4 挂载：throttle（限速漏桶 leaky bucket——全局 LLM 请求节律门）。
 
 pub mod history;
+pub mod naming;
 pub mod pipeline;
 pub mod probe;
 pub mod prompts;

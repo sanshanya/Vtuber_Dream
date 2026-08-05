@@ -1352,3 +1352,145 @@ async fn pipeline_room_corpus_ingests_into_room_namespace_idempotently() {
         "viewers/ 不得出现 _room 文件: {viewer_files:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// P0-2 集成钉（迭代细则 v1 §1）：复盘卡 = 规则四数进 ai/recap.json + AI 只命名。
+// 两路：命名成功进 naming 键；命名失败卡仍落盘、naming=null、未知行补账。
+// ---------------------------------------------------------------------------
+
+fn naming_gate() -> impl Fn(&serde_json::Value) -> bool + Send + Sync + 'static {
+    |body: &serde_json::Value| {
+        serde_json::to_string(body)
+            .map(|text| text.contains("submit_recap_naming"))
+            .unwrap_or(false)
+    }
+}
+
+fn seed_corpus(root: &std::path::Path) {
+    let shared = root.join("shared");
+    std::fs::create_dir_all(&shared).unwrap();
+    std::fs::write(
+        shared.join("replay_danmaku.json"),
+        json!({"records": [
+            {"rid": "S1", "start_timestamp": 1000, "end_timestamp": 2000,
+             "messages": [{"text": "旧场好", "uid": "A", "shard_index": 0, "ts": "1100"}]},
+            {"rid": "S2", "start_timestamp": 3000, "end_timestamp": 4600,
+             "messages": [
+                 {"text": "晚上好！", "uid": "C", "shard_index": 0, "ts": "3020"},
+                 {"text": "来了", "uid": "B", "shard_index": 0, "ts": "3030"},
+                 {"text": "晚上好！", "uid": "C", "shard_index": 0, "ts": "4200"},
+                 {"text": "晚上好！", "uid": "C", "shard_index": 0, "ts": "4210"},
+                 {"text": "好吧", "uid": "A", "shard_index": 0, "ts": "4300"},
+             ]},
+        ]})
+        .to_string(),
+    )
+    .unwrap();
+}
+
+async fn mount_viewers_and_audience(server: &MockServer, root: &std::path::Path) {
+    let (e1, e2) = episode_ids(root);
+    mount_viewer_ok(
+        server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "异环"),
+    )
+    .await;
+    mount_viewer_ok(
+        server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
+    )
+    .await;
+    mount_audience_ok(server, &["g1", "g2"]).await;
+    let store = open_store(root);
+    seed_entity(&store);
+    drop(store);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_recap_card_lands_with_ai_naming() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    seed_corpus(tmp.path());
+    mount_viewers_and_audience(&server, tmp.path()).await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(BodyPred(naming_gate()))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(assistant_tool_call(
+                "call-n1",
+                "submit_recap_naming",
+                json!({"submission": {
+                    "peak_name": "落雨十分钟",
+                    "sentence_name": "晚好三连",
+                    "reuse_line": "明天开场把「晚上好」留成仪式句，复用",
+                    "cut_advice": "以 4000s±2min 切一段开场互动切片",
+                }}),
+                None,
+            )),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut knobs = PipelineKnobs::default();
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("run with naming");
+
+    let card = read(&tmp.path().join("ai").join("recap.json"));
+    assert_eq!(card["status"], "ready");
+    // 四数：3 人、回来 1/3（A 在 S1 说过）、峰 3 行（4200 窗：4200/4210/4300）、复读「晚上好！」×3
+    assert_eq!(card["speakers"], 3);
+    assert_eq!(card["returning"]["count"], 1);
+    assert_eq!(card["returning"]["base"], 3);
+    assert_eq!(card["peak"]["count"], 3);
+    assert_eq!(card["repeated"]["text"], "晚上好！");
+    let naming = &card["naming"];
+    assert_eq!(naming["peak_name"], "落雨十分钟", "卡全貌: {card:?}");
+    assert_eq!(naming["sentence_name"], "晚好三连");
+    assert!(naming["reuse_line"].as_str().unwrap().contains("复用"));
+    assert!(naming["named_at"].as_str().is_some(), "named_at 是程序事实");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_recap_naming_failure_leaves_honest_card() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    seed_corpus(tmp.path());
+    mount_viewers_and_audience(&server, tmp.path()).await;
+    // 命名模型 502 风暴：HTTP_EXTRA_ATTEMPTS 内全灭 → 命名终局失败。
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(BodyPred(naming_gate()))
+        .respond_with(ResponseTemplate::new(502).set_body_string("bad gateway"))
+        .mount(&server)
+        .await;
+
+    let mut knobs = PipelineKnobs::default();
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("命名失败不得绊管线");
+
+    let card = read(&tmp.path().join("ai").join("recap.json"));
+    assert_eq!(card["status"], "ready", "规则卡照落");
+    assert!(card["naming"].is_null(), "命名缺位是 null 不是伪造");
+    let unknown = card["unknown"].as_array().unwrap();
+    assert!(
+        unknown.iter().any(|row| row
+            .as_str()
+            .is_some_and(|text| text.contains("AI 命名未达成"))),
+        "未知行要补这笔账: {unknown:?}"
+    );
+}

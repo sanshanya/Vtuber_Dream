@@ -905,3 +905,40 @@ async fn overview_leads_autonomy_projects_config_flag() {
     let (_, body2) = get(&fx.app, "/api/rooms/983/overview").await;
     assert_eq!(body2["leads"]["autonomy"], 1, "L1 徽标跟随：{body2}");
 }
+
+/// P0-2c 钉（迭代细则 v1 §1）：overview 的 recap 键纪律——
+/// ①缺 ai/recap.json：键存在且 null（前端「复盘尚未生成」的分前，绝不缺键）；
+/// ②落盘后原样透传（四数/命名件/未知行不被消毒）。
+#[tokio::test(flavor = "multi_thread")]
+async fn overview_recap_key_present_null_then_passthrough() {
+    let fx = fixture();
+    let (_, body) = get(&fx.app, "/api/rooms/983/overview").await;
+    assert!(body.as_object().unwrap().contains_key("recap"), "{body}");
+    assert!(body["recap"].is_null(), "未落盘 → null 空态：{body}");
+
+    let ai_dir = fx.data_root.join("ai");
+    std::fs::create_dir_all(&ai_dir).unwrap();
+    std::fs::write(
+        ai_dir.join("recap.json"),
+        serde_json::json!({
+            "status": "ready",
+            "headline": "今晚 3 人来过，1 人回来过",
+            "speakers": 3,
+            "returning": {"count": 1, "base": 3, "sessions_back": 1},
+            "peak": {"start": "2026-08-05T21:10:00.000000+00:00", "count": 3, "window_minutes": 10},
+            "repeated": {"text": "晚上好！", "count": 3},
+            "naming": null,
+            "unknown": ["AI 命名未达成：recap-naming failed"],
+            "empty_copy": null,
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let (_, body2) = get(&fx.app, "/api/rooms/983/overview").await;
+    assert_eq!(body2["recap"]["status"], "ready", "{body2}");
+    assert_eq!(
+        body2["recap"]["unknown"][0].as_str().unwrap(),
+        "AI 命名未达成：recap-naming failed",
+        "未知行原样透传"
+    );
+}

@@ -11,6 +11,7 @@ import { BriefingCard } from "../components/BriefingCard";
 import { Avatar } from "../components/Avatar";
 import { KindRunButton } from "../components/KindRunButton";
 import { RunButton } from "../components/RunButton";
+import { RecapCard } from "../components/RecapCard";
 import { Situ } from "../components/Situ";
 import { StreamerCard } from "../components/StreamerCard";
 import { estimateCostCny, fmtCny, fmtInt, fmtTime, type UsageRow } from "../format";
@@ -92,6 +93,10 @@ export function Streamer({ roomId }: { roomId: string }) {
         aiCompletedAt={ai.completed_at ?? null}
         stale={(viewers.data ?? []).some((row) => row.ai_stale === true)}
       />
+
+      {/* P0-2（迭代细则 v1 §1）：下播复盘卡——四纯规则数+AI命名件+未知行恒在。
+          她下播 5 分钟的第一站；未生成/空场/就绪三态各有具名呈现。 */}
+      <RecapCard recap={data.recap ?? null} />
 
       {/* Z4d 动作落页：本页住「全量感知」（敏感谨慎钮，双段确认）与「主播 AI 分析」
           （认知层聚合，不重采）。采集面动作：主播采集在「直播数据」页、舰长采集在
@@ -214,16 +219,23 @@ export function Streamer({ roomId }: { roomId: string }) {
       </section>
 
       {situation.status === "complete" && situation.analysis ? (
+        // P0-2（迭代细则 v1 §1）：宏观态势段下沉为默认折叠——复盘卡承接她下播 5 分钟，
+        // 宏观段只在想深挖时才展开（验收钉③：default-collapsed）。
         // synthetic_demo 徽标的数据面在 collection/ai/situation 任一分段（demo.rs 写位随工件；
         // overview 原样透传读取文件，前端不臆造单一来源位）。Z2b：各态势部件拆卡由 Situ 自持。
-        <Situ
-          analysis={situation.analysis}
-          synthetic={
-            collection.synthetic_demo === true ||
-            ai.synthetic_demo === true ||
-            situation.synthetic_demo === true
-          }
-        />
+        <details className="section" data-testid="macro-details">
+          <summary>
+            整体态势（宏观）——{fmtInt(situationCount)} 项，点开看
+          </summary>
+          <Situ
+            analysis={situation.analysis}
+            synthetic={
+              collection.synthetic_demo === true ||
+              ai.synthetic_demo === true ||
+              situation.synthetic_demo === true
+            }
+          />
+        </details>
       ) : (
         <section className="section card">
           <h2>整体态势</h2>

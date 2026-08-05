@@ -668,6 +668,10 @@ async fn room_overview(
         "live": read_json(&root.join("shared").join("live_records.json")),
         // Z3：图存量指标面（旧版报告顶部数字条）。
         "graph_stats": graph_stats,
+        // P0-2（迭代细则 v1 §1）：下播复盘卡——pipeline 落盘的 ai/recap.json
+        // 原样透传（四纯规则数 + AI 命名件 + 未知行）。缺文件 → null：前端呈现
+        // 「复盘尚未生成」而非臆造（与 Z3-4 没有任何猜测）。
+        "recap": read_json(&root.join("ai").join("recap.json")),
         // Z5/C1：BriefingCard ref → 归属观众树页的解析索引（无图态 → {} 空态）。
         "episode_index": episode_index,
         "collection": collection,

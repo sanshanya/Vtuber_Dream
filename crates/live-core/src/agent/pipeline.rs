@@ -446,6 +446,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
+use super::naming;
 use super::prompts::{audience_user_prompt, trace_run_start, viewer_user_prompt};
 use super::runtime::{AgentRuntime, AttemptPlan, RuntimeStats, Trace, run_toolcall_agent};
 use super::specs::{audience_agent_spec, viewer_agent_spec};
@@ -459,6 +460,7 @@ use crate::graph::project::{ProjectOptions, project};
 use crate::graph::store::{Store, StoreError};
 use crate::leads;
 use crate::models::{AudienceSituationSubmission, ViewerPerceptionSubmission};
+use crate::recap;
 use crate::storage::{self, load_viewers};
 
 /// Python asyncio.Semaphore(4)（ADR-0004 同构）。
@@ -1693,6 +1695,38 @@ async fn run_pipeline_inner(
     match store.complete_run(&run_id) {
         Ok(()) => {}
         Err(err) => bail!(PipelineError::Store(err)),
+    }
+    // P0-2（迭代细则 v1 §1）：下播复盘卡——四数纯规则（recap.rs）+ AI 只命名
+    // （naming.rs 一击终局）。卡是呈现层读物：任何子失败响铃不绊管线，
+    // 图与 situation 已落的事实不受影响（AI 命名缺位 = naming:null + 未知行）。
+    {
+        match recap::compute_recap(&store) {
+            Ok(mut card) => {
+                if card.status == "ready" && (card.peak.is_some() || card.repeated.is_some()) {
+                    match naming::run_recap_naming(&runtime, config, &card).await {
+                        Ok(named) => {
+                            progress_say(knobs, "[RECAP] AI 命名落卡");
+                            card.naming = Some(named);
+                        }
+                        Err(err) => {
+                            progress_say(knobs, &format!("[RECAP] AI 命名未达成：{err}"));
+                            card.unknown.push(format!("AI 命名未达成：{err}"));
+                        }
+                    }
+                }
+                match storage::write_json(
+                    &config.output_dir.join("ai").join("recap.json"),
+                    &serde_json::to_value(&card).unwrap_or(Value::Null),
+                ) {
+                    Ok(()) => progress_say(
+                        knobs,
+                        &format!("[RECAP] 复盘卡落盘（status={}）", card.status),
+                    ),
+                    Err(err) => progress_say(knobs, &format!("[RECAP] 复盘卡落盘失败：{err}")),
+                }
+            }
+            Err(err) => progress_say(knobs, &format!("[RECAP] 复盘卡计算失败：{err}")),
+        }
     }
     let usage = aggregate_runtime_usage(&viewer_runtime, &overall_runtime);
     let cache_usage = cache_usage_json(viewer_cache_tally, audience_cache_tally);

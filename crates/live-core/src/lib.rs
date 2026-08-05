@@ -17,6 +17,7 @@ pub mod events;
 pub mod graph;
 pub mod leads;
 pub mod models;
+pub mod recap;
 pub mod storage;
 
 #[cfg(test)]
