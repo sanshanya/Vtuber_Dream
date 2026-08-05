@@ -149,12 +149,17 @@ async fn mount_baseline(server: &MockServer) {
     mount(
         server,
         "/x/v2/reply",
-        json_ok(json!({"replies": [{
-            "rpid_str": "77",
-            "member": {"mid": "8877", "uname": "路人甲"},
-            "content": {"message": "前排"},
-            "like": 5, "ctime": 1700003000, "rcount": 1
-        }]})),
+        json_ok(json!({"replies": [
+            {
+                "rpid_str": "77",
+                "member": {"mid": "8877", "uname": "路人甲"},
+                "content": {"message": "前排"},
+                "like": 5, "ctime": 1700003000, "rcount": 1
+            },
+            // 轮2-R1-B 红钉：rpid 与正文双空的垃圾行（平台漂移/半成品 payload）——
+            // 该行没有幂等身份（content_id("","") 跨目标塌缩成同 id 互相覆盖），必须被跳过。
+            {"member": {"mid": "", "uname": ""}, "content": {"message": ""}}
+        ]})),
     )
     .await;
     mount(
@@ -393,7 +398,18 @@ async fn collect_full_run_happy_path() {
     // 房间级浅存在：评论区
     let comments = read(&root.join("shared").join("room_comments.json"));
     assert_eq!(comments["status"], "ok");
-    assert_eq!(comments["count"], 2, "视频+动态各 1 目标 × 1 行");
+    assert_eq!(
+        comments["count"], 2,
+        "视频+动态各 1 目标 × 1 行健康行；每目标附带的垃圾行（空 rpid+空正文）必须被跳过"
+    );
+    assert!(
+        comments["rows"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|row| row["rpid"] == "77"),
+        "入库行只应有健康行 rpid=77，垃圾行不得入库"
+    );
     assert_eq!(
         summary["coverage"]["video_comment_requests"], 4,
         "发现2+回复2"

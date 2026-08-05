@@ -15,6 +15,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api } from "../api";
 import { KindRunButton } from "../components/KindRunButton";
+import { NoReferrerImg } from "../components/NoReferrerImg";
 
 const WEEK_SECONDS = 7 * 24 * 3600;
 
@@ -184,14 +185,7 @@ export function Live({ roomId }: { roomId: string }) {
                   <tr key={i}>
                     <td>
                       {r.cover ? (
-                        // hdslb 图片防盗链：必须 referrerPolicy="no-referrer"。
-                        <img
-                          src={r.cover}
-                          alt=""
-                          className="live-cover"
-                          referrerPolicy="no-referrer"
-                          loading="lazy"
-                        />
+                        <NoReferrerImg src={r.cover} alt="" className="live-cover" />
                       ) : (
                         "—"
                       )}

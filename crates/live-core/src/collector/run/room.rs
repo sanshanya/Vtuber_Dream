@@ -83,12 +83,11 @@ pub fn collect_room_comments(
             Ok(items) => {
                 fetched += 1;
                 for item in &items {
-                    rows.push(normalize_comment(
-                        &config.bilibili.room_id,
-                        *type_id,
-                        oid,
-                        item,
-                    ));
+                    if let Some(row) =
+                        normalize_comment(&config.bilibili.room_id, *type_id, oid, item)
+                    {
+                        rows.push(row);
+                    }
                 }
             }
             Err(err) => errors.push(brief(&err, 100)),
@@ -129,7 +128,9 @@ pub fn collect_room_comments(
     Ok((payload, request_delta, count))
 }
 
-fn normalize_comment(room_id: &str, type_id: i64, oid: &str, item: &Value) -> Value {
+/// 轮2-R1-B：返回 Option——rpid 与正文双空的行没有幂等身份
+/// （content_id("","") 会把跨目标垃圾行塌缩成同 id 互相覆盖），宁缺毋滥直接拒收。
+fn normalize_comment(room_id: &str, type_id: i64, oid: &str, item: &Value) -> Option<Value> {
     let kind = if type_id == 1 { "video" } else { "dynamic" };
     let owner = format!("room:{room_id}");
     let mut rpid = pystr(item.get("rpid_str"));
@@ -138,7 +139,10 @@ fn normalize_comment(room_id: &str, type_id: i64, oid: &str, item: &Value) -> Va
     }
     let member = item.get("member").cloned().unwrap_or(Value::Null);
     let message = pystr(item.pointer("/content/message"));
-    json!({
+    if rpid.is_empty() && message.is_empty() {
+        return None;
+    }
+    Some(json!({
         "id": content_id("comment", &owner, &rpid, &message),
         "source": "comment",
         "target_kind": kind,
@@ -148,7 +152,7 @@ fn normalize_comment(room_id: &str, type_id: i64, oid: &str, item: &Value) -> Va
         "uname": pystr(member.get("uname")),
         "message": message,
         "ctime": pystr(item.get("ctime")),
-    })
+    }))
 }
 
 /// 直播回放列表（1~2 请求；空列表是 2023 年后的平台常态，记 empty 不报错）。

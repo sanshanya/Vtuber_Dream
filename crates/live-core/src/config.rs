@@ -268,6 +268,15 @@ fn string(mapping: &Value, key: &str, default: &str) -> String {
     }
 }
 
+/// 轮2-R1-B：i64 配置值钳入 u32/usize 的公共件（原五处就地 clamp+as 同款样板）。
+fn clamped_u32(value: i64, lo: u32, hi: u32) -> u32 {
+    value.clamp(lo as i64, hi as i64) as u32
+}
+
+fn clamped_usize(value: i64, lo: usize, hi: usize) -> usize {
+    value.clamp(lo as i64, hi as i64) as usize
+}
+
 /// config 层的标量转字符串（bool → Python 形态）。
 fn py_str_config(value: &Value) -> String {
     match value {
@@ -527,7 +536,7 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 effort,
                 replay_content: boolean(reasoning, "replay_content", true)?,
                 replay_window: optional_integer(reasoning, "replay_window")?
-                    .map(|v| v.clamp(1, u32::MAX as i64) as u32),
+                    .map(|v| clamped_u32(v, 1, u32::MAX)),
             },
             agent: AgentRuntimeConfig {
                 max_turns: integer(runtime, "max_turns", 2, Some(64))?,
@@ -535,14 +544,26 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 local_trace: boolean(runtime, "local_trace", true)?,
                 run_retries: integer(runtime, "run_retries", 0, Some(2))?,
                 retry_backoff_seconds: number(runtime, "retry_backoff_seconds", 0.0, Some(3.0))?,
-                viewer_token_budget: integer(runtime, "viewer_token_budget", 0, Some(200_000))?
-                    .clamp(0, u32::MAX as i64) as u32,
-                fold_trigger_tokens: integer(runtime, "fold_trigger_tokens", 0, Some(0))?
-                    .clamp(0, u32::MAX as i64) as u32,
-                fold_keep_tail_turns: integer(runtime, "fold_keep_tail_turns", 0, Some(2))?
-                    .clamp(1, 64) as usize,
-                fold_entry_chars: integer(runtime, "fold_entry_chars", 0, Some(480))?
-                    .clamp(32, 8192) as usize,
+                viewer_token_budget: clamped_u32(
+                    integer(runtime, "viewer_token_budget", 0, Some(200_000))?,
+                    0,
+                    u32::MAX,
+                ),
+                fold_trigger_tokens: clamped_u32(
+                    integer(runtime, "fold_trigger_tokens", 0, Some(0))?,
+                    0,
+                    u32::MAX,
+                ),
+                fold_keep_tail_turns: clamped_usize(
+                    integer(runtime, "fold_keep_tail_turns", 0, Some(2))?,
+                    1,
+                    64,
+                ),
+                fold_entry_chars: clamped_usize(
+                    integer(runtime, "fold_entry_chars", 0, Some(480))?,
+                    32,
+                    8192,
+                ),
                 max_parallel_viewers: integer(runtime, "max_parallel_viewers", 1, Some(4))?,
                 max_llm_rpm: integer(runtime, "max_llm_rpm", 0, Some(0))?,
             },

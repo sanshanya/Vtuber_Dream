@@ -42,17 +42,34 @@ pub fn read_json(path: &Path) -> StorageResult<Option<Value>> {
     Ok(Some(value))
 }
 
-/// Python `write_json`：indent=2、UTF-8 直写、`.tmp` 原子替换。
+/// Python `write_json`：indent=2、UTF-8 直写、tmp 原子替换。
+/// 轮2-R1-B：tmp 名唯一化（pid+进程内序号，对齐 server 写键的 `.live-server-tmp-{pid}`
+/// 约定）——固定 `<file>.tmp` 在同路径并发写时会共享 tmp，先 rename 的一方把另一方的
+/// tmp 挪走，后者必炸 NotFound（serve 触发 run 与 CLI 并发是真实场景）。
 pub fn write_json(path: &Path, value: &Value) -> StorageResult<()> {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|err| io_err("create_dir_all", parent, err))?;
     }
-    let mut tmp_name = path.as_os_str().to_os_string();
-    tmp_name.push(".tmp");
-    let temporary = PathBuf::from(tmp_name);
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("data");
+    let temporary = path.with_file_name(format!(
+        ".{file_name}.live-core-tmp-{}-{}",
+        std::process::id(),
+        TMP_SEQ.fetch_add(1, Ordering::Relaxed)
+    ));
     let text = serde_json::to_string_pretty(value).map_err(|err| format!("serialize: {err}"))?;
-    std::fs::write(&temporary, text).map_err(|err| io_err("write", &temporary, err))?;
-    std::fs::rename(&temporary, path).map_err(|err| io_err("rename", path, err))?;
+    if let Err(err) = std::fs::write(&temporary, text) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(io_err("write", &temporary, err));
+    }
+    if let Err(err) = std::fs::rename(&temporary, path) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(io_err("rename", path, err));
+    }
     Ok(())
 }
 
@@ -174,7 +191,49 @@ mod tests {
         write_json(&path, &json!({"a": 1, "中文": "值"})).unwrap();
         let back = read_json(&path).unwrap().unwrap();
         assert_eq!(back, json!({"a": 1, "中文": "值"}));
-        assert!(!path.with_file_name("x.json.tmp").exists());
+        // tmp 唯一化后：写毕目录里只剩正主，不得残留任何 .live-core-tmp-* 孤儿。
+        let leftovers: Vec<_> = std::fs::read_dir(path.parent().unwrap())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().into_string().unwrap())
+            .filter(|name| name != "x.json")
+            .collect();
+        assert!(leftovers.is_empty(), "tmp 残留：{leftovers:?}");
+    }
+
+    /// 轮2-R1-B 红钉：同路径并发写不得共享固定 tmp——两个写者共用 `<file>.tmp` 时，
+    /// 先 rename 的一方会把另一方的 tmp 挪走，后者 rename 必炸 NotFound（或内容撕裂）。
+    /// 修复后二者各写各的唯一 tmp，双双 Ok，终态必为其中一份完整 payload。
+    #[test]
+    fn concurrent_writes_to_same_path_do_not_collide() {
+        let root = temp_root();
+        let path = root.path().join("shared").join("recap.json");
+        let payload_a: Value = json!({"mark": "A", "pad": vec![7; 4000]});
+        let payload_b: Value = json!({"mark": "B", "pad": vec![9; 4000]});
+        for round in 0..24 {
+            let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
+            let spawn = |payload: Value| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    write_json(&path, &payload)
+                })
+            };
+            let a = spawn(payload_a.clone());
+            let b = spawn(payload_b.clone());
+            let ra = a.join().expect("thread A panicked");
+            let rb = b.join().expect("thread B panicked");
+            assert!(ra.is_ok(), "round {round} 写者 A 失败：{ra:?}");
+            assert!(rb.is_ok(), "round {round} 写者 B 失败：{rb:?}");
+            let final_value = read_json(&path)
+                .unwrap()
+                .unwrap_or_else(|| panic!("round {round} 终态缺文件"));
+            assert!(
+                final_value == payload_a || final_value == payload_b,
+                "round {round} 终态被撕裂（mark={:?}）",
+                final_value["mark"]
+            );
+        }
     }
 
     #[test]

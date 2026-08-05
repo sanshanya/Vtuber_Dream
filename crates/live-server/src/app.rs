@@ -97,10 +97,6 @@ fn data_root(state: &AppState) -> AppResult<PathBuf> {
     }
 }
 
-fn fail_box(status: StatusCode, message: &str) -> AppFail {
-    AppFail::new(status, message)
-}
-
 /// D9/ag3-F4：JSON 体信封化——所有 JsonRejection（含 DefaultBodyLimit 触发的 413）
 /// 统一落成 {error} JSON 响应，保持 D3 错误形态；原生 axum 只会吐裸文本。
 struct JsonBody<T>(T);
@@ -344,7 +340,7 @@ async fn config_put(
     let object = match body.as_object() {
         Some(object) => object,
         None => {
-            return Err(fail_box(
+            return Err(fail(
                 StatusCode::UNPROCESSABLE_ENTITY,
                 "配置写入必须是 JSON 对象",
             ));
@@ -377,7 +373,7 @@ async fn config_put(
                 (Some((s, k)), false) => {
                     // (Some(_), true) 已被上一臂吃掉——本臂只剩非空值进入重写。
                     if value_str.chars().count() > MAX_PUT_VALUE_CHARS {
-                        return Err(fail_box(
+                        return Err(fail(
                             StatusCode::UNPROCESSABLE_ENTITY,
                             &format!("{s}.{k} 超出长度上限 {MAX_PUT_VALUE_CHARS}"),
                         ));
@@ -388,7 +384,7 @@ async fn config_put(
         }
     }
     if !rejected.is_empty() {
-        return Err(fail_box(
+        return Err(fail(
             StatusCode::UNPROCESSABLE_ENTITY,
             &format!("拒绝的键：{}", rejected.join(", ")),
         ));
@@ -404,7 +400,7 @@ async fn config_put(
         .expect("config write lock poisoned");
     // 校验已并入 write_keys 的 tmp 阶段（ag2-F3）：失败 → 422 且原文件分毫未动。
     if let Err(error) = write_keys(&state.config_path, &patch) {
-        return Err(fail_box(StatusCode::UNPROCESSABLE_ENTITY, &error));
+        return Err(fail(StatusCode::UNPROCESSABLE_ENTITY, &error));
     }
     Ok(Json(json!({"status": "updated", "keys": patch.len()})))
 }
@@ -537,7 +533,7 @@ async fn run_get(State(state): State<AppState>, Path(id): Path<String>) -> AppRe
         Some(record) => Ok(Json(crate::registry::run_to_json(
             &record.lock().expect("record poisoned"),
         ))),
-        None => Err(fail_box(StatusCode::NOT_FOUND, &format!("run {id} 不存在"))),
+        None => Err(fail(StatusCode::NOT_FOUND, &format!("run {id} 不存在"))),
     }
 }
 
@@ -576,8 +572,17 @@ fn room_guard(config: &live_core::config::Config, uid: &str) -> AppResult<()> {
     Ok(())
 }
 
+/// 读面统一走 live_core::storage（轮2-R1-B3）：文件缺席 = None（合法空态）；
+/// 文件在但 JSON 损坏 = 响亮 eprintln 后仍按 None 空态处理——九个调用点全是
+/// 「读到就用、读不到就空态」语义，静默吞损坏违反 AGENTS.md，故在收窄点报响。
 fn read_json(path: &std::path::Path) -> Option<Value> {
-    serde_json::from_str(&std::fs::read_to_string(path).ok()?).ok()
+    match live_core::storage::read_json(path) {
+        Ok(value) => value,
+        Err(err) => {
+            eprintln!("读取 JSON 失败（按空态处理）：{err}");
+            None
+        }
+    }
 }
 
 /// graph 文件存在才开库（Store::open 会建文件，纯读路径禁止写入副作用）。

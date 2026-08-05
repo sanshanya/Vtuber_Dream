@@ -1712,7 +1712,7 @@ async fn run_pipeline_inner(
         match recap::compute_recap(&store) {
             Ok(mut card) => {
                 if card.status == "ready" && (card.peak.is_some() || card.repeated.is_some()) {
-                    match naming::run_recap_naming(&runtime, config, &card).await {
+                    match naming::run_recap_naming(runtime, config, &card).await {
                         Ok(named) => {
                             progress_say(knobs, "[RECAP] AI 命名落卡");
                             card.naming = Some(named);

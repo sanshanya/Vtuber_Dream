@@ -97,26 +97,12 @@ const EMPTY_COPY: &str = "今晚没能落下一句话——但这未必是你说
      看一眼「未知的部分」：若是采集没碰到新场次，这页空白只是还没翻到，不是你不够好。";
 
 fn unix_str_to_iso(raw: &Value) -> String {
-    let secs = match raw {
-        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
-        Value::String(s) => s.trim().parse::<i64>().ok(),
-        _ => None,
-    };
-    match secs {
-        Some(secs) if secs > 0 => match chrono::DateTime::from_timestamp(secs, 0) {
-            Some(dt) => format!("{}.000000+00:00", dt.format("%Y-%m-%dT%H:%M:%S")),
-            None => String::new(),
-        },
-        _ => String::new(),
-    }
+    // B12：同 room_corpus——unix 解析与格式化沉入 episodes 公共区。
+    crate::episodes::unix_secs_to_iso(crate::episodes::value_unix_secs(raw))
 }
 
 fn unix_to_i64(raw: &Value) -> Option<i64> {
-    match raw {
-        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
-        Value::String(s) => s.trim().parse::<i64>().ok(),
-        _ => None,
-    }
+    crate::episodes::value_unix_secs(raw)
 }
 
 /// 复读句归一化：trim + 折叠空白 + 全小写。CASE：规则层不做标点剥离
@@ -491,7 +477,10 @@ mod tests {
         comment_to_episode, danmaku_to_episode, ingest_room_corpus,
     };
 
-    fn store_with_corpus(sessions: &[((i64, i64), Vec<(i64, &str, &str)>)]) -> Store {
+    /// 场次日程表形：((开播秒, 下播秒), [(发话秒, 文本, 发话人)])。
+    type SessionFixture<'a> = ((i64, i64), Vec<(i64, &'a str, &'a str)>);
+
+    fn store_with_corpus(sessions: &[SessionFixture<'_>]) -> Store {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("graph.sqlite3");
         let store = Store::open(&path).expect("store opens");

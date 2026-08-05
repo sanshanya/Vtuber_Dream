@@ -1115,7 +1115,8 @@ fn audience_situations_highlights_calendar_unknowns() {
 #[test]
 fn substantive_content_fields_not_misjudged_empty() {
     // 分设三例：任一文本键单独撑起实质即可过闸（不加 entities/states/mentions）
-    let cases: Vec<(&str, Box<dyn Fn(&mut ViewerPerceptionSubmission)>)> = vec![
+    type Mutator = Box<dyn Fn(&mut ViewerPerceptionSubmission)>;
+    let cases: Vec<(&str, Mutator)> = vec![
         (
             "content_preferences",
             Box::new(|s: &mut ViewerPerceptionSubmission| {

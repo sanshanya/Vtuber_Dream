@@ -41,21 +41,14 @@ pub const EVENT_ROOM_COMMENT: &str = "room_comment";
 /// unix 秒 → ISO 8661 字符串（与 now_iso 同款六位微秒 + +00:00 尾）。
 /// 不可解析（0/负）一律空串——published_at 空值是非致命形态（build.rs 同款）。
 fn unix_to_iso(raw: &Value) -> String {
-    let secs = match raw {
-        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
-        Value::String(s) => s.trim().parse::<i64>().ok(),
-        _ => None,
-    };
-    match secs {
-        Some(secs) if secs > 0 => match chrono::DateTime::from_timestamp(secs, 0) {
-            Some(dt) => format!("{}.{:06}+00:00", dt.format("%Y-%m-%dT%H:%M:%S"), 0),
-            None => String::new(),
-        },
-        _ => String::new(),
-    }
+    // B12：解析+格式化沉入 episodes 公共区（value_unix_secs+unix_secs_to_iso）。
+    super::unix_secs_to_iso(super::value_unix_secs(raw))
 }
 
 /// version_doc → content_version（**与 build.rs 的公式逐字节一致**，键序固定）。
+/// 8 参数全是构建件（身份三元组 + 双时间戳 + fields/facts），私有两调用点，
+/// 压成 struct 只是为 lint 硬凑层（AGENTS.md §4）。
+#[allow(clippy::too_many_arguments)]
 fn finalize_episode(
     viewer_id: &str,
     stable: &str,

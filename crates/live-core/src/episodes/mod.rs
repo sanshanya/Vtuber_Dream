@@ -47,6 +47,29 @@ pub fn now_iso() -> String {
 /// 注意：本函数是纯 `str(x)` 语义——数字 0 仍得 "0"（Python `str(0)`）。
 /// 需要 `or` truthiness（0/0.0 落槽）的调用点请走 collector 的 `or_chain`/层本身，
 /// 不要在本函数里改语义（hash_parts 的 `str(p or "")` 依赖此层的空串兜底）。
+/// unix 秒（Number 许 int/float、String 许十进制串；不可解析 → None）。
+/// 轮2-R1-B12：recap.rs 与 room_corpus.rs 的同名解析收敛到此。0/负值由调用方按
+/// 「时间戳必须 > 0」的聚合口径另行过滤。
+pub fn value_unix_secs(value: &Value) -> Option<i64> {
+    match value {
+        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f as i64)),
+        Value::String(s) => s.trim().parse::<i64>().ok(),
+        _ => None,
+    }
+}
+
+/// unix 秒 → ISO 字符串（六位微秒 + +00:00 尾，与 now_iso 同款形态）；
+/// 0/负值一律空串——published_at 空值是非致命形态。
+pub fn unix_secs_to_iso(secs: Option<i64>) -> String {
+    match secs {
+        Some(secs) if secs > 0 => match chrono::DateTime::from_timestamp(secs, 0) {
+            Some(dt) => format!("{}.{:06}+00:00", dt.format("%Y-%m-%dT%H:%M:%S"), 0),
+            None => String::new(),
+        },
+        _ => String::new(),
+    }
+}
+
 pub fn py_str(value: &Value) -> String {
     match value {
         Value::Null => String::new(),

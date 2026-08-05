@@ -3,6 +3,7 @@ import { useState } from "react";
 
 import { api, type ViewerRow } from "../api";
 import { AiStaleBadge } from "../components/AiStaleBadge";
+import { Avatar } from "../components/Avatar";
 import { EmptyPoolHint } from "../components/EmptyPoolHint";
 import { KindRunButton } from "../components/KindRunButton";
 import { useRunTracker } from "../components/RunTracker";
@@ -108,20 +109,7 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
                   旧版站的观众签名是「头像+名字」，有头像是人能认出人的前提）。 */}
               <td>
                 <span className="viewer-cell">
-                  {row.face ? (
-                    // hdslb 图片防盗链：必须 referrerPolicy="no-referrer"。
-                    <img
-                      src={row.face}
-                      alt=""
-                      className="avatar avatar-sm"
-                      referrerPolicy="no-referrer"
-                      loading="lazy"
-                    />
-                  ) : (
-                    <span className="avatar avatar-sm avatar-fallback">
-                      {(row.name ?? "?").slice(0, 1)}
-                    </span>
-                  )}
+                  <Avatar face={row.face} name={row.name} size="sm" />
                   <a href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>{row.name ?? "—"}</a>
                 </span>
               </td>
