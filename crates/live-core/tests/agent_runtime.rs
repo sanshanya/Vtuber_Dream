@@ -8,7 +8,8 @@
 
 use live_core::agent::probe::{ProbeContext, probe_spec};
 use live_core::agent::runtime::{
-    AgentRuntime, AttemptPlan, DRAFT_TRUNCATE_CHARS, Trace, run_toolcall_agent, truncate_chars,
+    AgentRuntime, AttemptPlan, DRAFT_TRUNCATE_CHARS, FoldConfig, Trace, run_toolcall_agent,
+    truncate_chars,
 };
 use live_core::models::ProbeResult;
 use serde_json::{Value, json};
@@ -1002,6 +1003,7 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
             enabled: false,
             effort: "high".to_string(),
             replay_content: true,
+            replay_window: None,
         },
         agent: live_core::config::AgentRuntimeConfig {
             max_turns: 4,
@@ -1012,6 +1014,9 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
             viewer_token_budget: 200_000,
             max_parallel_viewers: 4,
             max_llm_rpm: 0,
+            fold_trigger_tokens: 0,
+            fold_keep_tail_turns: 2,
+            fold_entry_chars: 480,
         },
         search_results_per_query: 5,
         rules: vec![],
@@ -1099,4 +1104,226 @@ async fn tool_handler_with_blocking_http_survives_async_context() {
         entries[0].starts_with("executed:error:"),
         "不可达端点应回错误形态而非 panic：{entries:?}"
     );
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// P2-γ：reasoning 回放窗口化 + 阈值折叠中间轮
+// ─────────────────────────────────────────────────────────────────────────
+
+#[tokio::test(flavor = "multi_thread")]
+async fn replay_window_blanks_older_reasoning_keeps_latest_verbatim() {
+    let server = MockServer::start().await;
+    mount_turn(
+        &server,
+        messages_len(2),
+        assistant_tool_call("call-1", "get_probe_seed", json!({}), Some("第一轮思考")),
+    )
+    .await;
+    mount_turn(
+        &server,
+        messages_len(4),
+        assistant_tool_call(
+            "call-2",
+            "multiply_probe_seed",
+            json!({"seed": 7, "factor": 2}),
+            Some("第二轮思考"),
+        ),
+    )
+    .await;
+    mount_turn(
+        &server,
+        |body: &Value| messages_len(6)(body) && replayed_reasoning("第二轮思考")(body),
+        assistant_tool_call(
+            "call-3",
+            "multiply_probe_seed",
+            json!({"seed": 14, "factor": 3}),
+            Some("第三轮思考"),
+        ),
+    )
+    .await;
+    mount_turn(
+        &server,
+        messages_len(8),
+        assistant_tool_call(
+            "call-4",
+            "submit_probe_result",
+            json!({"submission": {"a": 7, "b": 14, "total": 21, "note": "终局"}}),
+            None,
+        ),
+    )
+    .await;
+
+    // window=1：只保留末条带 tool_calls 的 assistant 的 reasoning 原文。
+    let runtime = test_runtime(&server).with_replay_window(1);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("run should be accepted");
+
+    assert_eq!(outcome.final_output, "accepted");
+    let requests = server.received_requests().await.expect("captured");
+    assert_eq!(requests.len(), 4);
+
+    // 第 3 次请求：history = system,user,a1,t1,a2,t2 → a1 置空、a2 保留原文。
+    // 「字段必现」（空串）是 dsv4 执法矩阵下逐轮回放的安全形状。
+    let third: Value = serde_json::from_slice(&requests[2].body).unwrap();
+    let msgs = third["messages"].as_array().expect("messages array");
+    assert_eq!(msgs[2]["reasoning_content"], "", "老轮靠空串留在字段位");
+    assert_eq!(msgs[4]["reasoning_content"], "第二轮思考", "末轮保留原文");
+
+    // 第 4 次请求：a1、a2 都置空，a3 保留原文。
+    let fourth: Value = serde_json::from_slice(&requests[3].body).unwrap();
+    let msgs = fourth["messages"].as_array().expect("messages array");
+    assert_eq!(msgs[2]["reasoning_content"], "");
+    assert_eq!(msgs[4]["reasoning_content"], "");
+    assert_eq!(msgs[6]["reasoning_content"], "第三轮思考");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fold_history_triggers_on_threshold_and_preserves_adjacency() {
+    let server = MockServer::start().await;
+    let pad = "x".repeat(1200);
+    // 折叠改变历史消息数 → mount 按「末条 tool 消息 id」路由，不按计数。
+    let last_tool_id = |expected: &'static str| {
+        move |body: &Value| {
+            body["messages"]
+                .as_array()
+                .and_then(|m| m.iter().rev().find(|m| m["role"] == "tool"))
+                .is_some_and(|t| t["tool_call_id"] == expected)
+        }
+    };
+    mount_turn(
+        &server,
+        messages_len(2),
+        assistant_tool_call(
+            "call-1",
+            "get_probe_seed",
+            json!({"pad": pad}),
+            Some("round1"),
+        ),
+    )
+    .await;
+    for (n, (id, seed, factor)) in [
+        ("call-2", 7, 2),
+        ("call-3", 14, 3),
+        ("call-4", 7, 2),
+        ("call-5", 7, 2),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let prev = format!("call-{}", n + 1);
+        let prev: &'static str = Box::leak(prev.into_boxed_str());
+        let args = if n < 2 {
+            json!({"seed": seed, "factor": factor, "pad": pad})
+        } else {
+            json!({"seed": seed, "factor": factor})
+        };
+        mount_turn(
+            &server,
+            last_tool_id(prev),
+            assistant_tool_call(id, "multiply_probe_seed", args, Some("chain")),
+        )
+        .await;
+    }
+    mount_turn(
+        &server,
+        last_tool_id("call-5"),
+        assistant_tool_call(
+            "call-6",
+            "submit_probe_result",
+            json!({"submission": {"a": 7, "b": 14, "total": 21, "note": "终局"}}),
+            None,
+        ),
+    )
+    .await;
+
+    let runtime = test_runtime(&server).with_fold(FoldConfig {
+        trigger_tokens: 450,
+        keep_tail_turns: 2,
+        entry_chars: 480,
+    });
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let tmp = tempfile::tempdir().unwrap();
+    let mut trace = Trace::new(Some(tmp.path().join("trace.jsonl")));
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("run should be accepted");
+    assert_eq!(outcome.final_output, "accepted");
+
+    let requests = server.received_requests().await.expect("captured");
+    // 邻接不变量：每个 tool 消息都必须在本请求内有携带同名 tool_call_id 的 assistant 在前。
+    for (idx, req) in requests.iter().enumerate() {
+        let body: Value = serde_json::from_slice(&req.body).unwrap();
+        let msgs = body["messages"].as_array().unwrap();
+        let mut known: std::collections::HashSet<String> = std::collections::HashSet::new();
+        for m in msgs {
+            if let Some(calls) = m["tool_calls"].as_array() {
+                for c in calls {
+                    known.insert(c["id"].as_str().unwrap().to_string());
+                }
+            }
+            if m["role"] == "tool" {
+                assert!(
+                    known.contains(m["tool_call_id"].as_str().unwrap()),
+                    "请求 {idx} 存在悬空 tool 消息（tool_call_id 无前驱 assistant）"
+                );
+            }
+        }
+    }
+    // 折叠标记确实出现过，且内容指向被折叠轮的工具名。
+    let bodies: Vec<String> = requests
+        .iter()
+        .map(|r| String::from_utf8(r.body.clone()).unwrap())
+        .collect();
+    let marker = bodies
+        .iter()
+        .any(|b| b.contains("[历史折叠") && b.contains("multiply_probe_seed"));
+    assert!(marker, "折叠标记与工具条目应出现在压缩后的请求里");
+
+    let trace_text = std::fs::read_to_string(tmp.path().join("trace.jsonl")).unwrap();
+    assert!(trace_text.contains("fold_history"), "trace 应记折叠事件");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn fold_history_inactive_below_threshold() {
+    let server = MockServer::start().await;
+    mount_turn(
+        &server,
+        messages_len(2),
+        assistant_tool_call("call-1", "get_probe_seed", json!({}), Some("r")),
+    )
+    .await;
+    mount_turn(
+        &server,
+        messages_len(4),
+        assistant_tool_call(
+            "call-2",
+            "submit_probe_result",
+            json!({"submission": {"a": 7, "b": 14, "total": 21, "note": "ok"}}),
+            None,
+        ),
+    )
+    .await;
+    let runtime = test_runtime(&server).with_fold(FoldConfig {
+        trigger_tokens: 1_000_000,
+        keep_tail_turns: 2,
+        entry_chars: 480,
+    });
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let tmp = tempfile::tempdir().unwrap();
+    let mut trace = Trace::new(Some(tmp.path().join("trace.jsonl")));
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("run should be accepted");
+    assert_eq!(outcome.final_output, "accepted");
+    let trace_text = std::fs::read_to_string(tmp.path().join("trace.jsonl")).unwrap();
+    assert!(!trace_text.contains("fold_history"), "未达阈值不得折叠");
 }

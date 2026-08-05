@@ -76,6 +76,7 @@ fn test_config(root: &Path) -> Config {
                 enabled: false,
                 effort: "high".into(),
                 replay_content: true,
+                replay_window: None,
             },
             agent: AgentRuntimeConfig {
                 max_turns: 4,
@@ -86,6 +87,9 @@ fn test_config(root: &Path) -> Config {
                 viewer_token_budget: 200_000,
                 max_parallel_viewers: 4,
                 max_llm_rpm: 0,
+                fold_trigger_tokens: 0,
+                fold_keep_tail_turns: 2,
+                fold_entry_chars: 480,
             },
             search_results_per_query: 20,
             rules: vec!["取向优先新内容与互动攻略".into()],

@@ -101,6 +101,10 @@ pub struct ReasoningConfig {
     pub enabled: bool,
     pub effort: String,
     pub replay_content: bool,
+    /// P2-γ-1：reasoning 回放窗口。None=不限窗（现行逐字回放）；Some(k)=仅末 k 条带 tool_calls
+    /// 的 assistant 保留原文，更老轮保留字段但置空串（dsv4 「字段必现」安全形状）。
+    /// 仅当 replay_content=true 时有效（false 时历史已被剥成 None，无物可窗）。
+    pub replay_window: Option<u32>,
 }
 
 #[derive(Debug, Clone)]
@@ -120,6 +124,27 @@ pub struct AgentRuntimeConfig {
     /// 0 = 关闭（默认，S0 实测零 429 故默认既不限速也不改变既有行为）；>0 时
     /// 每个 LLM 请求前 acquire 一个许可，许可即请求 1:1。
     pub max_llm_rpm: i64,
+    /// P2-γ-2：中间轮折叠阈值（估算 tokens，字节秤/4）。0=关闭（默认）。
+    pub fold_trigger_tokens: u32,
+    /// P2-γ-2：折叠后保留末尾完整轮数。默认 2。
+    pub fold_keep_tail_turns: usize,
+    /// P2-γ-2：折叠摘要单轮条目字符预算。默认 480。
+    pub fold_entry_chars: usize,
+}
+
+impl AgentRuntimeConfig {
+    /// 折叠配置仅在 trigger>0 时启用（默认关）。
+    pub fn fold_config(&self) -> Option<crate::agent::runtime::FoldConfig> {
+        if self.fold_trigger_tokens == 0 {
+            None
+        } else {
+            Some(crate::agent::runtime::FoldConfig {
+                trigger_tokens: self.fold_trigger_tokens,
+                keep_tail_turns: self.fold_keep_tail_turns,
+                entry_chars: self.fold_entry_chars,
+            })
+        }
+    }
 }
 
 pub const ALLOWED_APIS: [&str; 2] = ["chat_completions", "responses"];
@@ -220,6 +245,19 @@ fn boolean(mapping: &Value, key: &str, default: bool) -> Result<bool, ConfigErro
         None => Ok(default),
         Some(Value::Bool(b)) => Ok(*b),
         Some(_) => Err(ConfigError::new(format!("'{key}' must be true or false"))),
+    }
+}
+
+/// 可选整型：缺键→None；存在但无法解析→错误；用于 P2-γ 的 reasoning.replay_window。
+fn optional_integer(mapping: &Value, key: &str) -> Result<Option<i64>, ConfigError> {
+    match mapping.get(key) {
+        None => Ok(None),
+        Some(Value::Number(n)) => n
+            .as_i64()
+            .or_else(|| n.as_f64().map(|f| f as i64))
+            .ok_or_else(|| ConfigError::new(format!("'{key}' must be an integer")))
+            .map(Some),
+        Some(_) => Err(ConfigError::new(format!("'{key}' must be an integer"))),
     }
 }
 
@@ -488,6 +526,8 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 enabled: boolean(reasoning, "enabled", true)?,
                 effort,
                 replay_content: boolean(reasoning, "replay_content", true)?,
+                replay_window: optional_integer(reasoning, "replay_window")?
+                    .map(|v| v.clamp(1, u32::MAX as i64) as u32),
             },
             agent: AgentRuntimeConfig {
                 max_turns: integer(runtime, "max_turns", 2, Some(64))?,
@@ -497,6 +537,12 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 retry_backoff_seconds: number(runtime, "retry_backoff_seconds", 0.0, Some(3.0))?,
                 viewer_token_budget: integer(runtime, "viewer_token_budget", 0, Some(200_000))?
                     .clamp(0, u32::MAX as i64) as u32,
+                fold_trigger_tokens: integer(runtime, "fold_trigger_tokens", 0, Some(0))?
+                    .clamp(0, u32::MAX as i64) as u32,
+                fold_keep_tail_turns: integer(runtime, "fold_keep_tail_turns", 0, Some(2))?
+                    .clamp(1, 64) as usize,
+                fold_entry_chars: integer(runtime, "fold_entry_chars", 0, Some(480))?
+                    .clamp(32, 8192) as usize,
                 max_parallel_viewers: integer(runtime, "max_parallel_viewers", 1, Some(4))?,
                 max_llm_rpm: integer(runtime, "max_llm_rpm", 0, Some(0))?,
             },

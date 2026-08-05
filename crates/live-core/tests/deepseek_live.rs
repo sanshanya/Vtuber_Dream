@@ -28,6 +28,7 @@ fn ai_config(api_key: &str) -> AiConfig {
             enabled: true,
             effort: String::new(),
             replay_content: true,
+            replay_window: None,
         },
         agent: AgentRuntimeConfig {
             max_turns: 8,
@@ -38,6 +39,9 @@ fn ai_config(api_key: &str) -> AiConfig {
             viewer_token_budget: 200_000,
             max_parallel_viewers: 4,
             max_llm_rpm: 0,
+            fold_trigger_tokens: 0,
+            fold_keep_tail_turns: 2,
+            fold_entry_chars: 480,
         },
         search_results_per_query: 20,
         rules: vec![],
