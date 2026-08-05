@@ -114,7 +114,13 @@ pub fn maybe_fold(
         return; // 末区已是最短可折叠形态，无可折
     }
     // 保留末 keep_tail_turns 个轮：切除区 = [first_assistant, tail_start)
-    let tail_start = turn_starts[total_turns - fold.keep_tail_turns];
+    // keep_tail_turns=0（config 尺度为 0 的合法值）=「全折到只剩头」——
+    // tail_start 就是 history 尾端（turn_starts 无此下标，绝不直查）。
+    let tail_start = if fold.keep_tail_turns == 0 {
+        history.len()
+    } else {
+        turn_starts[total_turns - fold.keep_tail_turns]
+    };
     let middle: Vec<OaiMessage> = history.drain(first_assistant..tail_start).collect();
 
     // 生成摘要：每轮 1-2 条记录，程序摘取：assistant.tool_call name + args 截段 + 对应 tool result 头段。

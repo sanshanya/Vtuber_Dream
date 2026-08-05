@@ -172,6 +172,30 @@ async fn put_with_only_blank_values_is_unchanged_noop() {
     assert_eq!(std::fs::read_to_string(&fx.config_path).unwrap(), original);
 }
 
+/// 轮2-R1-A③ 钉：拼错键+空串不得静默绕过白名单闸——
+/// 修前 `(_, true) => {}` 对任意键吞空串；「空串=保持现值」只对白名单键有语义。
+#[tokio::test(flavor = "multi_thread")]
+async fn put_with_unknown_key_and_blank_value_is_422_not_noop() {
+    let fx = fixture(None);
+    let original = std::fs::read_to_string(&fx.config_path).unwrap();
+    let (status, body) = oneshot(
+        &fx.app,
+        "PUT",
+        "/api/config",
+        Some(json!({"evil": {"new_key": ""}})),
+    )
+    .await;
+    assert_eq!(status, 422, "错键+空串不得吞: {body}");
+    assert!(
+        body["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("evil.new_key"),
+        "{body}"
+    );
+    assert_eq!(std::fs::read_to_string(&fx.config_path).unwrap(), original);
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn missing_dist_returns_build_guide_not_silence() {
     let fx = fixture(None);

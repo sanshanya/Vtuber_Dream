@@ -1108,3 +1108,57 @@ fn audience_situations_highlights_calendar_unknowns() {
         "content_calendar[0] references unknown viewers: ['v9']"
     ));
 }
+
+/// 轮2-R1-A⑦：只有内容偏好/近期变化/深挖目标的实质提交不得被误判空——
+/// 修前守卫只认 entities+interest_states+hypotheses+cautions 四件套；
+/// content_preferences/recent_changes/enrichment_targets 三键的合法内容零计起得到空拒。
+#[test]
+fn substantive_content_fields_not_misjudged_empty() {
+    // 分设三例：任一文本键单独撑起实质即可过闸（不加 entities/states/mentions）
+    let cases: Vec<(&str, Box<dyn Fn(&mut ViewerPerceptionSubmission)>)> = vec![
+        (
+            "content_preferences",
+            Box::new(|s: &mut ViewerPerceptionSubmission| {
+                s.content_preferences = vec!["喜欢开场唱歌".to_string()];
+            }),
+        ),
+        (
+            "recent_changes",
+            Box::new(|s: &mut ViewerPerceptionSubmission| {
+                s.recent_changes = vec!["昨晚切了播间风格".to_string()];
+            }),
+        ),
+        (
+            "enrichment_targets",
+            Box::new(|s: &mut ViewerPerceptionSubmission| {
+                s.enrichment_targets = vec!["想补 dynamic_note".to_string()];
+            }),
+        ),
+    ];
+    for (name, mutate) in &cases {
+        let mut submission = valid_viewer();
+        submission.entities = vec![];
+        submission.interest_states = vec![];
+        submission.mentions = vec![];
+        submission.hypotheses = vec![];
+        submission.cautions = vec![];
+        mutate(&mut submission);
+        let errors = check_viewer(&submission);
+        assert!(
+            !has(&errors, "empty entities and interest_states"),
+            "{name} 是实质内容，不得再被空拒: {errors:?}"
+        );
+    }
+    // 对照：全空即真拒——不放松精度
+    let mut empty = valid_viewer();
+    empty.entities = vec![];
+    empty.interest_states = vec![];
+    empty.mentions = vec![];
+    empty.hypotheses = vec![];
+    empty.cautions = vec![];
+    let errors = check_viewer(&empty);
+    assert!(
+        has(&errors, "empty entities and interest_states"),
+        "全空必须照拒: {errors:?}"
+    );
+}

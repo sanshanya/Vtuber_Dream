@@ -1,7 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import cytoscape from "cytoscape";
 import type * as cytoscapeTypes from "cytoscape";
-import { Fragment, useEffect, useRef, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 
 // @types/cytoscape 是 export= 形如：值走默认导入（可调用），类型走命名空间导入。
 // 注：包内 `type Stylesheet = StylesheetStyle | StylesheetCSS` 别名经 namespace
@@ -297,9 +297,14 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedData, setSelectedData] = useState<unknown>(null);
 
-  const elements: unknown[] = markStreamer(
-    Array.isArray(graph.data?.elements) ? graph.data.elements : [],
-    rooms.data?.[0]?.streamer_uid ?? "",
+  // 轮2-R1-A④：useMemo 把 elements 钉在稳定内容依赖上——裸 markStreamer 每次
+  // render 返新数组引用，下游 useEffect([elements]) 对纯内容变化照触发，
+  // 导致每次点击整 cytoscape.destroy()+重建+清选中（「点节点看详情」曾因此失效）。
+  const streamerUid = rooms.data?.[0]?.streamer_uid ?? "";
+  const rawElements = Array.isArray(graph.data?.elements) ? graph.data.elements : [];
+  const elements: unknown[] = useMemo(
+    () => markStreamer(rawElements, streamerUid),
+    [rawElements, streamerUid],
   );
 
   useEffect(() => {

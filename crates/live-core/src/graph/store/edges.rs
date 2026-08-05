@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::episodes::{hash_parts, json_canon};
 
-use super::{ActiveEdge, Result, Store, merge_props};
+use super::{ActiveEdge, Result, Store, StoreError, merge_props};
 
 impl Store {
     // ----------------------------------------------------------------- edges
@@ -65,8 +65,13 @@ impl Store {
         if let Some((_, _, props_json, evidence_json, old_conf)) = &row {
             // 先移动 merged_props 所有权，再在本作用域重建。
             merged_props = merge_props(merged_props, props_json);
+            // 轮2-R1-A⑤：存量 evidence 解析失败必须响亮报错——修前 unwrap_or_default()
+            // 会把旧证据坍缩为空向量并由本函数 UPDATE 物理覆写，既往证据不可逆丢失：
+            // 图的第一原则就是事件溯源不可伪造。
             let mut old_evidence: Vec<String> =
-                serde_json::from_str(evidence_json).unwrap_or_default();
+                serde_json::from_str(evidence_json).map_err(|err| {
+                    StoreError::Repo(format!("存量边 evidence_json 解析失败（拒写防护）：{err}"))
+                })?;
             old_evidence.extend(merged_evidence);
             merged_evidence = old_evidence;
             merged_confidence = match (old_conf, merged_confidence) {

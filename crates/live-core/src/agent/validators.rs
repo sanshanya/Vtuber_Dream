@@ -122,7 +122,11 @@ fn validate_leads(
                         errors.push(format!("{label} locator must be a BV id for type video"));
                     }
                 }
-                _ => unreachable!(),
+                // 轮2-R1-A⑦：真源 LEAD_TYPES 若长第 5 型，白名单放行但本臂落
+                // unreachable!() 会在生产 panic——校验层只许拒收不许崩溃。
+                other => errors.push(format!(
+                    "{label} locator has no validation rule for type {other}（新类型须先补 locator 规则）"
+                )),
             }
         }
         for (field, value) in [
@@ -469,10 +473,15 @@ pub fn validate_viewer_submission(
 
     // 修复 8：占位/空提交拒绝。
     check_summary("profile_summary", &submission.profile_summary, &mut errors);
+    // 轮2-R1-A⑦：内容偏好/近期变化/深挖目标是真实承载观众观点的栏——只有它们
+    // 单独的合法提交不得被判空（守卫口的空判定与 AI 实质判定必须同一边界）。
     if submission.entities.is_empty()
         && submission.interest_states.is_empty()
         && !has_substantive(&submission.hypotheses)
         && !has_substantive(&submission.cautions)
+        && !has_substantive(&submission.content_preferences)
+        && !has_substantive(&submission.recent_changes)
+        && !has_substantive(&submission.enrichment_targets)
     {
         errors.push(
             "viewer submission has empty entities and interest_states; provide hypotheses or cautions"

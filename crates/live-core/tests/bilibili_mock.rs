@@ -644,3 +644,42 @@ async fn live_record_danmaku_rows_tag_shard_index() {
         .collect();
     assert_eq!(tags, [0, 0, 1], "每片行必须打贴本片片号: {messages:?}");
 }
+
+/// 轮2-R1-A② 红钉：满页全垃圾（uid 全空）时必须按「本轮零新增」收杆——
+/// 修前判定只看未过滤 listing.len()：满页恒不满足「页不满」→ page 无限自增死循环。
+#[tokio::test(flavor = "multi_thread")]
+async fn guard_members_full_pages_of_junk_terminate_on_zero_growth() {
+    let server = MockServer::start().await;
+    // 满页但全 uid=0（normalize 落 none）：修前「页不满」永不成立 → page 无限
+    // 自增（15 秒超时兜底判死循环）。修后：本轮零新增即收杆 → 恰好 1 请求。
+    Mock::given(method("GET"))
+        .and(path("/xlive/app-room/v2/guardTab/topListNew"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {
+                "list": (0..20).map(|_| json!({
+                    "uid": 0, "name": "脏行", "medal": null, "guard_level": 1
+                })).collect::<Vec<_>>(),
+                "top3": []
+            },
+        })))
+        .mount(&server)
+        .await;
+    let address = server.uri();
+    let work = tokio::task::spawn_blocking(move || {
+        client(&address).unwrap().guard_members("983", "128", 40)
+    });
+    let members = tokio::time::timeout(std::time::Duration::from_secs(15), work)
+        .await
+        .expect("guard_members 15 秒内必须有界返回（修前死循环在这里超时）")
+        .expect("task join")
+        .expect("guard_members");
+    assert!(members.is_empty(), "全垃圾 → 零成员: {members:?}");
+    let received = server.received_requests().await.unwrap_or_default();
+    assert_eq!(
+        received.len(),
+        1,
+        "零新增即收杆：恰好 1 请求: {} requests",
+        received.len()
+    );
+}

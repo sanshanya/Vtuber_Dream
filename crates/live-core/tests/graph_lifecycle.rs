@@ -389,3 +389,70 @@ fn demo_python_order_drops_only_unlisted_keys() {
     assert!(!viewer_keys.contains(&"leads".to_string()));
     assert_eq!(viewer_keys.len(), 13, "Python 字面 13 键");
 }
+
+// ---------------------------------------------------------------------------
+// 轮2-R1-A⑤：存量 evidence_json 损坏时 upsert_edge 必须报错而非静默清空——
+// 修前 `from_str(...).unwrap_or_default()` 会把旧证据坍缩为空向量并物理覆写，
+// 既往证据不可逆丢失（图层的唯一事件溯源裂纹）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn upsert_edge_with_corrupt_stored_evidence_errors_instead_of_wiping() {
+    let store = mem_store();
+    store.begin_run_fixed("run:a", FIXED_NOW, "m").unwrap();
+    store
+        .upsert_node("viewer:v", "Viewer", "v", &json!({}), "platform_fact", None)
+        .unwrap();
+    store
+        .upsert_node("entity:game:e", "Entity", "e", &json!({}), "ai", None)
+        .unwrap();
+    let edge_id = store
+        .upsert_edge(
+            "viewer:v",
+            "RELATED_TO",
+            "entity:game:e",
+            &json!({}),
+            "ai_semantic",
+            Some(0.5),
+            &["m1".into()],
+            "run:a",
+            Some("v"),
+        )
+        .unwrap();
+    // 手损：模拟迁移/手改库造成的非法 evidence_json
+    store
+        .conn
+        .execute(
+            "UPDATE edges SET evidence_json='{{{broken' WHERE edge_id=?",
+            rusqlite::params![edge_id],
+        )
+        .unwrap();
+    store.begin_run_fixed("run:b", FIXED_NOW, "m").unwrap();
+    let err = store
+        .upsert_edge(
+            "viewer:v",
+            "RELATED_TO",
+            "entity:game:e",
+            &json!({}),
+            "ai_semantic",
+            Some(0.9),
+            &["m2".into()],
+            "run:b",
+            Some("v"),
+        )
+        .expect_err("损坏证据必须响亮报错，不得静默清空覆写");
+    assert!(
+        err.to_string().contains("evidence") || err.to_string().contains("证据"),
+        "{err}"
+    );
+    // 原行零伤：错误路径不得半写
+    let stored: String = store
+        .conn
+        .query_row(
+            "SELECT evidence_json FROM edges WHERE edge_id=?",
+            rusqlite::params![edge_id],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored, "{{{broken", "原证据必须原样无损留存");
+}

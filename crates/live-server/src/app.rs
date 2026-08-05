@@ -370,8 +370,12 @@ async fn config_put(
             }
             let value_str = value.as_str().unwrap_or_default().to_string();
             match (writable, value_str.trim().is_empty()) {
-                (_, true) => {} // 空串 = 保持现值（D6）
+                (Some(_), true) => {} // 空串 = 保持现值（D6）——语义只对白名单键生效
+                // 轮2-R1-A③：错键+空串不得静默绕过 422 闸——
+                // 拼写错误必须被点名，不得借「空串保持」滑走。
+                (None, _) => rejected.push(format!("{section}.{key} 不在可写白名单")),
                 (Some((s, k)), false) => {
+                    // (Some(_), true) 已被上一臂吃掉——本臂只剩非空值进入重写。
                     if value_str.chars().count() > MAX_PUT_VALUE_CHARS {
                         return Err(fail_box(
                             StatusCode::UNPROCESSABLE_ENTITY,
@@ -380,7 +384,6 @@ async fn config_put(
                     }
                     patch.push(((s, k), value_str));
                 }
-                (None, false) => rejected.push(format!("{section}.{key} 不在可写白名单")),
             }
         }
     }

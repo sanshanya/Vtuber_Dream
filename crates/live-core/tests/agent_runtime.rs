@@ -1303,3 +1303,60 @@ async fn fold_history_inactive_below_threshold() {
     let trace_text = std::fs::read_to_string(tmp.path().join("trace.jsonl")).unwrap();
     assert!(!trace_text.contains("fold_history"), "未达阈值不得折叠");
 }
+
+/// 轮2-R1 修复钉：keep_tail_turns=0 以前会越界 panic——
+/// `turn_starts[total_turns - 0]` 对长度 total_turns 的向量下标越界。
+/// 修后契约：keep=0 = 「全折到只剩头」：头（system+首条 user）保留，
+/// 全部 assistant/tool 中间轮进摘要，末区为空。绝不 panic。
+#[test]
+fn maybe_fold_keep_tail_turns_zero_folds_all_without_panic() {
+    use live_core::agent::history::{FoldConfig, maybe_fold};
+    use live_core::agent::runtime::{OaiMessage, Trace};
+
+    let fold = FoldConfig {
+        trigger_tokens: 1, // 必触发
+        keep_tail_turns: 0,
+        entry_chars: 480,
+    };
+    let mut history = vec![
+        OaiMessage::system("sys".into()),
+        OaiMessage::user("prompt".into()),
+        OaiMessage {
+            role: "assistant".into(),
+            content: None,
+            reasoning_content: None,
+            tool_calls: Some(vec![serde_json::from_value(
+                serde_json::json!({"id":"c1","type":"function","function":{"name":"t1","arguments":"{}"}}),
+            )
+            .unwrap()]),
+            tool_call_id: None,
+        },
+        OaiMessage::tool_result("c1".into(), &serde_json::json!({"ok": true})),
+        OaiMessage {
+            role: "assistant".into(),
+            content: None,
+            reasoning_content: None,
+            tool_calls: Some(vec![serde_json::from_value(
+                serde_json::json!({"id":"c2","type":"function","function":{"name":"t2","arguments":"{}"}}),
+            )
+            .unwrap()]),
+            tool_call_id: None,
+        },
+        OaiMessage::tool_result("c2".into(), &serde_json::json!({"ok": true})),
+    ];
+    let mut trace = Trace::none();
+    maybe_fold(Some(&fold), "nail", &mut history, &mut trace);
+    // 期望形态 = system + 首 user + 一条折叠摘要（user）——两轮全进摘要，零保留尾。
+    assert_eq!(
+        history.len(),
+        3,
+        "keep=0：只留 system+首条 user+摘要，其余全进摘要: len={}",
+        history.len()
+    );
+    assert_eq!(history[0].role, "system");
+    assert_eq!(history[1].role, "user");
+    let digest = history[2].content.as_deref().unwrap_or("");
+    assert!(digest.contains("[历史折叠 · P2-γ]"), "{digest}");
+    assert!(digest.contains("第 1..=2 轮"), "两轮全折的区段钉: {digest}");
+    assert!(digest.contains("t1") && digest.contains("t2"), "{digest}");
+}

@@ -220,6 +220,33 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
 
     let mut unknown: Vec<String> = Vec::new();
     if sessions.is_empty() {
+        // 轮2-R1-A⑥b：评论落了库但零场次窗可归 ≠ 「没碰到」——诚实分轨：
+        // 数字照实给、空场原因照实说，四数不成立也绝不判无罪释放。
+        if !comments.is_empty() {
+            let ccount = comments.len();
+            unknown.push(format!(
+                "{ccount} 条评论在库但没有可判定的场次窗（零回放弹幕/场次失窗）——四个数不成立"
+            ));
+            let headline = format!(
+                "采集落了 {ccount} 条评论，但零场次窗可归（无回放弹幕）——四个数不明；等一个有效场次再复盘。"
+            );
+            return Ok(RecapCard {
+                status: "empty".to_string(),
+                generated_at: now_iso(),
+                session: None,
+                headline,
+                speakers: 0,
+                returning: None,
+                peak: None,
+                repeated: None,
+                naming: None,
+                unknown,
+                empty_copy: Some(
+                    "有评论但零场次窗：这不是「没人来」，也不能判今晚有效——复盘等下一个有效场次。"
+                        .to_string(),
+                ),
+            });
+        }
         unknown.push("没有任何场次落进图里——采集没碰到新的回放弹幕/评论。".to_string());
         return Ok(RecapCard {
             status: "empty".to_string(),
@@ -294,6 +321,31 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         .filter(|sender| !sender.is_empty())
         .collect();
     let speakers = current_speakers.len() as i64;
+    if speakers > 0 {
+        // 轮2-R1-A⑥a：身份键双轨照实说——弹幕 sender_uid_crc 轨与评论 mid 轨：
+        // 键名源自细则字面，平台回放接口实测吐真 uid，同人跨轨靠字符串相等合流；
+        // 但若平台对弹幕脱敏回 CRC，同人两轨不相等 → 人数系统性 +1。
+        let danmaku_speakers: HashSet<&str> = current_lines
+            .iter()
+            .filter(|line| !line.is_comment)
+            .map(|line| line.sender.as_str())
+            .filter(|sender| !sender.is_empty())
+            .collect();
+        let comment_speakers: HashSet<&str> = current_lines
+            .iter()
+            .filter(|line| line.is_comment)
+            .map(|line| line.sender.as_str())
+            .filter(|sender| !sender.is_empty())
+            .collect();
+        if !danmaku_speakers.is_empty() && !comment_speakers.is_empty() {
+            unknown.push(format!(
+                "本场发言两条轨并出场：弹幕 {} 人 + 评论 {} 人（去重按字符串相等）——\
+                 若平台把弹幕 uid 脱敏成 CRC，同人两轨会误计多 1；人数按当前呈现。",
+                danmaku_speakers.len(),
+                comment_speakers.len()
+            ));
+        }
+    }
     if speakers == 0 {
         unknown.push("本场（最新场次窗）零发言。".to_string());
         return Ok(RecapCard {
@@ -604,5 +656,83 @@ mod tests {
         assert_eq!(card.speakers, 2, "A+M；窗外评论不计入");
         assert!(card.unknown.iter().any(|row| row.contains("窗外")));
         assert_eq!(card.peak.unwrap().count, 1, "评论不混进弹幕密度口径");
+    }
+}
+
+#[cfg(test)]
+mod round2_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::episodes::room_corpus::{
+        comment_to_episode, danmaku_to_episode, ingest_room_corpus,
+    };
+
+    fn fresh_store(tag: &str) -> Store {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join(format!("g-{tag}.sqlite3"))).unwrap();
+        store.begin_run_fixed("r", &now_iso(), "t").unwrap();
+        store
+    }
+
+    /// 轮2-R1-A⑥a：弹幕+评论同场都有人 → 未知行必须明示身份键双轨
+    /// （sender_uid 并集按平台 uid 认定；若弹幕被平台脱敏成 CRC，人数可能 -1 误计）。
+    #[test]
+    fn mixed_kinds_raise_identity_risk_row() {
+        let store = fresh_store("mix");
+        let dm = danmaku_to_episode(
+            "rid-m",
+            &json!(1000),
+            &json!(2000),
+            0,
+            0,
+            &json!({"text":"好","uid":"1001","shard_index":0,"ts":1100}),
+            "o",
+        );
+        let cm = comment_to_episode(
+            &json!({"rpid":"9","mid":"1001","message":"同上","ctime":"1200"}),
+            "o",
+        )
+        .unwrap();
+        ingest_room_corpus(&store, "r", &[dm, cm]).unwrap();
+        let card = compute_recap(&store).unwrap();
+        assert_eq!(card.speakers, 1, "同一平台 uid 并集（唯一人）");
+        assert!(
+            card.unknown
+                .iter()
+                .any(|row| row.contains("CRC") || row.contains("误计")),
+            "身份双轨必须明示入未知行: {:?}",
+            card.unknown
+        );
+    }
+
+    /// 轮2-R1-A⑥b：零弹幕但只有评论 —— 诚实形态：文案必须承认「落了 N 条评论、
+    /// 零场次窗可归」，不许说「没碰到」。
+    #[test]
+    fn comments_without_sessions_are_honestly_named_not_dropped() {
+        let store = fresh_store("conly");
+        let cm1 = comment_to_episode(
+            &json!({"rpid":"9","mid":"1001","message":"早","ctime":"1200"}),
+            "o",
+        )
+        .unwrap();
+        let cm2 = comment_to_episode(
+            &json!({"rpid":"10","mid":"1002","message":"晚","ctime":"1300"}),
+            "o",
+        )
+        .unwrap();
+        ingest_room_corpus(&store, "r", &[cm1, cm2]).unwrap();
+        let card = compute_recap(&store).unwrap();
+        assert_eq!(card.status, "empty");
+        assert!(
+            card.headline.contains("评论") && card.headline.contains("2"),
+            "诚实文案必须承认评论数字: {}",
+            card.headline
+        );
+        assert!(
+            !card.headline.contains("没碰到"),
+            "旧文案=谎话: {}",
+            card.headline
+        );
     }
 }
