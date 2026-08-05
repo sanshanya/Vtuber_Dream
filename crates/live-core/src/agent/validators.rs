@@ -384,7 +384,42 @@ pub fn validate_viewer_submission(
         }
     }
 
+    // 2026-08-05 生产事故（观众 77044362 graph_failed）：build.rs 要求同一 target
+    // 只有一条 INTERESTED_IN；两条 state 指向重复时必须**在工具层**拒收并指名冲突面。
+    // 去重分两级：①entity_ref 原样重复；②SAME_AS 跨解析撞车——本地实体映射到某
+    // 现有实体，另一 state 又直引同一个现有实体 id。
+    let same_as_targets: HashMap<String, String> = submission
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity.resolution == "SAME_AS"
+                && entity
+                    .existing_entity_id
+                    .as_deref()
+                    .is_some_and(|id| !id.is_empty())
+        })
+        .map(|entity| {
+            (
+                entity.local_id.clone(),
+                entity.existing_entity_id.clone().unwrap_or_default(),
+            )
+        })
+        .collect();
+    let mut seen_targets: Vec<String> = Vec::new();
     for state in &submission.interest_states {
+        let stripped = state.entity_ref.strip_prefix("entity:").unwrap_or("");
+        let target_key = same_as_targets
+            .get(stripped)
+            .cloned()
+            .unwrap_or_else(|| state.entity_ref.clone());
+        if seen_targets.contains(&target_key) {
+            errors.push(format!(
+                "interest states have duplicate target: {} (resolve to the same entity; merge the states into one)",
+                state.entity_ref
+            ));
+        } else {
+            seen_targets.push(target_key);
+        }
         if !known_ref(&state.entity_ref, true) {
             errors.push(format!(
                 "interest state has unknown entity_ref: {}{}",

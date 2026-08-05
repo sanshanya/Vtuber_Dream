@@ -147,6 +147,52 @@ fn viewer_id_mismatch_and_mention_dupes() {
     assert!(has(&check_viewer(&sub), "duplicate mention_id: m1"));
 }
 
+/// 2026-08-05 生产事故复现（观众 77044362 graph_failed，467 秒感知 + 48 万 token 烧毁）：
+/// `duplicate interest_state target` 曾穿透到 graph/build.rs 才判死。
+/// 工具层必须先行拒收，且拒收文案指名冲突 ref，让模型合并/弃一后自纠。
+#[test]
+fn duplicate_interest_state_target_rejected_at_tool_layer() {
+    // ①entity_ref 原样重复。
+    let mut sub = valid_viewer();
+    sub.interest_states.push(base_state());
+    let errors = check_viewer(&sub);
+    assert!(
+        has(&errors, "interest states have duplicate target: entity:e1"),
+        "同 ref 直抄必须拒: {errors:?}"
+    );
+
+    // ②SAME_AS 跨解析撞车：e1 映射到现有实体 entity:game:x，另一 state 直引同一现有实体。
+    let exists_x = |id: &str| id == "entity:game:x";
+    let mut sub = valid_viewer();
+    sub.entities[0].resolution = "SAME_AS".to_string();
+    sub.entities[0].existing_entity_id = Some("entity:game:x".to_string());
+    let mut global_state = base_state();
+    global_state.entity_ref = "entity:game:x".to_string();
+    sub.interest_states.push(global_state);
+    let errors =
+        validate_viewer_submission(&sub, VIEWER, &episodes(), &exists_x, &no_search_results());
+    assert!(
+        has(
+            &errors,
+            "interest states have duplicate target: entity:game:x"
+        ),
+        "SAME_AS 撞同一现有实体必须拒: {errors:?}"
+    );
+
+    // ③对照：两条 state 指向不同对象必须放行。
+    let mut sub = valid_viewer();
+    let mut second = base_state();
+    second.entity_ref = "entity:game:y".to_string();
+    let exists_y = |id: &str| id == "entity:game:y";
+    sub.interest_states.push(second);
+    let errors =
+        validate_viewer_submission(&sub, VIEWER, &episodes(), &exists_y, &no_search_results());
+    assert!(
+        !has(&errors, "duplicate target"),
+        "不同 target 不得误伤: {errors:?}"
+    );
+}
+
 #[test]
 fn mention_episode_and_span_checks() {
     let mut sub = valid_viewer();
