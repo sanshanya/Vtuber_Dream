@@ -48,9 +48,11 @@ pub fn elements(project: &Value) -> Value {
 /// Z6/P0-6：kind 折叠投影——只保留 expanded 类节点；悬空边（任一端不存活）整边裁除。
 /// 节点序保持 project ORDER BY 位序；边序同理。未知 kind 的节点一律视为「非展开」
 /// （白名单是收口面，不是增幅面——不让未知类型借折叠缝流进默认视图）。
+/// 2026-08-05 用户裁决：折叠面上**零存活边节点一律不出图**（生产实测 90% 是散点噪声
+/// 且为前端 3GB 内存主凶）——这是视图裁剪，图层数据照旧全量，可回放可钻取。
 pub fn elements_expanded(project: &Value, expanded: &std::collections::BTreeSet<String>) -> Value {
     let mut kept_ids: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
-    let mut elements: Vec<Value> = Vec::new();
+    let mut node_elements: Vec<Value> = Vec::new();
     if let Some(nodes) = project["nodes"].as_array() {
         for node in nodes {
             let kind = node["type"].as_str().unwrap_or("");
@@ -59,9 +61,11 @@ pub fn elements_expanded(project: &Value, expanded: &std::collections::BTreeSet<
                 continue;
             }
             kept_ids.insert(id.to_string());
-            elements.push(node_element(node));
+            node_elements.push(node_element(node));
         }
     }
+    let mut connected: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut elements: Vec<Value> = Vec::new();
     if let Some(edges) = project["edges"].as_array() {
         for edge in edges {
             let source = edge["source"].as_str().unwrap_or("");
@@ -69,9 +73,21 @@ pub fn elements_expanded(project: &Value, expanded: &std::collections::BTreeSet<
             if !kept_ids.contains(source) || !kept_ids.contains(target) {
                 continue;
             }
+            connected.insert(source.to_string());
+            connected.insert(target.to_string());
             elements.push(edge_element(edge));
         }
     }
+    // 零度裁决：只吐出出现在存活边端点上的节点（节点序仍保持项目位序）。
+    let nodes: Vec<Value> = node_elements
+        .into_iter()
+        .filter(|element| {
+            element["data"]["id"]
+                .as_str()
+                .is_some_and(|id| connected.contains(id))
+        })
+        .collect();
+    elements.splice(0..0, nodes);
     json!({ "elements": elements })
 }
 
@@ -162,5 +178,39 @@ mod tests {
         let expanded: std::collections::BTreeSet<String> = Default::default();
         let out = elements_expanded(&mini_project(), &expanded);
         assert_eq!(out["elements"].as_array().unwrap().len(), 0);
+    }
+
+    /// 2026-08-05 用户裁决：生产折叠视图 2522 节点中 2271 个（90%）是零存活边散点——
+    /// 满屏紫点=零信息量，且是 3GB 内存的主凶之一。「仅人与关注点主骨架」必须
+    /// 落纸：折叠面上零度节点（含 Viewer——视图裁剪不丢数据，图层照旧全量）一律不出。
+    #[test]
+    fn elements_expanded_drops_zero_degree_nodes_in_folded_view() {
+        let mut project = mini_project();
+        project["nodes"].as_array_mut().unwrap().extend([
+            json!({"id": "entity:孤岛", "name": "孤岛", "type": "Entity", "properties": {}}),
+            json!({"id": "viewer:9", "name": "孤观众", "type": "Viewer", "properties": {"viewer_id": "9"}}),
+        ]);
+        let expanded: std::collections::BTreeSet<String> =
+            ["Viewer".to_string(), "Entity".to_string()]
+                .into_iter()
+                .collect();
+        let out = elements_expanded(&project, &expanded);
+        let list = out["elements"].as_array().unwrap();
+        let node_ids: Vec<&str> = list
+            .iter()
+            .filter(|el| el["data"]["kind"].is_string())
+            .map(|el| el["data"]["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            node_ids,
+            ["viewer:1", "entity:原神"],
+            "零度节点一律不出图: {out}"
+        );
+        let edge_ids: Vec<&str> = list
+            .iter()
+            .filter(|el| !el["data"]["source"].is_null())
+            .map(|el| el["data"]["id"].as_str().unwrap())
+            .collect();
+        assert_eq!(edge_ids, ["r1", "r4"], "{out}");
     }
 }

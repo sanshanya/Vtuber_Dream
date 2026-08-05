@@ -182,6 +182,9 @@ function stylePreset(): Stylesheet[] {
       style: {
         label: "data(label)",
         "font-size": 10,
+        // 2026-08-05 用户裁决：全场适配缩放下全展开标签 = 渲染岩浆（且与 251→2522
+        // 时代同属「好玩吗」噪声）——字体渲染小于 9px 时整体隐藏，放大自然显名。
+        "min-zoomed-font-size": 9,
         color: "#8b949e",
         "text-valign": "bottom",
         "text-margin-y": 4,
@@ -207,6 +210,7 @@ function stylePreset(): Stylesheet[] {
       style: {
         label: "data(edge_label)",
         "font-size": 8,
+        "min-zoomed-font-size": 7,
         color: "#8b949e",
         "text-rotation": "autorotate",
         width: 1,

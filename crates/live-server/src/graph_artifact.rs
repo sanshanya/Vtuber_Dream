@@ -55,9 +55,14 @@ fn hash_rows(
     Ok(())
 }
 
-/// 探针：投影可见内容 + 白名单的 sha256 前缀 = 指纹 = ETag。
+/// 折叠/出图算法版本串：任何「elements 产出规则」改变必须翻版本，否则外置物化
+/// 会静默服旧算法的字节（2026-08-05 实锤：零度散点裁除落地后，旧 artifact 因
+/// 指纹不含算法版本继续吐 2522 节点的岩浆版）。
+pub const GRAPH_FOLD_VERSION: &str = "fold-v2-zero-degree-drop-2026-08-05";
+
+/// 探针：投影可见内容 + 白名单 + **算法版本**的 sha256 前缀 = 指纹 = ETag。
 /// 列集拟定依据 =「DTO 可见列 ∪ project SQL 过滤臂谓词列」（卷首注 G2-E R1-F1）。
-pub fn content_probe(store: &Store, kinds_csv: &str) -> StoreResult<String> {
+pub fn content_probe(store: &Store, kinds_csv: &str, fold_version: &str) -> StoreResult<String> {
     let mut hasher = sha2::Sha256::new();
     {
         let mut stmt = store.conn.prepare(
@@ -85,6 +90,8 @@ pub fn content_probe(store: &Store, kinds_csv: &str) -> StoreResult<String> {
         )?;
     }
     hasher.update(kinds_csv.as_bytes());
+    hasher.update([0]);
+    hasher.update(fold_version.as_bytes());
     Ok(hex16(&hasher.finalize()))
 }
 
@@ -179,4 +186,32 @@ pub fn read_artifact(root: &std::path::Path, etag: &str) -> Option<GraphArtifact
         raw,
         etag: etag.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 2026-08-05 实锤钉：算法迭代必须翻面指纹（v1 零度岩浆版事故）——
+    /// 同库同白名单，版本串变 = 探针输出变；同版本 = 输出不变。
+    #[test]
+    fn content_probe_is_sensitive_to_fold_version() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Store::open(&tmp.path().join("probe.sqlite3")).unwrap();
+        let v2 = content_probe(
+            &store,
+            "Viewer,Entity",
+            "fold-v2-zero-degree-drop-2026-08-05",
+        )
+        .unwrap();
+        let v2_again = content_probe(
+            &store,
+            "Viewer,Entity",
+            "fold-v2-zero-degree-drop-2026-08-05",
+        )
+        .unwrap();
+        let v3 = content_probe(&store, "Viewer,Entity", "fold-v3-next-algorithm").unwrap();
+        assert_eq!(v2, v2_again, "同名指纹必须稳定");
+        assert_ne!(v2, v3, "版本串必须进指纹");
+    }
 }

@@ -879,8 +879,12 @@ async fn ensure_graph_artifact(
                 "graph 库存在但不可开（Store::open 失败）",
             )
         })?;
-        let etag = crate::graph_artifact::content_probe(&store, &kinds_csv)
-            .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+        let etag = crate::graph_artifact::content_probe(
+            &store,
+            &kinds_csv,
+            crate::graph_artifact::GRAPH_FOLD_VERSION,
+        )
+        .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
         if let Some(artifact) = crate::graph_artifact::read_artifact(&root, &etag) {
             return Ok(artifact);
         }
@@ -888,8 +892,12 @@ async fn ensure_graph_artifact(
             .lock()
             .map_err(|_| fail(StatusCode::INTERNAL_SERVER_ERROR, "graph artifact 锁中毒"))?;
         // 双查：等待锁期间另一线程可能已重建（重探 = 同店 scan，零成本）。
-        let etag2 = crate::graph_artifact::content_probe(&store, &kinds_csv)
-            .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+        let etag2 = crate::graph_artifact::content_probe(
+            &store,
+            &kinds_csv,
+            crate::graph_artifact::GRAPH_FOLD_VERSION,
+        )
+        .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
         if let Some(artifact) = crate::graph_artifact::read_artifact(&root, &etag2) {
             return Ok(artifact);
         }

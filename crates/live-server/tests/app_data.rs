@@ -608,15 +608,38 @@ async fn graph_kinds_all_escape_and_csv_straight_through_and_bad_kind_400() {
         "all 逃生门必须含细节层：{all_kinds:?}"
     );
 
+    // 2026-08-05 用户裁决：单类 kinds=Viewer 必然空图（同类节点间无边——连通骨架公理），
+    // 改钉双类组合：白名单是 kind 收口 + 零度裁除，出图节点必须挂在存活边上。
     let (status_v, _, bytes_v) =
-        request_raw(&fx.app, "/api/rooms/983/graph?kinds=Viewer", &[]).await;
+        request_raw(&fx.app, "/api/rooms/983/graph?kinds=Viewer,Entity", &[]).await;
     assert_eq!(status_v, 200);
     let only_viewers: Value = serde_json::from_slice(&bytes_v).unwrap();
     let list = only_viewers["elements"].as_array().unwrap();
     assert!(!list.is_empty());
     assert!(
-        list.iter().all(|el| el["data"]["kind"] == "Viewer"),
+        list.iter()
+            .filter_map(|el| el["data"]["kind"].as_str())
+            .all(|kind| kind == "Viewer" || kind == "Entity"),
         "{only_viewers}"
+    );
+    // 端到端零度钉：出图的每个节点（kind 面）都必须出现在某条存活边的端点上。
+    let endpoint_ids: std::collections::HashSet<&str> = list
+        .iter()
+        .filter(|el| !el["data"]["source"].is_null())
+        .flat_map(|el| {
+            [
+                el["data"]["source"].as_str().unwrap_or(""),
+                el["data"]["target"].as_str().unwrap_or(""),
+            ]
+        })
+        .collect();
+    assert!(
+        list.iter()
+            .filter_map(|el| el["data"]["kind"]
+                .as_str()
+                .map(|_| el["data"]["id"].as_str().unwrap()))
+            .all(|id| endpoint_ids.contains(id)),
+        "出图节点必须挂在存活边上（用户裁决 2026-08-05）：{only_viewers}"
     );
 
     let (status_bad, _, bytes_bad) =
@@ -643,7 +666,7 @@ async fn graph_artifact_rebuilds_when_whitelist_config_changes() {
         &fx.config_path,
         yaml.replace(
             "  peer_discovery:",
-            "  graph_default_expanded_kinds: [Viewer]\n  peer_discovery:",
+            "  graph_default_expanded_kinds: [Episode, Mention]\n  peer_discovery:",
         ),
     )
     .unwrap();
@@ -658,7 +681,14 @@ async fn graph_artifact_rebuilds_when_whitelist_config_changes() {
         .iter()
         .filter_map(|el| el["data"]["kind"].as_str())
         .collect();
-    assert_eq!(kinds, ["Viewer"].into_iter().collect(), "{body}");
+    // 2026-08-05 零度裁决：白名单 [Episode, Mention] 的存活骨架 = CONTAINS_MENTION 两端。
+    assert!(
+        kinds
+            .iter()
+            .all(|kind| *kind == "Episode" || *kind == "Mention"),
+        "{body}"
+    );
+    assert!(!kinds.is_empty(), "demo 图的细节层骨架非空: {body}");
 }
 
 /// 失效面二：图库写入新节点 → (mtime,len) 指纹翻面 → 重建；
@@ -683,13 +713,38 @@ async fn graph_artifact_etag_follows_store_content() {
     let etag_after = hdrs2.get("etag").unwrap().to_str().unwrap();
     assert_ne!(etag_before, etag_after, "内容变 → 内容寻址 ETag 必须变");
     let body: Value = serde_json::from_slice(&bytes).unwrap();
+    // 2026-08-05 用户裁决端到端钉一：零度节点即使 kind 在白名单也不进默认视图
+    // （图库写入仍被指纹/物化感知——ETag 翻面与「不可见」同时成立）。
     assert!(
-        body["elements"]
+        !body["elements"]
             .as_array()
             .unwrap()
             .iter()
             .any(|el| el["data"]["id"] == "viewer:z6-probe"),
-        "新节点必须进默认视图（Viewer 在白名单）：{body}"
+        "零度节点不得进默认视图（连通骨架公理）：{body}"
+    );
+
+    // 端到端钉二：把零度探针缀上存活边后必须出现（视图裁剪是连通性语义，非黑名单）。
+    let conn = rusqlite::Connection::open(fx.data_root.join("graph/perception.sqlite3")).unwrap();
+    conn.execute(
+        "INSERT INTO edges (edge_id, source_id, predicate, target_id, properties_json, source_kind, confidence, evidence_json, valid_from, valid_to, first_seen_at, last_seen_at, run_id, viewer_id) \
+         VALUES ('edge:z6-probe', 'viewer:z6-probe', 'INTERESTED_IN', \
+                 (SELECT node_id FROM nodes WHERE node_type = 'Entity' LIMIT 1), \
+                 '{}', 'ai_state', 0.9, '[]', 's', NULL, 's', 's', NULL, 'z6-probe')",
+        [],
+    )
+    .unwrap();
+    drop(conn);
+    let (status3, _, bytes3) = request_raw(&fx.app, "/api/rooms/983/graph", &[]).await;
+    assert_eq!(status3, 200);
+    let body3: Value = serde_json::from_slice(&bytes3).unwrap();
+    assert!(
+        body3["elements"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|el| el["data"]["id"] == "viewer:z6-probe"),
+        "挂上存活边后必须进默认视图：{body3}"
     );
 }
 
