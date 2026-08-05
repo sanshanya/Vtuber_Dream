@@ -484,7 +484,8 @@ pub fn validate_viewer_submission(
         && !has_substantive(&submission.enrichment_targets)
     {
         errors.push(
-            "viewer submission has empty entities and interest_states; provide hypotheses or cautions"
+            "viewer submission has empty entities and interest_states; provide hypotheses, \
+             cautions, content_preferences, recent_changes, or enrichment_targets"
                 .to_string(),
         );
     }

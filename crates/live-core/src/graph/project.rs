@@ -391,22 +391,16 @@ pub fn project(store: &Store, options: &ProjectOptions) -> Result<Value> {
     )?;
     let mentions: Vec<Value> = mentions_rows.into_iter().map(Value::Object).collect();
     let communities = detect_communities(&nodes, &edges, options.minimum_community_size);
-    let count = |sql: &str, params: Vec<rusqlite::types::Value>| -> Result<i64> {
-        let mut stmt = store.conn.prepare(sql)?;
-        let value: i64 =
-            stmt.query_row(rusqlite::params_from_iter(params.iter()), |row| row.get(0))?;
-        Ok(value)
-    };
     let stats = json!({
         "nodes": nodes.len() as i64,
         "edges": edges.len() as i64,
-        "episodes": count("SELECT COUNT(*) FROM episodes", Vec::new())?,
-        "mentions": count("SELECT COUNT(*) FROM mentions", Vec::new())?,
-        "entities": count("SELECT COUNT(*) FROM nodes WHERE node_type='Entity'", Vec::new())?,
-        "interest_states": count(
+        "episodes": store.count_scalar("SELECT COUNT(*) FROM episodes", &[])?,
+        "mentions": store.count_scalar("SELECT COUNT(*) FROM mentions", &[])?,
+        "entities": store.count_scalar("SELECT COUNT(*) FROM nodes WHERE node_type='Entity'", &[])?,
+        "interest_states": store.count_scalar(
             "SELECT COUNT(*) FROM edges WHERE predicate='INTERESTED_IN' \
              AND source_kind='ai_state' AND valid_to IS NULL AND (? IS NULL OR run_id=?)",
-            vec![sql_arg(options.current_run_id.as_deref()), sql_arg(options.current_run_id.as_deref())],
+            &[sql_arg(options.current_run_id.as_deref()), sql_arg(options.current_run_id.as_deref())],
         )?,
         "communities": communities.len() as i64,
     });

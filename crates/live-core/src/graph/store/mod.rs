@@ -304,6 +304,14 @@ impl Store {
         (self.clock)()
     }
 
+    /// 轮2-R1-B2：COUNT 类标量读取公共件（原 project.rs/query.rs 各藏一份就地闭包）。
+    pub fn count_scalar(&self, sql: &str, params: &[rusqlite::types::Value]) -> Result<i64> {
+        let mut stmt = self.conn.prepare(sql)?;
+        let value: i64 =
+            stmt.query_row(rusqlite::params_from_iter(params.iter()), |row| row.get(0))?;
+        Ok(value)
+    }
+
     fn schema(&self) -> Result<()> {
         let has_schema: Option<i64> = self
             .conn

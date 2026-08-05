@@ -42,6 +42,8 @@ fn call_source(
 }
 
 /// 单源报错行（profile/relation_stat 用手工 dict：无 items 键——与 Python 字面量一致）。
+/// 轮2-R1-B2 互指：collector/mod.rs 的 source_error_status 是本件的「含 items」变体——
+/// 键差是 Python 字节 parity 承重（两边各自对齐 Python 字面量），禁止合并。
 fn simple_error_row(err: &BilibiliError) -> Value {
     json!({
         "status": if err.hidden() { "hidden" } else { "error" },

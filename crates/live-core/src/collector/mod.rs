@@ -47,6 +47,8 @@ pub fn status_row(status: &str, items: Vec<Value>, detail: &str) -> Value {
 
 /// Python `_source_error`：hidden → "hidden"，其余 → "error"
 /// detail 等于 Python 的 `str(error)`，包含 endpoint/code。
+/// 轮2-R1-B2 互指：run/viewer.rs 的 simple_error_row 是本件的「无 items 键」变体——
+/// 键差是 Python 字节 parity 承重（两边各自对齐 Python 字面量），禁止合并。
 pub fn source_error_status(error: &crate::bilibili::BilibiliError) -> Value {
     let status = if error.hidden() {
         "hidden".to_string()

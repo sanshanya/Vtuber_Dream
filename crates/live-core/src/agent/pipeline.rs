@@ -227,6 +227,9 @@ pub enum AudienceInputError {
 }
 
 /// Python `str(value or "")`（falsy → ""）；预算/索引专用（0/0.0 落槽语义与 Python 对齐）。
+/// 轮2-R1-B2 互指：agent/tools.rs 的 py_or_empty 是完整 falsy 判定 + other→py_str 臂
+/// （工具面要承载 array/object）；本件只喂标量槽（预算/索引），_ 臂直接落 "" 是
+/// 刻意的窄口径，两边职责不同，禁止合并。
 fn or_empty(value: Option<&Value>) -> String {
     match value {
         Some(Value::String(s)) => s.clone(),

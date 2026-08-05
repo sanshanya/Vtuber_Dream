@@ -58,6 +58,16 @@ export function matchRoute(segments: string[]): MatchedRoute | null {
   return null;
 }
 
+/** 轮2-R1-B2：段解码容错——畸形百分号序列（%zz/孤儿 %/截断 UTF-8）让
+ *  decodeURIComponent 抛 URIError，render 期整页白屏；回落原段（路由面照走）。 */
+export function decodeSegment(segment: string): string {
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
+}
+
 export function useHashPath(): string[] {
   const [hash, setHash] = useState(() => window.location.hash);
   useEffect(() => {
@@ -69,6 +79,6 @@ export function useHashPath(): string[] {
     .replace(/^#/, "")
     .split("/")
     .filter(Boolean)
-    .map((segment) => decodeURIComponent(segment));
+    .map(decodeSegment);
 }
 // 注：ag4-F10——navigate() 助函数曾导出而零调用，已删；链接纪律 = href="#/..." + 手写编码。

@@ -456,3 +456,59 @@ fn upsert_edge_with_corrupt_stored_evidence_errors_instead_of_wiping() {
         .unwrap();
     assert_eq!(stored, "{{{broken", "原证据必须原样无损留存");
 }
+
+// ---------------------------------------------------------------------------
+// 轮2-R1-B2：查重 SELECT 的 valid_from 平局必须有确定性 tie-break（rowid DESC =
+// 取物理最新插入者）。修前 ORDER BY valid_from DESC 平局的选取计划依赖，
+// 同秒并发/补写场景可能把新证据并到旧边、留下两条同 quad 活跃边。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn upsert_edge_valid_from_tie_picks_physically_newest_row() {
+    let store = mem_store();
+    store.begin_run_fixed("run:a", FIXED_NOW, "m").unwrap();
+    store
+        .upsert_node("viewer:v", "Viewer", "v", &json!({}), "platform_fact", None)
+        .unwrap();
+    store
+        .upsert_node("entity:game:e", "Entity", "e", &json!({}), "ai", None)
+        .unwrap();
+    let insert = |edge_id: &str, evidence: &str| {
+        store
+            .conn
+            .execute(
+                "INSERT INTO edges(\
+                   edge_id,source_id,predicate,target_id,properties_json,source_kind,confidence,\
+                   evidence_json,valid_from,valid_to,first_seen_at,last_seen_at,run_id,viewer_id) \
+                 VALUES(?,?,?,?,'{}','platform_fact',NULL,?,'2026-01-01T00:00:00.000000+00:00',NULL,\
+                        '2026-01-01T00:00:00.000000+00:00','2026-01-01T00:00:00.000000+00:00','run:a','')",
+                rusqlite::params![edge_id, "viewer:v", "RELATED_TO", "entity:game:e", evidence],
+            )
+            .unwrap();
+    };
+    insert("edge:old", "[\"old\"]");
+    insert("edge:new", "[\"new\"]"); // rowid 更高 = 物理最新
+    let winner = store
+        .upsert_edge(
+            "viewer:v",
+            "RELATED_TO",
+            "entity:game:e",
+            &json!({}),
+            "platform_fact",
+            None,
+            &["fresh".into()],
+            "run:a",
+            None,
+        )
+        .unwrap();
+    assert_eq!(winner, "edge:new", "平局必须取物理最新行");
+    let merged: String = store
+        .conn
+        .query_row(
+            "SELECT evidence_json FROM edges WHERE edge_id='edge:new'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(merged, "[\"new\",\"fresh\"]", "证据必须并到最新行");
+}

@@ -1,11 +1,13 @@
-//! 读路径（M3 工具面基元）：search_entities / references / episodes。
+//! 读路径（M3 工具面基元）：search_entities / references / episodes；
+//! 面板聚合读：graph_stats / run_pair_delta（live-server 概览指标条消费）。
 //!
 //! 上限口径：全局 GRAPH_QUERY_LIMIT = 500（references 分块 / episodes 钳制），
 //! search_entities 另封顶 100（Python parity，SEARCH_ENTITIES_LIMIT）。
 //!
-//! query()/project() 聚合视图在 M1 瘦身时删除（零消费者，YAGNI）；
-//! M2 live-server / M3 报告层需要 evidence 类型化回填（§8.1）与 as_of 投影（§8.3）时，
-//! 再按届时真实调用形态复出。
+//! 轮2-R1-B2 头注纠偏：旧注「query()/project() 已删、待 M2/M3 复出」是 M1 时代的
+//! 遗嘱——事实面早已复出：graph_stats/run_pair_delta 服役于 server 概览，
+//! 全量投影像在 project.rs（独立模块，stats 段与本文件 graph_stats 共用
+//! count_scalar，口径差异见各自注释：project 带 current_run_id 过滤，本文件为全存量）。
 
 use serde_json::{Map, Value};
 
@@ -443,14 +445,16 @@ use serde_json::json;
 ///   （valid_from <= t AND (valid_to IS NULL OR valid_to > t)）；
 /// - guards 口径 = GUARD_OF 边在 (from.completed_at, to.completed_at] 窗口内的开/闭。
 ///
+/// 轮2-R1-B2 字序承重注：所有「时间比较」都是 TEXT 列上的字符串序——成立前提是
+/// 全库时间戳统一 now_iso 形态（`%Y-%m-%dT%H:%M:%S.ffffff+00:00`，定长、UTC、零填充，
+/// 字序≡时序）。任何写入面改用别的格式（如本地时区尾/无微秒段）都会静默撕裂
+/// 这里的 as-of 语义——写时间戳只许走 now_iso/unix_secs_to_iso。
+///
 /// 首页指标条数据面（Z3：旧版 report 顶部数字条的透传口径——与 project.rs
 /// 的 stats 段同款 COUNT SQL，「全存量」口径无 run_id 过滤）。`relations` = 全部
 /// 当前有效边（valid_to IS NULL）；`interest_states` 为其中 AI 状态子集。
 pub fn graph_stats(store: &Store) -> Result<Value> {
-    let count = |sql: &str| -> Result<i64> {
-        let value: i64 = store.conn.prepare(sql)?.query_row([], |row| row.get(0))?;
-        Ok(value)
-    };
+    let count = |sql: &str| store.count_scalar(sql, &[]);
     Ok(json!({
         "episodes": count("SELECT COUNT(*) FROM episodes")?,
         "mentions": count("SELECT COUNT(*) FROM mentions")?,

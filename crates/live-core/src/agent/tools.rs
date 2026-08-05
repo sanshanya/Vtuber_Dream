@@ -79,6 +79,8 @@ fn tag_strip_re() -> &'static Regex {
 }
 
 /// Python `str(value or "")`：falsy（None/false/0/""/[]/{}）→ ""，其余 str()。
+/// 轮2-R1-B2 互指：agent/pipeline.rs 的 or_empty 是窄口径变体（只喂预算/索引标量槽，
+/// 无 other→py_str 臂）；本件是工具面完整判定，两边职责不同，禁止合并。
 pub(crate) fn py_or_empty(value: Option<&Value>) -> String {
     match value {
         None | Some(Value::Null) => String::new(),

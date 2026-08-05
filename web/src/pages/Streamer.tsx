@@ -7,7 +7,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { api, isApiError } from "../api";
 import { AiStaleBadge } from "../components/AiStaleBadge";
-import { BriefingCard } from "../components/BriefingCard";
+import { BriefingCard, type EpisodeIndexEntry } from "../components/BriefingCard";
 import { Avatar } from "../components/Avatar";
 import { KindRunButton } from "../components/KindRunButton";
 import { RunButton } from "../components/RunButton";
@@ -87,11 +87,12 @@ export function Streamer({ roomId }: { roomId: string }) {
       {/* Z5/C1（终裁 P0-5）：制片人简报 = 首屏第一卡——「发生了什么/该干嘛/该信谁」
           免滚动可答；未生成/沉默两态同样具名呈现（缺席必可见）。 */}
       <BriefingCard
-        roomId={roomId}
         analysis={analysis}
         situationStatus={situation.status}
         aiCompletedAt={ai.completed_at ?? null}
         stale={(viewers.data ?? []).some((row) => row.ai_stale === true)}
+        episodeIndex={(data.episode_index ?? {}) as Record<string, EpisodeIndexEntry>}
+        nameOf={new Map((viewers.data ?? []).map((row) => [row.uid, row.name ?? row.uid]))}
       />
 
       {/* P0-2（迭代细则 v1 §1）：下播复盘卡——四纯规则数+AI命名件+未知行恒在。

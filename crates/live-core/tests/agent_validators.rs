@@ -526,7 +526,7 @@ fn fix8_viewer_placeholder_and_empty_submission() {
     );
     assert!(has(
         &errors,
-        "viewer submission has empty entities and interest_states; provide hypotheses or cautions"
+        "viewer submission has empty entities and interest_states; provide hypotheses, cautions, content_preferences, recent_changes, or enrichment_targets"
     ));
 
     // 实质 hypothesis 放行
@@ -1002,7 +1002,7 @@ fn placeholder_words_do_not_count_as_substantive() {
     );
     assert!(has(
         &errors,
-        "viewer submission has empty entities and interest_states; provide hypotheses or cautions"
+        "viewer submission has empty entities and interest_states; provide hypotheses, cautions, content_preferences, recent_changes, or enrichment_targets"
     ));
 }
 

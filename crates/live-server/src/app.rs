@@ -600,9 +600,18 @@ async fn room_overview(
     State(state): State<AppState>,
     Path(uid): Path<String>,
 ) -> AppResult<Json<Value>> {
-    let config = load_config(&state)?;
-    room_guard(&config, &uid)?;
-    let root = data_root(&state)?;
+    // 轮2-R1-B2：本体全同步（config/文件读 + rusqlite 三路 + 投影）——
+    // 收进 spawn_blocking，与 compute_graph_bytes/ensure_graph_artifact 同款姿态，
+    // 不再卡 tokio executor。
+    tokio::task::spawn_blocking(move || room_overview_blocking(&state, &uid))
+        .await
+        .map_err(|join| fail(StatusCode::INTERNAL_SERVER_ERROR, &join.to_string()))?
+}
+
+fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>> {
+    let config = load_config(state)?;
+    room_guard(&config, uid)?;
+    let root = data_root(state)?;
     let Some(mut collection) = read_json(&root.join("collection.json")) else {
         return Err(fail(
             StatusCode::NOT_FOUND,
@@ -795,11 +804,15 @@ async fn viewer_graph(
     room_guard(&config, &uid)?;
     vid_guard(&vid)?;
     let root = data_root(&state)?;
-    let (_store, value) = project_for_viewer(&root)?;
-    Ok(Json(crate::cytoscape::scoped(
-        &value,
-        &format!("viewer:{vid}"),
-    )))
+    // 轮2-R1-B2：project() 同步 rusqlite（s0 全量 ≈0.6s）——spawn_blocking，
+    // 与 compute_graph_bytes 同款姿态；守卫留在 async 面（微秒级）。
+    let elements = tokio::task::spawn_blocking(move || -> AppResult<Value> {
+        let (_store, value) = project_for_viewer(&root)?;
+        Ok(crate::cytoscape::scoped(&value, &format!("viewer:{vid}")))
+    })
+    .await
+    .map_err(|join| fail(StatusCode::INTERNAL_SERVER_ERROR, &join.to_string()))??;
+    Ok(Json(elements))
 }
 
 // ---------------------------------------------------------------------------

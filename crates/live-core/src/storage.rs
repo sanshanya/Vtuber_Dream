@@ -78,6 +78,11 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> StorageResult<()> {
     let entries = std::fs::read_dir(source).map_err(|err| io_err("read_dir", source, err))?;
     for entry in entries {
         let entry = entry.map_err(|err| io_err("read_dir entry", source, err))?;
+        // 轮2-R2：跳过隐藏临时件（`.live-core-tmp-*` 写中/崩溃孤儿）——
+        // 快照只承载事实面，写中态文件没有归档价值。
+        if entry.file_name().to_string_lossy().starts_with('.') {
+            continue;
+        }
         let from = entry.path();
         let to = target.join(entry.file_name());
         if from.is_dir() {
@@ -281,6 +286,39 @@ mod tests {
         std::fs::write(root.join("leads.jsonl"), "{\"dedupe_key\":\"x\"}\n").unwrap();
         reset_output(root).unwrap();
         assert!(root.join("leads.jsonl").exists(), "账本必须在 reset 中存活");
+    }
+
+    /// 轮2-R2 复审立项（low）：write/rename 之间进程崩溃会留孤儿
+    /// `.{name}.live-core-tmp-*`（唯一命名不复用、不自愈）；归档若原样整拷，
+    /// 垃圾态会污染时间序列快照——归档必须滤掉隐藏临时件。
+    #[test]
+    fn archive_skips_orphan_tmp_files() {
+        let root = temp_root();
+        let root = root.path();
+        write_json(&root.join("viewers").join("1001.json"), &json!({"v": 1})).unwrap();
+        std::fs::write(
+            root.join("viewers").join(".1001.json.live-core-tmp-1-1"),
+            "{\"v\":1",
+        )
+        .unwrap();
+
+        let snapshot = archive_current_snapshot(root)
+            .unwrap()
+            .expect("archive created");
+        assert!(snapshot.join("viewers").join("1001.json").exists());
+        assert!(
+            !snapshot
+                .join("viewers")
+                .join(".1001.json.live-core-tmp-1-1")
+                .exists(),
+            "孤儿 tmp 不得进快照"
+        );
+        // 源目录里的孤儿不受影响（归档是只读面，不代管清扫）
+        assert!(
+            root.join("viewers")
+                .join(".1001.json.live-core-tmp-1-1")
+                .exists()
+        );
     }
 
     #[test]

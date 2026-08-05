@@ -35,27 +35,27 @@ impl Store {
         } else {
             String::new()
         };
-        let row: Option<(String, String, String, String, Option<f64>)> = if owner_id.is_empty() {
-            self.conn
-                .query_row(
-                    "SELECT edge_id,first_seen_at,properties_json,evidence_json,confidence \
-                     FROM edges WHERE source_id=? AND predicate=? AND target_id=? AND source_kind=? \
-                     AND valid_to IS NULL ORDER BY valid_from DESC LIMIT 1",
-                    params![source_id, predicate, target_id, source_kind],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-                )
-                .optional()?
-        } else {
-            self.conn
-                .query_row(
-                    "SELECT edge_id,first_seen_at,properties_json,evidence_json,confidence \
-                     FROM edges WHERE source_id=? AND predicate=? AND target_id=? AND source_kind=? \
-                     AND valid_to IS NULL AND viewer_id=? ORDER BY valid_from DESC LIMIT 1",
-                    params![source_id, predicate, target_id, source_kind, owner_id],
-                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
-                )
-                .optional()?
-        };
+        // 轮2-R1-B2：双分支归一（owner 谓词 = `?='' OR viewer_id=?`，空 owner 即不 scoped
+        // 与修前「无 viewer_id 条件」严格同义）；valid_from 平局 tie-break 追加 rowid DESC
+        // ——取物理最新插入行，修前平局计划依赖，新证据可能落进旧边。
+        let row: Option<(String, String, String, String, Option<f64>)> = self
+            .conn
+            .query_row(
+                "SELECT edge_id,first_seen_at,properties_json,evidence_json,confidence \
+                 FROM edges WHERE source_id=? AND predicate=? AND target_id=? AND source_kind=? \
+                 AND valid_to IS NULL AND (?='' OR viewer_id=?) \
+                 ORDER BY valid_from DESC, rowid DESC LIMIT 1",
+                params![
+                    source_id,
+                    predicate,
+                    target_id,
+                    source_kind,
+                    owner_id,
+                    owner_id
+                ],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?)),
+            )
+            .optional()?;
         let mut merged_evidence: Vec<String> = evidence_ids
             .iter()
             .filter(|item| !item.is_empty())

@@ -11,10 +11,10 @@
  *
  * ag4-F6 同源纪律：analysis 是 LLM 产物无 schema 校验，所有取值过护栏（形状不符
  * 一律当沉默态处理，不抛）。
+ *
+ * 轮2-R1-B2：双查询（viewers/overview）下沉为 props——父页已持同 key 数据，
+ * 卡不再自备数据源（纯呈现件，测试免 QueryClient/fetch stub）。
  */
-import { useQuery } from "@tanstack/react-query";
-
-import { api } from "../api";
 import { fmtTime } from "../format";
 import { AiStaleBadge } from "./AiStaleBadge";
 import { KindRunButton } from "./KindRunButton";
@@ -59,25 +59,24 @@ export function parseBrief(analysis: Record<string, unknown> | undefined): Brief
 }
 
 export function BriefingCard({
-  roomId,
   analysis,
   situationStatus,
   aiCompletedAt,
   stale,
+  episodeIndex,
+  nameOf,
 }: {
-  roomId: string;
   analysis: Record<string, unknown> | undefined;
   situationStatus: string | undefined;
   aiCompletedAt?: string | null;
   /** 任一舰长信源已更新（ai_stale）→ 简报基底过时，盖时效章。 */
   stale: boolean;
+  /** 归属解析面（overview.episode_index 透传）：episode_id → {viewer_id, title}。 */
+  episodeIndex: Record<string, EpisodeIndexEntry>;
+  /** 观众 uid → 显示名（viewers 行透传）。 */
+  nameOf: ReadonlyMap<string, string>;
 }) {
-  const viewers = useQuery({ queryKey: ["viewers", roomId], queryFn: () => api.viewers(roomId) });
-  const overview = useQuery({ queryKey: ["overview", roomId], queryFn: () => api.overview(roomId) });
-  const nameOf = new Map(
-    (viewers.data ?? []).map((row) => [row.uid, row.name ?? row.uid] as const),
-  );
-  const index = (overview.data?.episode_index ?? {}) as Record<string, EpisodeIndexEntry>;
+  const index = episodeIndex;
   const sentences = situationStatus === "complete" ? parseBrief(analysis) : null;
 
   // 态 1：未生成。

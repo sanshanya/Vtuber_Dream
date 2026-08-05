@@ -13,6 +13,12 @@ use crate::leads::{LedgerRow, status_from_name, status_name};
 
 use super::{Result, Store, repo_err};
 
+/// 轮2-R1-B2：evidence_ids 序列化口径公共件（insert/update 双写点同修一份）。
+fn evidence_ids_json(row: &LedgerRow) -> Result<String> {
+    serde_json::to_string(&row.evidence_ids)
+        .map_err(|err| super::StoreError::Repo(format!("evidence_ids 不可序列化：{err}")))
+}
+
 impl Store {
     /// 入账。返回实际入库行数（OR IGNORE 臂下同键行不计）。
     pub fn insert_lead_rows(&self, rows: &[&LedgerRow], strict: bool) -> Result<usize> {
@@ -26,9 +32,7 @@ impl Store {
         );
         let mut inserted = 0_usize;
         for row in rows {
-            let evidence_ids = serde_json::to_string(&row.evidence_ids).map_err(|err| {
-                super::StoreError::Repo(format!("evidence_ids 不可序列化：{err}"))
-            })?;
+            let evidence_ids = evidence_ids_json(row)?;
             inserted += self.conn.execute(
                 &sql,
                 params![
@@ -110,8 +114,7 @@ impl Store {
 
     /// 状态机/消费留痕写回。dedupe_key 身份不变，其余全字段覆盖写。
     pub fn update_lead_row(&self, row: &LedgerRow) -> Result<()> {
-        let evidence_ids = serde_json::to_string(&row.evidence_ids)
-            .map_err(|err| super::StoreError::Repo(format!("evidence_ids 不可序列化：{err}")))?;
+        let evidence_ids = evidence_ids_json(row)?;
         let changed = self.conn.execute(
             "UPDATE discovery_leads SET lead_type=?,locator=?,motivation=?,expected_signal=?,\
              priority=?,evidence_ids_json=?,viewer_id=?,first_seen_run_id=?,created_at=?,\
