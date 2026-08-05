@@ -272,7 +272,15 @@ pub fn validate_viewer_submission(
                     entity.local_id
                 ))
             }
-            _ => {}
+            // SAME_AS 已被上方无守卫臂吃掉；此处只需接住守卫未命中的另两个合法值。
+            "NEW_ENTITY" | "UNCERTAIN" => {}
+            // 2026-08-05 生产事故（v4-flash 真实提交 EXISTING）：未知取值不得穿透到
+            // 图写入层（store/entities.rs 的 unknown decision）——拒收文案必须带回
+            // 原值与合法取值表，让模型在同一个 Agent Loop 内自纠。
+            other => errors.push(format!(
+                "entity {} has unknown resolution: {other:?} (allowed: SAME_AS, NEW_ENTITY, UNCERTAIN)",
+                entity.local_id
+            )),
         }
         if entity.resolution == "NEW_ENTITY" && unknown.is_empty() {
             let mut identity_ids = entity.evidence_mention_ids.clone();

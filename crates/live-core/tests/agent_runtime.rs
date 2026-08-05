@@ -590,6 +590,50 @@ async fn http_429_then_200_recovers_within_inner_retry() {
     assert_eq!(counter.load(Ordering::SeqCst), 2);
 }
 
+/// 2026-08-05 生产事故复现：自建 dsv4-flash 集群冷启动期，22 viewer 中 16 个
+/// 死于 502 Bad Gateway 风暴——每次 run_attempt 内层只有 3 次机会（EXTR=2），
+/// 网关 16s 超时一拍即吞掉整波并发。加宽内层预算后（EXTR=4），502×3 → 200
+/// 的冷启动形态必须在同一个 run_attempt 内自愈（不烧外层 run_retries）。
+/// 生产错误形态字面：`api error 502 Bad Gateway:  (code: )`（空 message/code）。
+#[tokio::test(flavor = "multi_thread")]
+async fn http_502_cold_start_storm_recovers_within_inner_retry() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let server = MockServer::start().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(move |_: &Request| {
+            if counter_clone.fetch_add(1, Ordering::SeqCst) < 3 {
+                // 生产实录：502 的 OpenAI 错误 JSON，message/code 皆空。
+                ResponseTemplate::new(502).set_body_json(json!({
+                    "error": {"message": "", "type": "server_error", "code": ""}
+                }))
+            } else {
+                ResponseTemplate::new(200).set_body_json(assistant_tool_call(
+                    "call-ok",
+                    "submit_probe_result",
+                    json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+                    None,
+                ))
+            }
+        })
+        .expect(4)
+        .mount(&server)
+        .await;
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("502 冷启动风暴必须在内层加宽预算后自愈");
+    assert_eq!(outcome.submission.total, 21);
+    assert_eq!(counter.load(Ordering::SeqCst), 4);
+    assert_eq!(trace.stats.llm_calls, 1, "瞬时压制不烧 turn");
+}
+
 /// r1-M4：429 + 裸文本 body → 错误解析为 JSONDeserialize 形态 → 非瞬时 → 单次即败。
 /// 钉的是**现行**语义：状态码驱动的内层恢复只在 body 是 OpenAI 错误 JSON 时成立
 /// （对照 `http_429_then_200_recovers_within_inner_retry`）。与 Python httpx 状态码
@@ -890,15 +934,15 @@ async fn invalid_tool_arguments_json_gets_feedback_without_handler() {
 #[tokio::test(flavor = "multi_thread")]
 async fn transport_5xx_requests_exactly_inner_retry_budget() {
     // 回归钉（async-openai 0.41.3 隐藏 OpenAIRetryLayer 事故）：
-    // transport 瞬时错的唯一重试所有者是 chat() 内层（HTTP_EXTRA_ATTEMPTS=2）；
-    // 客户端 executor 必须零重试 → retries=0 的 agent floatErr 后总请求数恒为 3。
+    // transport 瞬时错的唯一重试所有者是 chat() 内层（HTTP_EXTRA_ATTEMPTS=4）；
+    // 客户端 executor 必须零重试 → retries=0 的 agent floatErr 后总请求数恒为 5。
     let server = MockServer::start().await;
     Mock::given(wiremock::matchers::method("POST"))
         .and(wiremock::matchers::path("/chat/completions"))
         .respond_with(
             ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "boom"}})),
         )
-        .expect(3)
+        .expect(5)
         .mount(&server)
         .await;
     let runtime = test_runtime(&server);
@@ -921,7 +965,7 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
         .respond_with(
             ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "boom"}})),
         )
-        .expect(3)
+        .expect(5)
         .mount(&server)
         .await;
     let config = live_core::config::AiConfig {

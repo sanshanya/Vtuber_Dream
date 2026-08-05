@@ -135,8 +135,10 @@ pub fn maybe_fold(
                 let mut j = cursor + 1;
                 while j < middle.len() && middle[j].role == "tool" {
                     if middle[j].tool_call_id.as_deref() == Some(call.id.as_str()) {
-                        result_head =
-                            truncate_chars(middle[j].content.as_deref().unwrap_or(""), fold.entry_chars);
+                        result_head = truncate_chars(
+                            middle[j].content.as_deref().unwrap_or(""),
+                            fold.entry_chars,
+                        );
                         break;
                     }
                     j += 1;

@@ -390,8 +390,12 @@ pub const FORCED_TURNS_CAP: usize = 16;
 /// P2-γ-2：历史估算口径——1 token ≈ 4 字节。GIS/KB 层用这个粗秤即可，
 /// 不为精确计费，只为「何时开始折叠」的触发信号。
 pub const CHARS_PER_TOKEN: usize = 4;
-/// HTTP 层瞬时错误附加尝试（Python `AsyncOpenAI(max_retries=2)` 等价）。
-const HTTP_EXTRA_ATTEMPTS: usize = 2;
+/// HTTP 层瞬时错误附加尝试。
+/// 2026-08-05 生产事故定标：自建 dsv4 集群冷启动期的 502 Bad Gateway 风暴
+/// （网关 ~16s 超时一拍，22 viewer 死 16）仅靠 Python 等价的 2 次附加尝试
+/// 活不过去——加宽到 4，最坏叠加退避 ≈1+2+4+8s（封顶 30s）×抖动，
+/// 单次 chat 的最差吸收窗 ≈15s+请求往返×5，足以活过冷加载分钟级窗口。
+const HTTP_EXTRA_ATTEMPTS: usize = 4;
 /// Z3/P0-4：HTTP 内层重试基础退避（秒）。attempt n 的退避为 base * 2^(n-1) + jitter，
 /// 封顶 BACKOFF_CAP_SECONDS；Retry-After 头（经 redact 消息信标回传）优先并向下取 max。
 const HTTP_BACKOFF_BASE_SECONDS: f64 = 1.0;
@@ -492,6 +496,8 @@ impl AgentRuntime {
         )
     }
 
+    // 工厂收敛点：8 参是对 AgentRuntimeConfig 的 1:1 装配，不再向外扩散（pipeline 同例）。
+    #[allow(clippy::too_many_arguments)]
     fn build(
         client: async_openai::Client<async_openai::config::OpenAIConfig>,
         model: &str,

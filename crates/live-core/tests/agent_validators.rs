@@ -262,6 +262,48 @@ fn entity_resolution_family() {
     ));
 }
 
+/// 2026-08-05 生产事故复现：deepseek-v4-flash 真实提交 resolution="EXISTING"，
+/// validators.rs 的 `_ => {}` 将其静默放行，93 万 token 烧完后在
+/// graph::store::entities 才以 "unknown entity resolution decision" 判死。
+/// 分层校验要求：未知 resolution 必须在 Tool Call 校验层拒收并回传合法取值表。
+#[test]
+fn unknown_resolution_rejected_at_tool_layer() {
+    let mut sub = valid_viewer();
+    sub.entities[0].resolution = "EXISTING".to_string();
+    let errors = check_viewer(&sub);
+    assert!(
+        errors.iter().any(|e| e.contains("unknown resolution")
+            && e.contains("EXISTING")
+            && e.contains("SAME_AS")
+            && e.contains("NEW_ENTITY")
+            && e.contains("UNCERTAIN")),
+        "unknown resolution 必须报出原值与合法取值表，实际: {errors:?}"
+    );
+
+    // 三个合法取值（大小写敏感、与图写入层一致）不得误伤为 unknown resolution。
+    for allowed in ["SAME_AS", "NEW_ENTITY", "UNCERTAIN"] {
+        let mut sub = valid_viewer();
+        let mut entity = base_entity();
+        entity.resolution = allowed.to_string();
+        entity.existing_entity_id = None;
+        sub.entities = vec![entity];
+        let errors = check_viewer(&sub);
+        assert!(
+            !errors.iter().any(|e| e.contains("unknown resolution")),
+            "{allowed} 不应触发 unknown resolution: {errors:?}"
+        );
+    }
+
+    // 小写变体同样被拒（图写入层按全大写匹配，半放行也是穿透）。
+    let mut sub = valid_viewer();
+    sub.entities[0].resolution = "new_entity".to_string();
+    let errors = check_viewer(&sub);
+    assert!(
+        errors.iter().any(|e| e.contains("unknown resolution")),
+        "小写 new_entity 必须被拒: {errors:?}"
+    );
+}
+
 #[test]
 fn mention_entity_ref_and_known_refs() {
     // 未知 entity_ref（前缀查库也失败）

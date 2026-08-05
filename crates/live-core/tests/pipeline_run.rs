@@ -773,7 +773,7 @@ async fn pipeline_single_viewer_failure_continues() {
         .respond_with(
             ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "server boom"}})),
         )
-        .expect(3) // chat 内层瞬时重试共 3 次
+        .expect(5) // chat 内层瞬时重试共 5 次（2026-08-05 起 HTTP_EXTRA_ATTEMPTS=4）
         .mount(&server)
         .await;
     mount_viewer_ok(
@@ -862,7 +862,7 @@ async fn pipeline_all_viewers_fail_aborts() {
         .respond_with(
             ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "server boom"}})),
         )
-        .expect(6) // 2 viewers × 3 内层尝试
+        .expect(10) // 2 viewers × 5 内层尝试（2026-08-05 起 HTTP_EXTRA_ATTEMPTS=4）
         .mount(&server)
         .await;
     let mut knobs = PipelineKnobs::default();
@@ -979,7 +979,7 @@ async fn pipeline_audience_failure_fails_run() {
         .respond_with(
             ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "server boom"}})),
         )
-        .expect(3)
+        .expect(5) // audience 单 chat × 5 内层尝试（HTTP_EXTRA_ATTEMPTS=4）
         .mount(&server)
         .await;
     let mut knobs = PipelineKnobs::default();
