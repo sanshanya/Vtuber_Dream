@@ -8,7 +8,9 @@
 //! - 唯一终局工具：`ctx.slot().value` 被接受即终止（final_output="accepted"）；
 //! - 普通文本提前结束 → 保留全部历史（system/user/assistant 草稿/工具调用与结果），
 //!   追述 user 段（草稿截断 [`DRAFT_TRUNCATE_CHARS`]），tools 列表收窄为仅终局 +
-//!   `tool_choice` 具名强制重跑，forced max_turns 钳 [`FORCED_TURNS_MIN..=FORCED_TURNS_CAP`]；
+//!   以「提示钳制+拒收循环」替代 tool_choice 具名强制（DeepSeek 全模型 400 拒
+//!   tool_choice:auto 以外取值，P2-δ 为唯一形状），forced max_turns 钳
+//!   [`FORCED_TURNS_MIN..=FORCED_TURNS_CAP`]；
 //!   两轮仍无 accepted → attempt 失败（`NoTerminal`）计入线性退避重试；
 //! - 重试：共 `retries+1` 次 attempt，线性退避 `backoff_seconds * attempt`；HTTP 层瞬时错
 //!   （timeout/connect/本轮发送失败/408/409/429/5xx）只在 `chat()` 内层 ≤[`HTTP_EXTRA_ATTEMPTS`]
@@ -119,9 +121,10 @@ pub struct OaiChatRequest {
     messages: Vec<OaiMessage>,
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<OaiToolDef>>,
-    /// 具名强制：`{"type":"function","function":{"name":...}}`（Python forced agent 的 wire 形状）。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    tool_choice: Option<Value>,
+    /// P2-δ：已删除 tool_choice。DeepSeek 全部模型（v4 线 + reasoner 旧别名）
+    /// 均 400 拒 tool_choice:auto 以外的取值——具名/required 是物理不可用管道；
+    /// opencode 等成熟 agent 显式只用 auto。
+    /// 钳制改由「prompt 收窄 + 重打循环」承担。
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -764,14 +767,12 @@ impl AgentRuntime {
         tools: &[AgentTool<C>],
         visible: Option<usize>,
         messages: Vec<OaiMessage>,
-        tool_choice: Option<Value>,
     ) -> OaiChatRequest {
         let messages = self.apply_replay_window(messages);
         OaiChatRequest {
             model: self.model.clone(),
             messages,
             tools: Some(Self::tool_defs(tools, visible)),
-            tool_choice,
             max_tokens: Some(self.max_tokens),
             parallel_tool_calls: Some(false),
             reasoning_effort: self.reasoning_effort.clone(),
@@ -794,16 +795,12 @@ impl AgentRuntime {
             agent_name,
             tools,
             visible,
-            tool_choice,
             history,
             ctx,
             max_turns,
             token_budget,
             trace,
         } = args;
-        // P2-β 降级是 run_rounds 级状态：一旦 thinking-mode 拒过 tool_choice，
-        // 已靠终端窗+提示，后面所有轮不再白撞同一 400。
-        let mut tool_choice = tool_choice.clone();
         let mut rounds: usize = 0;
         loop {
             rounds += 1;
@@ -821,29 +818,9 @@ impl AgentRuntime {
             let started = Instant::now();
             // P2-γ-2：构建请求前按 token 阈值折叠中间轮（不动头/尾，可复跑）。
             self.maybe_fold(agent_name, history, trace);
-            let request = self.build_request(tools, visible, history.clone(), tool_choice.clone());
-            let response = match self.chat(&request).await {
-                Ok(response) => response,
-                // P2-β（A1 裁决书 §6.1 真斑 2）：thinking-mode 拒 tool_choice:function 的
-                // 400 非瞬时；同轮弃 tool_choice 重打一钉——凭 visible-only terminal 窗 +
-                // 具名提示仍能钳住终局；trace 落降级事件供审计。
-                Err(err) => {
-                    if tool_choice.is_some() && is_tool_choice_rejected_400(&err) {
-                        trace.write(
-                            "llm_tool_choice_degraded",
-                            json!({
-                                "agent": agent_name,
-                                "reason": "thinking-mode 拒 tool_choice,已永久降级（只凭终端收窄+具名提示）",
-                            }),
-                        );
-                        tool_choice = None;
-                        let retries = self.build_request(tools, visible, history.clone(), None);
-                        self.chat(&retries).await.map_err(RoundEnd::Fatal)?
-                    } else {
-                        return Err(RoundEnd::Fatal(err));
-                    }
-                }
-            };
+            let request = self.build_request(tools, visible, history.clone());
+            // P2-δ：chat 内层负责瞬时错重试；tool_choice 的面已删——无降级分支。
+            let response = self.chat(&request).await.map_err(RoundEnd::Fatal)?;
             let usage = response.usage.unwrap_or_default();
             trace.stats.input_tokens += usage.prompt_tokens;
             trace.stats.output_tokens += usage.completion_tokens;
@@ -958,7 +935,6 @@ struct RoundArgs<'a, C: RunCtx> {
     agent_name: &'a str,
     tools: &'a mut [AgentTool<C>],
     visible: Option<usize>,
-    tool_choice: Option<Value>,
     history: &'a mut Vec<OaiMessage>,
     ctx: &'a mut C,
     max_turns: usize,
@@ -978,17 +954,6 @@ fn is_transient(err: &async_openai::error::OpenAIError) -> bool {
         }
         _ => false,
     }
-}
-
-/// P2-β：thinking-mode（deepseek-reasoner）服务端在 reasoning 语境拒
-/// `tool_choice:{type:"function"}`，投 400 而非重试合格——只当错误文
-/// 同时含 400 + tool_choice 情境词才降级：窄到「就是那一种错」，
-/// 别的 400（参数非法/超长）不得被它吞掉。
-fn is_tool_choice_rejected_400(err: &AgentRuntimeError) -> bool {
-    let AgentRuntimeError::Transport(text) = err else {
-        return false;
-    };
-    text.contains("400") && text.contains("tool_choice")
 }
 
 /// Z3/P0-4：内层重试退避 = 指数（base·2^(attempt-1)，封顶 30s）× 全区间抖动。
@@ -1096,7 +1061,6 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
                 agent_name: &spec.name,
                 tools: &mut spec.tools,
                 visible: None,
-                tool_choice: None,
                 history: &mut history,
                 ctx,
                 max_turns: plan.max_turns,
@@ -1131,10 +1095,6 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
                         agent_name: &forced_name,
                         tools: &mut spec.tools,
                         visible: Some(terminal_index),
-                        tool_choice: Some(json!({
-                            "type": "function",
-                            "function": {"name": terminal_name},
-                        })),
                         history: &mut history,
                         ctx,
                         max_turns: forced_turns,

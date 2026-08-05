@@ -159,18 +159,16 @@ async fn ordinary_text_triggers_forced_terminal_resubmission() {
         assistant_text("这是草稿，不是有效提交"),
     )
     .await;
-    // forced 续跑：tool_choice 具名强制终局，tools 收窄为仅终局，历史保留草稿。
+    // forced 续跑：tools 收窄为仅终局（P2-δ 唯一形状——DeepSeek 拒 tool_choice，
+    // 钳制改由「提示钳制+拒收循环」承担、不依赖 API 硬钳）。
     mount_turn(
         &server,
         |body: &Value| {
-            // 协议 M1：forced 请求的 system 必须是具名强制文案（替换主 instructions）。
             let forced_instructions = body["messages"][0]["role"].as_str() == Some("system")
                 && body["messages"][0]["content"].as_str().is_some_and(|c| {
                     c.contains("现在只能调用 submit_probe_result")
                         && c.contains("必须修正所有校验问题并通过该工具提交")
                 });
-            let forced_ok =
-                body["tool_choice"]["function"]["name"].as_str() == Some("submit_probe_result");
             let four_messages = body["messages"].as_array().map(Vec::len) == Some(4);
             let draft_kept = body["messages"].as_array().is_some_and(|msgs| {
                 msgs.iter().any(|m| {
@@ -190,12 +188,7 @@ async fn ordinary_text_triggers_forced_terminal_resubmission() {
                             .is_some_and(|c| c.contains("上一轮以普通文本结束"))
                 })
             });
-            forced_ok
-                && draft_kept
-                && only_terminal
-                && has_urged_user
-                && forced_instructions
-                && four_messages
+            draft_kept && only_terminal && has_urged_user && forced_instructions && four_messages
         },
         assistant_tool_call(
             "call-forced",
@@ -218,70 +211,6 @@ async fn ordinary_text_triggers_forced_terminal_resubmission() {
     assert_eq!(outcome.submission.total, 21);
     let requests = server.received_requests().await.expect("captured requests");
     assert_eq!(requests.len(), 2, "普通文本后必须发起 forced 续跑");
-}
-
-/// P2-β（A1 裁决书 §6.1 真斑 2）：thinking-mode 拒 tool_choice:function → 400。
-/// forced 续跑必须弃 tool_choice 再打一钉，终局仍被工具窗+提示钳住；
-/// trace 必须留降级事件。
-#[tokio::test(flavor = "multi_thread")]
-async fn thinking_mode_tool_choice_rejected_degrades_to_window_only() {
-    let server = MockServer::start().await;
-    // turn 1：模型以普通文本落，启动 forced 续跑路径。
-    mount_turn(
-        &server,
-        messages_len(2),
-        assistant_text("这是草稿，不是有效提交"),
-    )
-    .await;
-    // turn 2：thinking-mode 服务端拒 tool_choice（真实原因串）。
-    mount_tool_choice_rejected_400(&server, |body: &Value| {
-        body["tool_choice"]["function"]["name"].as_str() == Some("submit_probe_result")
-            && body["tool_choice"]["type"].as_str() == Some("function")
-    })
-    .await;
-    // turn 3：弃 tool_choice、凭终端收窄 + 具名提示的续跑——终局仍钳住。
-    mount_turn(
-        &server,
-        |body: &Value| {
-            let no_tool_choice = body.get("tool_choice").is_none_or(Value::is_null);
-            let only_terminal = body["tools"].as_array().is_some_and(|tools| {
-                tools.len() == 1
-                    && tools[0]["function"]["name"].as_str() == Some("submit_probe_result")
-            });
-            no_tool_choice && only_terminal
-        },
-        assistant_tool_call(
-            "call-degraded",
-            "submit_probe_result",
-            json!({"submission": {"a": 7, "b": 14, "total": 21}}),
-            None,
-        ),
-    )
-    .await;
-
-    let runtime = test_runtime(&server);
-    let mut spec = probe_spec();
-    let mut ctx = ProbeContext::new(7);
-    let tmp = tempfile::tempdir().unwrap();
-    let trace_path = tmp.path().join("traces/reasoner-tool-choice.jsonl");
-    let mut trace = Trace::new(Some(trace_path.clone()));
-    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
-        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
-            .await
-            .expect("thinking-mode tool_choice 400 后应自动降级并收终局");
-
-    assert_eq!(outcome.submission.total, 21);
-    let trace_text = std::fs::read_to_string(&trace_path).expect("trace file");
-    assert!(
-        trace_text.contains("llm_tool_choice_degraded"),
-        "应落降级事件:{trace_text}"
-    );
-    let requests = server.received_requests().await.expect("captured requests");
-    assert_eq!(
-        requests.len(),
-        3,
-        "turn1 文本+turn2 400+turn3 降级成功 = 3 次"
-    );
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -866,8 +795,11 @@ async fn forced_dispatch_rejects_non_terminal_with_python_text() {
     mount_turn(
         &server,
         |body: &Value| {
-            body["tool_choice"]["function"]["name"].as_str() == Some("submit_probe_result")
-                && body["messages"].as_array().map(Vec::len) == Some(4)
+            // P2-δ：钳制靠 visible 收窄到唯一终局；判据 = tools 只剩 1 个且是终局名
+            body["messages"].as_array().map(Vec::len) == Some(4)
+                && body["tools"].as_array().is_some_and(|t| {
+                    t.len() == 1 && t[0]["function"]["name"] == "submit_probe_result"
+                })
         },
         assistant_tool_call("call-naughty", "get_probe_seed", json!({}), None),
     )
