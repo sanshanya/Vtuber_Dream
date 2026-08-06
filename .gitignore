@@ -13,3 +13,9 @@ web/dist
 .DS_Store
 
 .playwright-mcp/
+
+# 本地运行产物与观测快照：非代码、非 fixture，不入公仓（token 治理 P0）
+live-server.log
+kizuna-snapshot.md
+*-snapshot.md
+target-probe/
