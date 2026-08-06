@@ -14,7 +14,7 @@
 //! 消息族最小集（op=5，`{cmd, ...}`；未知 cmd 一律忽略并计数）：
 //!   DANMU_MSG             info[1]=文本；info[2][0]=真实 mid；info[2][1]=uname；
 //!                         缺 info[1] / info[2] / uid → 跳过（Ok(None)）
-//!   SUPER_CHAT_MESSAGE    与 _JPN 同构：data.{message, price, user_info.{uid, uname}}
+//!   SUPER_CHAT_MESSAGE    与 _JPN 同构：data.{message, price, start_time, user_info.{uid, uname}}
 //!   SUPER_CHAT_MESSAGE_DELETE  data.ids（只登记撤销事件）
 //!   INTERACT_WORD         data.{msg_type（1 进场/2 关注/3 分享）, uid, uname, timestamp}
 //!                         kind 取值原样登记
@@ -44,12 +44,14 @@ pub enum WsEvent {
         uname: String,
         text: String,
     },
-    /// SUPER_CHAT_MESSAGE（含 _JPN 同构）：金额（元）/ 发者真实 mid / uname / 文本。
+    /// SUPER_CHAT_MESSAGE（含 _JPN 同构）：金额（元）/ 发者真实 mid / uname / 文本 /
+    /// 平台时间戳（`data.start_time`，缺段=Some 缺到 None——绝不自造时间）。
     SuperChat {
         uid: String,
         uname: String,
         text: String,
         price: f64,
+        start_time: Option<i64>,
     },
     /// SUPER_CHAT_MESSAGE_DELETE：只登记撤销事件的 ids。
     SuperChatDelete { ids: Vec<i64> },
@@ -143,6 +145,7 @@ fn parse_super_chat(v: &Value) -> Option<WsEvent> {
     let data = v.get("data")?.as_object()?;
     let text = data.get("message")?.as_str()?.to_string();
     let price = data.get("price")?.as_f64()?;
+    let start_time = data.get("start_time").and_then(num_to_i64);
     let user_info = data.get("user_info")?.as_object()?;
     let uid = num_to_string(user_info.get("uid")?)?;
     let uname = user_info
@@ -155,6 +158,7 @@ fn parse_super_chat(v: &Value) -> Option<WsEvent> {
         uname,
         text,
         price,
+        start_time,
     })
 }
 

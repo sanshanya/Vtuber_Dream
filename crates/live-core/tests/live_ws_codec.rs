@@ -292,7 +292,7 @@ fn super_chat_message_fields() {
     let raw = p(
         5,
         0,
-        r#"{"cmd":"SUPER_CHAT_MESSAGE","data":{"price":300,"message":"谢谢老板","user_info":{"uid":10,"uname":"金主"}}}"#.as_bytes(),
+        r#"{"cmd":"SUPER_CHAT_MESSAGE","data":{"price":300,"message":"谢谢老板","start_time":1700000001,"user_info":{"uid":10,"uname":"金主"}}}"#.as_bytes(),
     );
     assert_eq!(
         parse_packet(&raw).expect("parse").expect("some"),
@@ -300,13 +300,15 @@ fn super_chat_message_fields() {
             uid: "10".into(),
             uname: "金主".into(),
             text: "谢谢老板".into(),
-            price: 300.0
+            price: 300.0,
+            start_time: Some(1700000001)
         }
     );
 }
 
 #[test]
 fn super_chat_message_jpn_same_shape() {
+    // 平台 `start_time` 缺席时段位留 None——绝不自造时间（SC ts 回落本地受时在第二段）。
     let raw = p(
         5,
         0,
@@ -318,7 +320,8 @@ fn super_chat_message_jpn_same_shape() {
             uid: "99".into(),
             uname: "jpn".into(),
             text: "こんにちは".into(),
-            price: 100.0
+            price: 100.0,
+            start_time: None
         }
     );
 }

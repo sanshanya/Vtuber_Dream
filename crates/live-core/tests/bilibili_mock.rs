@@ -683,3 +683,165 @@ async fn guard_members_full_pages_of_junk_terminate_on_zero_growth() {
         received.len()
     );
 }
+
+// ---------------------------------------------------------------------------
+// D1 弹幕网关：getDanmuInfo / get_info live_status（场次窗主源连接前置）
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_danmu_info_parses_host_port_and_token() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
+        .and(query_param("id", "983"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {
+                "token": "A8j2KqWrN7mP0sXz5vLcYbT1uRfEiOdH",
+                "host_list": [
+                    {"host": "broadcastlv.chat.bilibili.com", "port": 2243, "wss_port": 443},
+                    {"host": "broadcastlv2.chat.bilibili.com", "port": 2243, "wss_port": 443}
+                ]
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let info = call(server, |client| client.get_danmu_info("983"))
+        .await
+        .expect("danmu info");
+    assert_eq!(
+        info.host, "broadcastlv.chat.bilibili.com",
+        "取 host_list[0].host"
+    );
+    assert_eq!(info.port, 2243);
+    assert_eq!(info.token, "A8j2KqWrN7mP0sXz5vLcYbT1uRfEiOdH");
+    assert_eq!(
+        info.url(),
+        "ws://broadcastlv.chat.bilibili.com:2243/sub",
+        "非标准端口走显式端口的 ws://"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_danmu_info_standard_port_uses_wss_root() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {
+                "token": "short-token",
+                "host_list": [{"host": "broadcastlv.chat.bilibili.com", "port": 443}]
+            }
+        })))
+        .mount(&server)
+        .await;
+    let info = call(server, |client| client.get_danmu_info("983"))
+        .await
+        .expect("danmu info");
+    assert_eq!(
+        info.url(),
+        "wss://broadcastlv.chat.bilibili.com/sub",
+        "port=443 → 标准 wss 端点"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_danmu_info_missing_host_list_errors_without_token_leak() {
+    // 负例：data 缺 host_list 时必须上抛；错误串绝不含 token 明文（§11 合规红线）。
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": {"token": "S3CR3T_TOKEN_NEVER_LEAKS"}})),
+        )
+        .mount(&server)
+        .await;
+    let err = call(server, |client| client.get_danmu_info("983"))
+        .await
+        .expect_err("缺 host_list 必须上抛");
+    let text = err.to_string();
+    assert!(
+        !text.contains("S3CR3T_TOKEN_NEVER_LEAKS"),
+        "错误串绝不得含 token: {text}"
+    );
+    assert!(!err.hidden(), "缺段是畸形响应，不是风控隐藏");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_danmu_info_missing_token_errors() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {"host_list": [{"host": "broadcastlv.chat.bilibili.com", "port": 443}]}
+        })))
+        .mount(&server)
+        .await;
+    let err = call(server, |client| client.get_danmu_info("983"))
+        .await
+        .expect_err("缺 token 必须上抛");
+    assert!(
+        !err.to_string().contains("S3CR3T"),
+        "错误串不得含任何 secret 字样: {err}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_room_live_status_reads_live_status_value() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/room/v1/Room/get_info"))
+        .and(query_param("room_id", "983"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": {"live_status": 1}})),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let status = call(server, |client| client.get_room_live_status("983"))
+        .await
+        .expect("live status");
+    assert_eq!(status, 1, "直播中");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_room_live_status_zero_is_not_error() {
+    // 0=未在播是平台合法事实，不是错误；只有 live_status 缺席才算畸形。
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/room/v1/Room/get_info"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(json!({"code": 0, "data": {"live_status": 0}})),
+        )
+        .mount(&server)
+        .await;
+    let status = call(server, |client| client.get_room_live_status("983"))
+        .await
+        .expect("status 0 is valid");
+    assert_eq!(status, 0);
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn get_room_live_status_missing_field_errors() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/room/v1/Room/get_info"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(json!({"code": 0, "data": {"room_id": 983}})),
+        )
+        .mount(&server)
+        .await;
+    let err = call(server, |client| client.get_room_live_status("983"))
+        .await
+        .expect_err("缺 live_status 必须上抛");
+    assert!(
+        matches!(err, BilibiliError::Transport { .. }),
+        "缺字段归类畸形数据: {err}"
+    );
+}

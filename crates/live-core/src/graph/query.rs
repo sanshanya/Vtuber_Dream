@@ -525,10 +525,15 @@ pub fn run_pair_delta(store: &Store) -> Result<Value> {
     // P0-4（复盘解耦）：recap-refresh 类 run（collect 尾的四个数刷新）不进对照窗——
     // 它只重放语料、零 AI 边；若放行，每日 collect 的 refresh 会把「vs 上轮感知」
     // 稀释成「无变化」。maintenance 类照旧参窗（它真实地动过边，排除即是谎报）。
+    // 轮2-R2-2B：ws-record 同族同理——WS 采录 run 零 AI 边，只看作 graph 语料重放的
+    // 容器账；对照窗只比较有感知产出的 run。若放行，collect 尾的 WS 采录会把对照窗
+    // 稀释成「vs 上轮 WS 采录」而非「vs 上轮感知」。
     let sql = format!(
         "SELECT run_id, completed_at FROM graph_runs WHERE completed_at IS NOT NULL \
-         AND kind != '{}' ORDER BY completed_at DESC, run_id DESC LIMIT 2",
-        Store::RUN_KIND_RECAP_REFRESH
+         AND kind != '{}' AND kind != '{}' \
+         ORDER BY completed_at DESC, run_id DESC LIMIT 2",
+        Store::RUN_KIND_RECAP_REFRESH,
+        Store::RUN_KIND_WS_RECORD,
     );
     let runs = select_all(store, &sql, Vec::new())?;
     if runs.len() < 2 {

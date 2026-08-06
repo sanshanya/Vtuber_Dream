@@ -392,6 +392,12 @@ impl Store {
     /// Episode、零 AI 边。completed 照常记账，但 run_pair_delta 显式排除本类，
     /// 否则每日 collect 的 refresh 会把「vs 上轮感知」对照窗稀释成「无变化」。
     pub const RUN_KIND_RECAP_REFRESH: &str = "recap-refresh";
+    /// run 类型面（R2 批 2 D1 WS 挂接）：WS 弹幕窗的场次窗 Episode 入账 run——
+    /// 只入 WS 窗线、零 AI 边。`run_pair_delta` 显式排除本类（与 recap-refresh
+    /// 同理：recording 相与 collect/episodes 同属**一个 collect run** 的面，
+    /// 若把 ws-record 放进「vs 上轮感知」对照窗会稀释成「无变化」）。**不可从
+    /// widgets 口子跑到**：仅由 collect 尾段挂接内部开出。
+    pub const RUN_KIND_WS_RECORD: &str = "ws-record";
 
     pub fn begin_run(&self, model: &str) -> Result<String> {
         let run_id = format!("run:{}", uuid::Uuid::new_v4().simple());

@@ -28,6 +28,11 @@ tower = { version = "0.4", features = ["util"] }
 http-body-util = "0.1"
 wiremock = "0.6"
 tempfile = "3"
+# app_runs_e2e_ws：D1「WS 弹幕窗」e2e 的本机 TCP mock（与 live-core/tests/live_ws_session.rs 同源）。
+futures-util = "0.3"
+tokio-tungstenite = "0.24"
+# 测试面补齐 tokio 能力（net/io-util/time）供 WS mock 的 listener + accept_async 使用。
+tokio = { version = "1", features = ["net", "io-util", "time"] }
 # app_delta 布景时钟：delta 时间戳从运行时刻派生（日历炸弹免疫），与 live-core 同版系。
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # M5-D2 delta 布景：手工 SQL 栽 graph_runs/edges（graph_delta.rs 同法）。

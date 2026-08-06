@@ -220,6 +220,7 @@ fn test_config(root: &Path, budget: i64) -> Config {
             live_replay_danmaku_limit: 2,
             lead_fetch_budget_per_run: 0,
             leads_autonomy: 0,
+            live_ws_record: 0,
         },
         perception: PerceptionConfig {
             max_evidence_per_viewer: 1000,

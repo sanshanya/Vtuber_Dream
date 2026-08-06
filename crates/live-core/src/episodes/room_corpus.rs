@@ -51,8 +51,10 @@ fn unix_to_iso(raw: &Value) -> String {
 /// version_doc → content_version（**与 build.rs 的公式逐字节一致**，键序固定）。
 /// 8 参数全是构建件（身份三元组 + 双时间戳 + fields/facts），私有两调用点，
 /// 压成 struct 只是为 lint 硬凑层（AGENTS.md §4）。
+/// D1 WS 弹幕窗（2B）经 `crate::episodes::room_corpus::finalize_episode` 复用本公式——
+/// 两条 Episode 生产线同指纹纪律（撞库幂等语义天然共享）。
 #[allow(clippy::too_many_arguments)]
-fn finalize_episode(
+pub(crate) fn finalize_episode(
     viewer_id: &str,
     stable: &str,
     source: &str,

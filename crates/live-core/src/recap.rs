@@ -21,6 +21,22 @@
 //! pipeline 尾的共用刷新闻（语料入账→四个数→旧命名留存/作废→落盘，纯规则零 AI）；
 //! AI 命名是认知层附加窗：同场次同数面旧命名直接留存（不白跑 AI），数面一动即显式
 //! 作废进未知行（绝不拿旧命名盖新数），等下一轮感知重命名。
+//!
+//! D1-换轨（轮2-批2-2B）：场次发现并行扫回放束（live_danmaku）与 WS 窗
+//! （live_ws_danmaku / live_ws_sc / live_ws_entry 三源沉降为 sessions + lines）：
+//! 时间区间**重叠即折叠**——客观时间事实，绝不做语义合并；折叠界 = [min start,
+//! max end]，同夜双写不翻成两场。折叠场次 rid 遵循 WS 优先（`ws:{start}`，主轨），
+//! 否则取最早 start 的回放束 rid。
+//!
+//! 身份轨纪律（D2 冻结共识的复盘侧落实）：身份键 = `轨|uid`（轨 ∈ replay/comment/ws；
+//! replay 读 sender_uid_crc，comment 读 mid，ws 读 sender_uid_mid），**跨轨不合并**——
+//! 同人跨轨发言按两轨分计，「回来过」也不跨轨认亲（绝不把回放 crc 与真实 mid 混作
+//! 同一人）；两轨/三轨并出场必进未知行明示。
+//!
+//! 窗口诚实面：`window_start:"attach"`（未收 LIVE 的机时附着）经 facts 进未知行。
+//! 采录中断/保险丝等终局诚实面**不落 graph facts**（live_ws/episodes.rs contract：
+//! 窗原因只随 `WsWindowCapture` 走）——由 run outcome 的 ws_window.unknowns 承载，
+//! 本模块不臆造。
 
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
@@ -31,6 +47,9 @@ use serde_json::Value;
 use crate::episodes::now_iso;
 use crate::graph::Store;
 use crate::graph::store::{Result, StoreError};
+use crate::live_ws::episodes::{
+    SESSION_RID_PREFIX, SOURCE_WS_DANMAKU, SOURCE_WS_ENTRY, SOURCE_WS_SC, WINDOW_START_ATTACH,
+};
 
 /// 密度峰窗口（分钟）。依据：细则 §1 P0-2「10 分钟窗滑弹幕行数 top-1」——
 /// 10 分钟是主播节奏的可操作颗粒（一首歌/一段杂谈的长度）。改它须改细则。
@@ -41,6 +60,11 @@ pub const RECAP_REPEAT_MIN_COUNT: i64 = 3;
 /// 「前 N 场」回看窗。依据：周播节奏 1–2 周内的场次都可能是同批观众；
 /// 更老的场次对「回来过」的判定稀释成噪声。细则未钉死数值——命名留档。
 pub const RECAP_LOOKBACK_SESSIONS: usize = 10;
+
+/// 身份轨常量（D1 换轨：复盘侧身份键前缀应 trio——replay/comment/ws）。
+const TRACK_REPLAY: &str = "replay";
+const TRACK_WS: &str = "ws";
+const TRACK_COMMENT: &str = "comment";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecapSession {
@@ -124,6 +148,27 @@ pub fn normalize_sentence(text: &str) -> String {
         .to_lowercase()
 }
 
+/// 身份键 = `轨|uid`。空 uid 恒为空串（不把「无身份行」升格成一个发言者）。
+/// 跨轨不合并：同数字 uid 跨轨即不同键（D2 冻结共识，杜绝 crc/mid 慢性认亲）。
+fn track_identity(track: &str, uid: &str) -> String {
+    if uid.is_empty() {
+        String::new()
+    } else {
+        format!("{track}|{uid}")
+    }
+}
+
+/// 场次发现的区间事实（回放束弹幕行 / WS 窗线沉降）。区间折叠的原子单位——
+/// 只有客观时间事实（start/end + 源轨 + rid），不做任何语义判别。
+#[derive(Debug)]
+struct IntervalFact {
+    start_ts: i64,
+    end_ts: i64,
+    /// 是否来自 WS 窗（主轨：折叠场上 WS 在场即 WS rid 优先）。
+    is_ws: bool,
+    rid: String,
+}
+
 #[derive(Debug)]
 struct SessionRow {
     start_ts: i64,
@@ -131,13 +176,53 @@ struct SessionRow {
     rid: String,
 }
 
+/// WS 窗元信息（起点诚实标记的读取侧；`closed_by` 已退出 facts contract——
+/// 窗终局诚实面由 `WsWindowCapture` 承载，见模块头注）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WsWindowMeta {
+    start_ts: i64,
+    end_ts: i64,
+    window_start: String,
+}
+
 #[derive(Debug)]
 struct LineRow {
     session_key: (i64, i64),
+    /// 身份轨（replay/comment/ws）——跨轨不合并的归类锚。
+    track: &'static str,
+    /// 身份键（`轨|uid`，空 uid = 空串）。
     sender: String,
     ts: Option<i64>,
     text: String,
-    is_comment: bool,
+}
+
+/// 区间折叠：重叠（严格相交 `next.start < cur.end`，边界相触不算）即并进同一场次；
+/// 折叠界 = [min start, max end]。rid 遵循 WS 优先（is_ws 组件的 rid 随时重夺），
+/// 否则取最早 start 的组件 rid。退化区间（start≤0 / end<start）不构成场次。
+fn fold_intervals(facts: Vec<IntervalFact>) -> Vec<SessionRow> {
+    let mut facts = facts;
+    facts.sort_by_key(|f| (f.start_ts, f.end_ts));
+    let mut out: Vec<SessionRow> = Vec::new();
+    for fact in facts {
+        if fact.start_ts <= 0 || fact.end_ts < fact.start_ts {
+            continue;
+        }
+        match out.last_mut() {
+            Some(last) if fact.start_ts < last.end_ts => {
+                // 与末组件重叠 → 折叠。WS 在场即 WS rid 优先（重复组件不扰动）。
+                if fact.is_ws {
+                    last.rid = fact.rid;
+                }
+                last.end_ts = last.end_ts.max(fact.end_ts);
+            }
+            _ => out.push(SessionRow {
+                start_ts: fact.start_ts,
+                end_ts: fact.end_ts,
+                rid: fact.rid,
+            }),
+        }
+    }
+    out
 }
 
 /// 规则聚四个数。`_room` 一条没有 → status=empty + 诚实文案；
@@ -145,9 +230,11 @@ struct LineRow {
 pub fn compute_recap(store: &Store) -> Result<RecapCard> {
     let rows =
         crate::graph::query::episodes(store, crate::episodes::room_corpus::ROOM_VIEWER_ID, None)?;
-    let mut sessions: Vec<SessionRow> = Vec::new();
-    let mut lines: Vec<LineRow> = Vec::new();
+    let mut interval_facts: Vec<IntervalFact> = Vec::new();
+    let mut line_rows: Vec<LineRow> = Vec::new();
     let mut comments: Vec<Value> = Vec::new();
+    // WS 窗元信息（window_start 诚实标记）——折叠后按「当前场次窗」读取。
+    let mut ws_windows: Vec<WsWindowMeta> = Vec::new();
     for row in &rows {
         // 读面键名：query::episodes 的 parse_json_field 把 *_json 后缀剥掉。
         let facts = row.get("platform_facts").cloned().unwrap_or(Value::Null);
@@ -169,49 +256,104 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
             .unwrap_or_default();
         match row.get("source").and_then(Value::as_str) {
             Some(crate::episodes::room_corpus::SOURCE_LIVE_DANMAKU) => {
+                // 回放束：身份 = sender_uid_crc（crc32 轨——绝不用它充当真实 mid）。
                 let start_ts = unix_to_i64(&facts["session"]["start_timestamp"]).unwrap_or(0);
                 let end_ts = unix_to_i64(&facts["session"]["end_timestamp"]).unwrap_or(0);
-                lines.push(LineRow {
-                    session_key: (start_ts, end_ts),
-                    sender: facts
-                        .get("sender_uid_crc")
+                interval_facts.push(IntervalFact {
+                    start_ts,
+                    end_ts,
+                    is_ws: false,
+                    rid: facts
+                        .get("rid")
                         .and_then(Value::as_str)
                         .unwrap_or("")
                         .to_string(),
+                });
+                line_rows.push(LineRow {
+                    session_key: (start_ts, end_ts),
+                    track: TRACK_REPLAY,
+                    sender: track_identity(
+                        TRACK_REPLAY,
+                        facts
+                            .get("sender_uid_crc")
+                            .and_then(Value::as_str)
+                            .unwrap_or(""),
+                    ),
                     ts: unix_to_i64(&facts["ts"]).filter(|ts| *ts > 0),
                     text,
-                    is_comment: false,
                 });
-                if start_ts > 0
-                    && !sessions
-                        .iter()
-                        .any(|s| (s.start_ts, s.end_ts) == (start_ts, end_ts))
-                {
-                    sessions.push(SessionRow {
-                        start_ts,
-                        end_ts,
-                        rid: facts
-                            .get("rid")
-                            .and_then(Value::as_str)
-                            .unwrap_or("")
-                            .to_string(),
-                    });
-                }
             }
             Some(crate::episodes::room_corpus::SOURCE_COMMENT) => {
                 let ctime = unix_to_i64(&facts["ctime"]).unwrap_or(0);
-                let mid = facts
-                    .get("mid")
-                    .and_then(Value::as_str)
-                    .unwrap_or("")
-                    .to_string();
                 comments.push(serde_json::json!({
-                    "mid": mid, "ctime": ctime, "text": text,
+                    "mid": facts.get("mid").and_then(Value::as_str).unwrap_or(""),
+                    "rpid": facts.get("rpid").and_then(Value::as_str).unwrap_or(""),
+                    "ctime": ctime,
+                    "text": text,
                 }));
+            }
+            Some(source)
+                if source == SOURCE_WS_DANMAKU
+                    || source == SOURCE_WS_SC
+                    || source == SOURCE_WS_ENTRY =>
+            {
+                // D1 换轨：WS 窗的场次窗 = facts["session"]（窗线共享同一窗边界）；
+                // 身份 = 真实 mid（`sender_uid_mid`，非回放 crc 轨）。
+                let start_ts = unix_to_i64(&facts["session"]["start_timestamp"]).unwrap_or(0);
+                let end_ts = unix_to_i64(&facts["session"]["end_timestamp"]).unwrap_or(0);
+                let ws_rid = facts
+                    .get("session")
+                    .and_then(|s| s.get("rid"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let rid = if ws_rid.is_empty() {
+                    format!("{SESSION_RID_PREFIX}:{start_ts}")
+                } else {
+                    ws_rid.to_string()
+                };
+                interval_facts.push(IntervalFact {
+                    start_ts,
+                    end_ts,
+                    is_ws: true,
+                    rid,
+                });
+                let meta = WsWindowMeta {
+                    start_ts,
+                    end_ts,
+                    window_start: facts
+                        .get("window_start")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                };
+                if start_ts > 0 && end_ts > 0 && !ws_windows.contains(&meta) {
+                    ws_windows.push(meta);
+                }
+                if source != SOURCE_WS_ENTRY {
+                    // 弹幕/SC 行入 lines——SC 也是发言轨（含文本）；进场事件
+                    // 是纯氛围事件（无文本），不进四数行轨但场次窗照归。
+                    line_rows.push(LineRow {
+                        session_key: (start_ts, end_ts),
+                        track: TRACK_WS,
+                        sender: track_identity(
+                            TRACK_WS,
+                            facts
+                                .get("sender_uid_mid")
+                                .and_then(Value::as_str)
+                                .unwrap_or(""),
+                        ),
+                        ts: unix_to_i64(&facts["ts"]).filter(|ts| *ts > 0),
+                        text,
+                    });
+                }
             }
             _ => {}
         }
     }
+
+    // 折叠：重叠时间区间并成一场（客观时间事实，绝不做语义合并）。
+    // 重复组件（同窗多行）自然并入同一场，rid 由 WS 优先规则收敛，无需预去重。
+    let mut sessions = fold_intervals(interval_facts);
     sessions.sort_by_key(|s| (s.end_ts, s.start_ts));
 
     let mut unknown: Vec<String> = Vec::new();
@@ -258,6 +400,20 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
             empty_copy: Some(EMPTY_COPY.to_string()),
         });
     }
+
+    // 行归属：各行按其原始场次窗区间内含于折叠场（折叠界是组件的并，必命中）；
+    // 归属后行键统一换成折叠场界，后续 current/prior 判定共用同一套场对象。
+    let mut lines: Vec<LineRow> = Vec::new();
+    for mut line in line_rows {
+        if let Some(session) = sessions
+            .iter()
+            .find(|s| s.start_ts <= line.session_key.0 && line.session_key.1 <= s.end_ts)
+        {
+            line.session_key = (session.start_ts, session.end_ts);
+            lines.push(line);
+        }
+    }
+
     // sessions 尚是常驻槽位——取最新场的拷贝远离借用纠缠（SessionRow 体积极小：i64×2+String）。
     let current = SessionRow {
         start_ts: sessions.last().expect("non-empty").start_ts,
@@ -272,18 +428,27 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         .collect();
     let current_key = (current.start_ts, current.end_ts);
 
-    // 评论按 ctime 落窗归场（细则：comment 用 ctime 定场次窗）。
+    // D1 换轨诚实面：当前场次若含 WS 窗且起点为 attach（未收 LIVE 校正），
+    // 诚实标记进未知行（绝不补段、绝不假装起点=开播）。
+    if let Some(meta) = ws_windows
+        .iter()
+        .find(|meta| current.start_ts <= meta.start_ts && meta.end_ts <= current.end_ts)
+        && meta.window_start == WINDOW_START_ATTACH
+    {
+        unknown.push(
+            "本场窗起点为 WS 附着时刻（window_start=attach）——未收到该场 LIVE 校正，\
+             场次起点存在部分估计。"
+                .to_string(),
+        );
+    }
+
+    // 评论按 ctime 落窗归场（细则：comment 用 ctime 定场次窗；归属到折叠界）。
     for comment in &comments {
         let ctime = comment["ctime"].as_i64().unwrap_or(0);
         if ctime <= 0 {
             unknown.push(format!(
                 "评论缺 ctime，无法归场：rpid={}",
-                comment["text"]
-                    .as_str()
-                    .unwrap_or("")
-                    .chars()
-                    .take(12)
-                    .collect::<String>()
+                comment["rpid"].as_str().unwrap_or("")
             ));
             continue;
         }
@@ -294,10 +459,10 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         match owner {
             Some(key) => lines.push(LineRow {
                 session_key: key,
-                sender: comment["mid"].as_str().unwrap_or("").to_string(),
+                track: TRACK_COMMENT,
+                sender: track_identity(TRACK_COMMENT, comment["mid"].as_str().unwrap_or("")),
                 ts: Some(ctime),
                 text: comment["text"].as_str().unwrap_or("").to_string(),
-                is_comment: true,
             }),
             None => {
                 unknown.push(format!(
@@ -317,30 +482,42 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         .filter(|sender| !sender.is_empty())
         .collect();
     let speakers = current_speakers.len() as i64;
-    if speakers > 0 {
-        // 轮2-R1-A⑥a：身份键双轨照实说——弹幕/评论两轨人数分计（去重按字符串相等）。
-        // 删码专项：原「平台脱敏成 CRC 会误计」假设句守的是不现况（实测吐真 uid），删。
-        let danmaku_speakers: HashSet<&str> = current_lines
+
+    // D1 换轨诚实面：身份键跨轨不合并——本场发言多轨并出场时逐轨人数明示
+    // （replay/ws/comment 三轨两两或三三同场），绝不假装是同一套 uid 的并集。
+    let mut rail_speakers: Vec<(&str, usize)> = Vec::new();
+    for (track, label) in [
+        (TRACK_REPLAY, "弹幕"),
+        (TRACK_WS, "WS 弹幕"),
+        (TRACK_COMMENT, "评论"),
+    ] {
+        let count = current_lines
             .iter()
-            .filter(|line| !line.is_comment)
+            .filter(|line| line.track == track)
             .map(|line| line.sender.as_str())
             .filter(|sender| !sender.is_empty())
-            .collect();
-        let comment_speakers: HashSet<&str> = current_lines
-            .iter()
-            .filter(|line| line.is_comment)
-            .map(|line| line.sender.as_str())
-            .filter(|sender| !sender.is_empty())
-            .collect();
-        if !danmaku_speakers.is_empty() && !comment_speakers.is_empty() {
-            unknown.push(format!(
-                "本场发言两条轨并出场：弹幕 {} 人 + 评论 {} 人（去重按字符串相等），\
-                 人数按当前呈现。",
-                danmaku_speakers.len(),
-                comment_speakers.len()
-            ));
+            .collect::<HashSet<_>>()
+            .len();
+        if count > 0 {
+            rail_speakers.push((label, count));
         }
     }
+    if rail_speakers.len() >= 2 {
+        let num_word = if rail_speakers.len() == 2 {
+            "两条轨并出场"
+        } else {
+            "三条轨并出场"
+        };
+        let parts = rail_speakers
+            .iter()
+            .map(|(label, count)| format!("{label} {count} 人"))
+            .collect::<Vec<_>>()
+            .join(" + ");
+        unknown.push(format!(
+            "本场发言{num_word}：{parts}（跨轨不合并，人数按各自轨呈现）"
+        ));
+    }
+
     if speakers == 0 {
         unknown.push("本场（最新场次窗）零发言。".to_string());
         return Ok(RecapCard {
@@ -362,7 +539,8 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         });
     }
 
-    // ① 回来过的：本场发言者 ∩ 前 N 场任意场发言者。
+    // ① 回来过的：本场发言者 ∩ 前 N 场任意场发言者（身份键跨轨不合并——
+    // 回放 crc 轨与 WS 真实 mid 轨是两套身份，绝不跨轨认亲）。
     let prior_keys: HashSet<(i64, i64)> = prior.iter().map(|s| (s.start_ts, s.end_ts)).collect();
     let prior_speakers: HashSet<&str> = lines
         .iter()
@@ -381,13 +559,17 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         })
     };
 
-    // ② 密度峰：10 分钟滑窗（只数弹幕行；评论只有 ctime 颗粒，混进会稀释口径）。
+    // ② 密度峰：10 分钟滑窗（只数弹幕行——回放+WS 都是弹幕行；评论只有 ctime
+    // 颗粒，混进会稀释口径）。
     let mut timed: Vec<i64> = current_lines
         .iter()
-        .filter(|line| !line.is_comment)
+        .filter(|line| line.track != TRACK_COMMENT)
         .filter_map(|line| line.ts)
         .collect();
-    let danmaku_total = current_lines.iter().filter(|line| !line.is_comment).count();
+    let danmaku_total = current_lines
+        .iter()
+        .filter(|line| line.track != TRACK_COMMENT)
+        .count();
     let peak = if timed.is_empty() {
         if danmaku_total > 0 {
             unknown.push(format!(
@@ -617,7 +799,6 @@ mod tests {
             }
         }
         ingest_room_corpus(&store, "run-recap", &episodes).expect("ingest");
-        // tempdir 守活到函数尾——Store 自持连接，句柄独立。
         store
     }
 
@@ -625,7 +806,7 @@ mod tests {
     /// 场次：S1=[1000,2000]，S2=[3000,4600]（本场）。
     /// S2 弹幕：A×2（3020,3030）B×1（4000）C×3（4200,4210,4300 同句「晚上好！」）。
     /// → 发言 3 人；A 在 S1 也说过 → 回来 1/3；
-    ///   峰：4200 窗（4180~4780）内 3 行（4200/4210/4300）vs 3030 窗 2 行 → top=3@4200；
+    ///   峰：4000 起手 10 分窗 [4000,4600) 含 4000/4200/4210/4300 四行 → top=4@4000；
     ///   复读句「晚上好！」归一化 3 次 ≥3 → top-1。
     #[test]
     fn three_people_night_all_four_numbers_hand_checkable() {
@@ -652,7 +833,7 @@ mod tests {
         let peak = card.peak.expect("ts present");
         assert_eq!(
             peak.count, 4,
-            "4000 起手 10 分窗 [4000,4600): 4000/4200/4210/4300 四行（4200 窗只有 3 行）"
+            "4000 起手 10 分窗 [4000,4600): 4000/4200/4210/4300 四行"
         );
         assert_eq!(peak.start, unix_str_to_iso(&json!(4000)));
         assert_eq!(peak.window_minutes, RECAP_PEAK_WINDOW_MINUTES);
@@ -679,13 +860,9 @@ mod tests {
         assert!(card.naming.is_none());
     }
 
-    /// 空场的姊妹形态：有场次但零发言（如回放存在但 0 行弹幕）。
+    /// 空场的姊妹形态：场次由弹幕行反推——单人单场无历史场，「回来过」=None+未知行。
     #[test]
     fn session_without_lines_is_honest_empty() {
-        // 只立 S1 有行、S2 无行——S2 仍是「本场」（end 最新）但零发言。
-        // 造法：S2 无行 → 场次只能从有行的方发现，故换成 S1 有行但最新场的
-        // 定义再确认：sessions 由弹幕行反推，无行即无场——此形态等价于
-        // 「零 _room」空场；实测：单一场 1 行 → 无历史场 → 回来过=None+未知行。
         let store = store_with_corpus(&[((1000, 2000), vec![(1100, "hi", "A")])]);
         let card = compute_recap(&store).expect("recap");
         assert_eq!(card.status, "ready");
@@ -698,7 +875,7 @@ mod tests {
         );
     }
 
-    /// 缺时间戳：峰 None + 未知行（MAP-6 诚实面，绝非回退到行序）。
+    /// 缺时间戳：峰 None + 未知行（诚实面，绝非回退到行序）。
     #[test]
     fn missing_ts_drops_peak_into_unknown() {
         let dir = tempfile::tempdir().unwrap();
@@ -778,8 +955,8 @@ mod round2_tests {
         store
     }
 
-    /// 轮2-R1-A⑥a：弹幕+评论同场都有人 → 未知行必须明示身份键双轨
-    /// （sender_uid 并集按平台 uid 认定，去重按字符串相等）。
+    /// 轮2-R1-A⑥a→D1 换轨：弹幕+评论同场都有人 → 未知行必须明示身份轨多轨并出场
+    /// （D2 冻结共识：replay|crc 与 comment|mid 是两套身份轨，**跨轨不合并**）。
     #[test]
     fn mixed_kinds_raise_identity_risk_row() {
         let store = fresh_store("mix");
@@ -799,7 +976,10 @@ mod round2_tests {
         .unwrap();
         ingest_room_corpus(&store, "r", &[dm, cm]).unwrap();
         let card = compute_recap(&store).unwrap();
-        assert_eq!(card.speakers, 1, "同一平台 uid 并集（唯一人）");
+        assert_eq!(
+            card.speakers, 2,
+            "跨轨不合并：replay|1001 与 comment|1001 是两套身份键，按两轨计"
+        );
         assert!(
             card.unknown.iter().any(|row| row.contains("两条轨并出场")
                 && row.contains("弹幕")
@@ -836,6 +1016,254 @@ mod round2_tests {
             !card.headline.contains("没碰到"),
             "旧文案=谎话: {}",
             card.headline
+        );
+    }
+}
+
+/// D1 换轨（R2-批2-2B）钉组：WS 窗进复盘——区间折叠（重叠即并场）、WS rid 优先、
+/// `轨|uid` 身份跨轨不合并、attach 起点诚实未知行。
+#[cfg(test)]
+mod ws_recap_tests {
+    use serde_json::json;
+
+    use super::*;
+    use crate::episodes::room_corpus::{ingest_room_corpus, replay_danmaku_episodes};
+    use crate::live_ws::episodes::{WsRecorder, ingest_ws_window};
+    use crate::live_ws::message::WsEvent;
+    use crate::live_ws::session::SessionEnd;
+
+    fn fresh_store(tag: &str) -> Store {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(&dir.path().join(format!("g-{tag}.sqlite3"))).unwrap();
+        store.begin_run_fixed("r", &now_iso(), "t").unwrap();
+        store
+    }
+
+    fn assert_unknown_has(card: &RecapCard, needle: &str) {
+        assert!(
+            card.unknown.iter().any(|row| row.contains(needle)),
+            "未知行缺少「{needle}」: {:?}",
+            card.unknown
+        );
+    }
+
+    /// 合成 WS 语料 → ready 卡：一窗弹幕+SC（LIVE 校正起点）直接出四数，无需任何
+    /// 回放束；rid 走 WS 优先（`ws:{start}`）。
+    #[test]
+    fn synthetic_ws_corpus_ready_card() {
+        let store = fresh_store("ws1");
+        let mut rec = WsRecorder::attach(7, 1_000_000, 1).expect("在播开窗");
+        rec.on_event(&WsEvent::Live { live_time: 999_000 }, 1_000_001);
+        rec.on_event(
+            &WsEvent::Danmaku {
+                uid: "u-1001".into(),
+                uname: "Ａ".into(),
+                text: "好耶".into(),
+            },
+            1_000_002,
+        );
+        rec.on_event(
+            &WsEvent::SuperChat {
+                uid: "u-2002".into(),
+                uname: "Ｂ".into(),
+                text: "老板大气".into(),
+                price: 30.0,
+                start_time: Some(1_000_003),
+            },
+            1_000_003,
+        );
+        rec.on_event(&WsEvent::Preparing { round: 1 }, 1_000_004);
+        let cap = rec.finish(&SessionEnd::Closed, 1_000_004);
+        ingest_ws_window(&store, "r", &cap).unwrap();
+
+        let card = compute_recap(&store).unwrap();
+        assert_eq!(card.status, "ready");
+        assert_eq!(card.speakers, 2, "WS 弹幕+SC 两人（真实 mid 身份轨）");
+        let session = card.session.expect("session");
+        assert_eq!(session.rid, "ws:999000", "WS 窗 rid 优先");
+        assert_eq!(
+            session.start,
+            unix_str_to_iso(&json!(999_000)),
+            "LIVE 校正全场起点"
+        );
+        assert_eq!(card.peak.unwrap().count, 2, "弹幕+SC 两行带 ts 都算密度");
+        assert!(
+            !card
+                .unknown
+                .iter()
+                .any(|row| row.contains("window_start=attach")),
+            "LIVE 校正后不出现 attach 未知行: {:?}",
+            card.unknown
+        );
+    }
+
+    /// 混合轨折叠：回放束与 WS 窗同夜同窗（重叠）→ 折叠成一场（不翻倍场次）；
+    /// rid 走 WS 优先；身份跨轨不合并（回放 2 + WS 2 = 4 人），双轨并出场进未知行。
+    #[test]
+    fn mixed_track_window_folds_into_one_session() {
+        let store = fresh_store("fold");
+        // 回放束窗外 [1000,2000]：两行（sender_uid_crc 轨）。
+        let replay = replay_danmaku_episodes(
+            &json!({"records":[{
+            "rid":"r1","start_timestamp":1000,"end_timestamp":2000,
+            "messages":[
+                {"text":"旧辑A","uid":"999","shard_index":0,"ts":1100},
+                {"text":"旧辑B","uid":"888","shard_index":0,"ts":1200},
+            ]}]}),
+            "obs",
+        );
+        ingest_room_corpus(&store, "r", &replay).unwrap();
+        // WS 窗同窗 [1000,2000]（LIVE 校正 → window_start=live）：两行。
+        let mut rec = WsRecorder::attach(7, 1000, 1).unwrap();
+        rec.on_event(&WsEvent::Live { live_time: 1000 }, 1000);
+        rec.on_event(
+            &WsEvent::Danmaku {
+                uid: "u1".into(),
+                uname: "Ａ".into(),
+                text: "好耶".into(),
+            },
+            1100,
+        );
+        rec.on_event(
+            &WsEvent::Danmaku {
+                uid: "u2".into(),
+                uname: "Ｂ".into(),
+                text: "来了".into(),
+            },
+            1200,
+        );
+        rec.on_event(&WsEvent::Preparing { round: 1 }, 2000);
+        let ws_eps = rec.finish(&SessionEnd::Closed, 2000);
+        ingest_ws_window(&store, "r", &ws_eps).unwrap();
+
+        let card = compute_recap(&store).unwrap();
+        assert_eq!(card.status, "ready");
+        assert_eq!(
+            card.speakers, 4,
+            "跨轨不合并：replay|999/replay|888 + ws|u1/ws|u2 = 4 人"
+        );
+        let session = card.session.expect("session");
+        assert_eq!(session.rid, "ws:1000", "WS rid 优先于回放 r1");
+        let row = card
+            .unknown
+            .iter()
+            .find(|row| row.contains("两条轨并出场"))
+            .expect("双轨并出场必须进未知行");
+        assert!(
+            row.contains("弹幕") && row.contains("WS 弹幕"),
+            "回放弹幕 + WS 弹幕双轨明示: {row}"
+        );
+    }
+
+    /// attach 起点（未收 LIVE）→ 诚实未知行；起点=附着时刻。
+    #[test]
+    fn attach_window_raises_honest_unknown() {
+        let store = fresh_store("attach");
+        let mut rec = WsRecorder::attach(7, 1_000_000, 1).unwrap();
+        rec.on_event(
+            &WsEvent::Danmaku {
+                uid: "u-1".into(),
+                uname: "Ａ".into(),
+                text: "附着即播".into(),
+            },
+            1_000_001,
+        );
+        rec.on_event(&WsEvent::Preparing { round: 1 }, 1_000_002);
+        let cap = rec.finish(&SessionEnd::Closed, 1_000_002);
+        ingest_ws_window(&store, "r", &cap).unwrap();
+        let card = compute_recap(&store).unwrap();
+        assert_eq!(card.session.clone().unwrap().rid, "ws:1000000");
+        assert_unknown_has(&card, "window_start=attach");
+    }
+
+    /// 多项重叠折叠：两条部分重叠的回放束折叠成一场，折叠界 = [min start, max end]。
+    #[test]
+    fn overlapping_replay_windows_fold_to_union_bounds() {
+        let store = fresh_store("overlap");
+        let payload = json!({"records":[
+            {"rid":"r1","start_timestamp":1000,"end_timestamp":2000,
+             "messages":[{"text":"早","uid":"1","shard_index":0,"ts":1100}]},
+            {"rid":"r2","start_timestamp":1500,"end_timestamp":2500,
+             "messages":[{"text":"晚","uid":"2","shard_index":0,"ts":1600},
+                         {"text":"夜","uid":"3","shard_index":0,"ts":1700}]},
+        ]});
+        let eps = replay_danmaku_episodes(&payload, "obs");
+        ingest_room_corpus(&store, "r", &eps).unwrap();
+        let card = compute_recap(&store).unwrap();
+        assert_eq!(card.status, "ready");
+        let session = card.session.expect("session");
+        assert_eq!(
+            session.start,
+            unix_str_to_iso(&json!(1000)),
+            "折叠界 = min start"
+        );
+        assert_eq!(
+            session.end,
+            unix_str_to_iso(&json!(2500)),
+            "折叠界 = max end"
+        );
+        assert_eq!(card.speakers, 3, "三行入同一场");
+        assert!(card.returning.is_none(), "仅一场 → 无历史场");
+        assert!(
+            card.unknown.iter().any(|row| row.contains("第一场")),
+            "{:?}",
+            card.unknown
+        );
+    }
+
+    /// 进场-only 窗：场次窗有效（照归）但零发言——诚实空场带 session，不伪造。
+    #[test]
+    fn entry_only_window_is_honest_empty_with_session() {
+        let store = fresh_store("entry");
+        let mut rec = WsRecorder::attach(9, 5_000_000, 1).unwrap();
+        rec.on_event(
+            &WsEvent::Interact {
+                kind: 1,
+                uid: "3003".into(),
+                uname: "Ｃ".into(),
+                ts: 5_000_001,
+            },
+            5_000_001,
+        );
+        rec.on_event(&WsEvent::Preparing { round: 1 }, 5_000_002);
+        let cap = rec.finish(&SessionEnd::Closed, 5_000_002);
+        ingest_ws_window(&store, "r", &cap).unwrap();
+        let card = compute_recap(&store).unwrap();
+        assert_eq!(card.status, "empty", "进场不是发言——四数行轨零行");
+        assert_eq!(card.speakers, 0);
+        assert_eq!(card.session.clone().unwrap().rid, "ws:5000000");
+        assert_unknown_has(&card, "零发言");
+    }
+
+    /// 换轨后的 WS 断连真相不在 graph facts（contract：WsWindowCapture 承载）——
+    /// recap 不臆造；此钉锁「recap 读不到 closed_by 也不撒谎」。
+    #[test]
+    fn recap_does_not_fabricate_window_close_reason() {
+        let store = fresh_store("noclosed");
+        let mut rec = WsRecorder::attach(3, 1_000_000, 1).unwrap();
+        rec.on_event(
+            &WsEvent::Danmaku {
+                uid: "u1".into(),
+                uname: "Ａ".into(),
+                text: "hi".into(),
+            },
+            1_000_001,
+        );
+        let cap = rec.finish(&SessionEnd::ReconnectExhausted, 9_999_999);
+        assert_eq!(
+            cap.end_reason, "reconnect_exhausted",
+            "终局真相在 capture 层"
+        );
+        ingest_ws_window(&store, "r", &cap).unwrap();
+        let card = compute_recap(&store).unwrap();
+        // 不伪造任何「断连/保险丝」未知行——那是 outcome 层的账，不在 facts。
+        assert!(
+            !card
+                .unknown
+                .iter()
+                .any(|row| row.contains("保险丝") || row.contains("采录中断")),
+            "recap 不臆造窗终局: {:?}",
+            card.unknown
         );
     }
 }
@@ -964,7 +1392,7 @@ mod refresh_tests {
     }
 
     /// 钉子④：入账通道缺席（连 shared/ 目录都没有）也是零语料空场卡，
-    /// 不报错、场次门有 genuinely 空集兜底。
+    /// 不报错、未知行恒在。
     #[test]
     fn refresh_without_any_corpus_is_honest_empty() {
         let dir = tempfile::tempdir().unwrap();

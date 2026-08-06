@@ -474,6 +474,7 @@ fn named_security_knobs_and_state_machine_litera_pin() {
         [
             "queued",
             "collecting",
+            "recording",
             "episodes",
             "per_viewer_ai",
             "audience",

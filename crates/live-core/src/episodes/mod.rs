@@ -43,6 +43,12 @@ pub fn now_iso() -> String {
     )
 }
 
+/// 当前 unix 秒——与 `now_iso` 同一时钟面的整数锚（D1 WS 会话矩阵：
+/// `WsRecorder::attach`/`on_event` 的 recv_ts 与 `run_session` 的 now 回调）。
+pub fn now_unix_secs() -> i64 {
+    chrono::Utc::now().timestamp()
+}
+
 /// Python `str(value or "")`：Null/空/0/False/空数组 → ""；其余 → 文本。
 /// 注意：本函数是纯 `str(x)` 语义——数字 0 仍得 "0"（Python `str(0)`）。
 /// 需要 `or` truthiness（0/0.0 落槽）的调用点请走 collector 的 `or_chain`/层本身，

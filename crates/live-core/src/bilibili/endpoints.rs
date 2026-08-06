@@ -463,4 +463,90 @@ impl BilibiliClient {
         }
         Ok(messages)
     }
+
+    /// D1 弹幕网关握手凭据：`getDanmuInfo`（场次窗主源的连接前置）。
+    /// 取 `data.host_list[0].{host,port}` 与 `data.token`；任一缺段上抛
+    /// `Transport`（细节为固定文案，token/cookie 绝不入错误串——§11 红线）。
+    /// 与 Python `bilibili.py` 取 host_list[0] 口径一致。
+    pub fn get_danmu_info(&mut self, room_id: &str) -> Result<DanmakuInfo, BilibiliError> {
+        const ENDPOINT: &str = "/xlive/web-room/v1/index/getDanmuInfo";
+        let data = self.request(
+            &self.live_base.clone(),
+            ENDPOINT,
+            &[("id".to_string(), Some(room_id.to_string()))],
+            false,
+            Some(&format!("https://live.bilibili.com/{room_id}")),
+        )?;
+        let first = data
+            .get("host_list")
+            .and_then(Value::as_array)
+            .and_then(|list| list.first())
+            .and_then(Value::as_object);
+        let host = first
+            .and_then(|row| row.get("host"))
+            .and_then(Value::as_str)
+            .filter(|host| !host.is_empty())
+            .ok_or_else(|| BilibiliError::Transport {
+                endpoint: ENDPOINT.to_string(),
+                detail: "getDanmuInfo 响应缺 host_list[0].host".to_string(),
+            })?
+            .to_string();
+        let port = first
+            .and_then(|row| row.get("port"))
+            .and_then(Value::as_i64)
+            .and_then(|port| u16::try_from(port).ok())
+            .unwrap_or(0);
+        let token = data
+            .get("token")
+            .and_then(Value::as_str)
+            .filter(|token| !token.is_empty())
+            .ok_or_else(|| BilibiliError::Transport {
+                endpoint: ENDPOINT.to_string(),
+                detail: "getDanmuInfo 响应缺 token".to_string(),
+            })?
+            .to_string();
+        Ok(DanmakuInfo { host, port, token })
+    }
+
+    /// D1 场次窗兜底轮询：房间信息接口的 `live_status`
+    /// （0 未开播 / 1 直播中 / 2 轮播）。`live_status` 缺席才算错误，
+    /// 值 0 是平台的合法「未在播」事实，必须原样返回。
+    pub fn get_room_live_status(&mut self, room_id: &str) -> Result<i64, BilibiliError> {
+        const ENDPOINT: &str = "/room/v1/Room/get_info";
+        let data = self.request(
+            &self.live_base.clone(),
+            ENDPOINT,
+            &[("room_id".to_string(), Some(room_id.to_string()))],
+            false,
+            Some(&format!("https://live.bilibili.com/{room_id}")),
+        )?;
+        data.get("live_status")
+            .and_then(Value::as_i64)
+            .ok_or_else(|| BilibiliError::Transport {
+                endpoint: ENDPOINT.to_string(),
+                detail: "get_info 响应缺 live_status".to_string(),
+            })
+    }
+}
+
+/// `getDanmuInfo` 返回的弹幕网关凭据（D1：只取 host_list[0] + token）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DanmakuInfo {
+    /// `host_list[0].host`（原始字符串，未归一）。
+    pub host: String,
+    /// `host_list[0].port`（取不到按 0 处理，URL 组装回落 wss 标准端）。
+    pub port: u16,
+    /// 认证 key（op=7 认证包负载的一部分；只进连接，绝不进任何错误串）。
+    pub token: String,
+}
+
+impl DanmakuInfo {
+    /// WS 连接地址：port=443（或取不到）→ `wss://{host}/sub` 标准端点；
+    /// 非标准端口（含本地 mock 的随机端口）→ `ws://{host}:{port}/sub`。
+    pub fn url(&self) -> String {
+        match self.port {
+            0 | 443 => format!("wss://{}/sub", self.host),
+            port => format!("ws://{}:{}/sub", self.host, port),
+        }
+    }
 }

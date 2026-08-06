@@ -10,13 +10,19 @@
 use std::sync::{Arc, Mutex};
 
 use live_core::config::Config;
+use live_core::episodes::{now_iso, now_unix_secs};
 use live_core::events::RunEvents;
+use live_core::live_ws::episodes::{WsRecorder, ingest_ws_window};
+use live_core::live_ws::session::{WsSessionConfig, run_session};
 use serde_json::{Value, json};
 
 /// 状态序（design §10 枚举字面）。
-pub const RUN_STATES: [&str; 7] = [
+/// 轮2-R2-2B（D1 WS 挂接）：`recording` 插在 collecting/episodes 之间——收集尾段
+/// 探测在播时开 WS 场次窗，关窗后进既有 episodes 相（原状态机不破）。
+pub const RUN_STATES: [&str; 8] = [
     "queued",
     "collecting",
+    "recording",
     "episodes",
     "per_viewer_ai",
     "audience",
@@ -298,7 +304,7 @@ impl Registry {
                         // 阶段①：collection
                         let client = client.map_err(|error| error.to_string())?;
                         let mut emit_fn = |message: &str| emit(message);
-                        let summary = live_core::collector::run::collect_with_client(
+                        let mut summary = live_core::collector::run::collect_with_client(
                             client,
                             &config,
                             mode,
@@ -308,6 +314,37 @@ impl Registry {
                         if collect_only {
                             // Z4a：collect_* 是事实层终局——collect_with_client 的汇总
                             // 即 outcome（无 viewer_failures 键 → 默认 0 → 非 partial）。
+                            // 轮2-R2-2B（D1 挂接）：collect 尾段在播采录——live_ws_record==1
+                            // 且房间在播时开 WS 弹幕窗（recording 相），窗线入账 graph
+                            // （kind=ws-record，对照窗排除见 query.rs 头注），摘要并进
+                            // outcome 的 ws_window 键；采录失败响铃不绊 run（采集产物
+                            // 已落盘，弹幕窗是语料补充面）。旧命名「status=complete 已
+                            // 冻结」不破——summary 从 collect_with_client 来，此处只增键。
+                            match record_ws_window(
+                                &config,
+                                &bilibili_hosts,
+                                &inner_registry,
+                                &inner_run_id,
+                                &emit,
+                            ) {
+                                Ok(Some(ws_window)) => {
+                                    inner_registry.set_status(&inner_run_id, "episodes");
+                                    emit(&format!(
+                                        "[WS] 弹幕窗采录完成（{} 线入账，end_reason={}）",
+                                        ws_window["lines"].as_i64().unwrap_or(0),
+                                        ws_window["end_reason"].as_str().unwrap_or("unknown")
+                                    ));
+                                    let mut outcome = summary.clone();
+                                    outcome["ws_window"] = ws_window;
+                                    summary = outcome;
+                                }
+                                Ok(None) => {
+                                    emit("[WS] 本轮未开弹幕窗（配置关/房间未在播）");
+                                }
+                                Err(error) => {
+                                    emit(&format!("[WS] 弹幕窗采录失败：{error}"));
+                                }
+                            }
                             // P0-4（复盘解耦）：事实层终局顺带 T0 出卡——下播复盘四个数
                             // 是 shared/ 语料的纯规则聚合（零 AI），不再等全量感知；
                             // AI 命名仍属认知层（缺位 = null）。出卡失败响铃不绊 run
@@ -412,6 +449,149 @@ impl Registry {
         });
         Ok(shared)
     }
+}
+
+/// 轮2-R2-2B（D1 挂接）：collect 尾段的 WS 弹幕窗采录。
+///
+/// 流程（run 状态机 `collecting → recording → episodes`）：
+/// 1. `live_ws_record==1` 且房间在播（`get_room_live_status==1`）才开窗；
+/// 2. `get_danmu_info` 拿网关 host/port/token → `WsSessionConfig`（cookie 只进握手头）；
+/// 3. current_thread runtime 跑 `run_session`，事件流直灌 `WsRecorder`；
+/// 4. `finish` 收窗 → 窗线入账 graph（kind=ws-record；对照窗排除见 query.rs）→ 摘要。
+///
+/// 失败纪律：采录是语料补充面——任何一步失败响铃 `emit` 但不绊 run；返回
+/// `Ok(None)` = 配置关/房间未在播（未开窗），`Ok(Some(Value))` = 窗摘要
+/// （outcome 的 `ws_window` 键：lines / counts / end_reason / session / unknowns），
+/// `Err` = 开窗后失败（摘要不产出，只有事件足迹）。
+fn record_ws_window(
+    config: &Config,
+    bilibili_hosts: &Option<(String, String)>,
+    registry: &Registry,
+    run_id: &str,
+    emit: &dyn Fn(&str),
+) -> Result<Option<Value>, String> {
+    if config.collection.live_ws_record != 1 {
+        return Ok(None);
+    }
+    let Ok(room_id) = config.bilibili.room_id.parse::<i64>() else {
+        emit(&format!(
+            "[WS] 房间号非法（{}），跳过弹幕窗采录",
+            config.bilibili.room_id
+        ));
+        return Ok(None);
+    };
+    emit(&format!(
+        "[WS] live_ws_record 开启，探测房间 {room_id} 在播状态…"
+    ));
+    let client = match bilibili_hosts {
+        Some((api, live)) => live_core::bilibili::BilibiliClient::with_origin(
+            api,
+            live,
+            &config.bilibili.cookie,
+            config.collection.request_delay_seconds,
+            config.collection.timeout_seconds,
+        ),
+        None => live_core::bilibili::BilibiliClient::new(
+            &config.bilibili.cookie,
+            config.collection.request_delay_seconds,
+            config.collection.timeout_seconds,
+        ),
+    }
+    .map_err(|error| error.to_string())?;
+    let mut client = client;
+
+    let live_status = client
+        .get_room_live_status(&config.bilibili.room_id)
+        .map_err(|error| error.to_string())?;
+    if live_status != 1 {
+        emit(&format!(
+            "[WS] 房间未在播（live_status={live_status}），跳过弹幕窗采录"
+        ));
+        return Ok(None);
+    }
+
+    emit("[WS] 房间在播，建立弹幕网关凭据…");
+    let danmu = client
+        .get_danmu_info(&config.bilibili.room_id)
+        .map_err(|error| error.to_string())?;
+    let mut session_cfg = WsSessionConfig::new(danmu.url(), room_id, danmu.token);
+    // cookie 只进 WS 握手头（§11 红线：绝不进任何错误串/日志面）。
+    session_cfg.cookie = config.bilibili.cookie.clone();
+
+    let Some(mut recorder) = WsRecorder::attach(room_id, now_unix_secs(), 1) else {
+        emit("[WS] 开窗失败（在播校验未过），跳过弹幕窗采录");
+        return Ok(None);
+    };
+    registry.set_status(run_id, "recording");
+    emit(&format!("[WS] 弹幕窗开启（rid={}，起点 attach）…", room_id));
+
+    // 会话尽量跑：PREPARING 关窗 / 断连重连预算尽 / 12h 保险丝 / 认证失败。
+    // 与 pipeline 同款 current_thread runtime（collect 是同步线程，不拉全局池）。
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .map_err(|error| format!("tokio runtime: {error}"))?;
+    let report = rt.block_on(run_session(
+        &session_cfg,
+        &mut |ev| {
+            recorder.on_event(ev, now_unix_secs());
+            Ok(())
+        },
+        &now_unix_secs,
+    ))?;
+
+    let capture = recorder.finish(&report.end, now_unix_secs());
+    emit(&format!(
+        "[WS] 弹幕窗收窗：end_reason={}，线 {} 条，未知 {} 行",
+        capture.end_reason,
+        capture.episodes.len(),
+        capture.unknowns.len()
+    ));
+
+    // 窗线入账 graph（kind=ws-record，pipeline 数据面之外的账本容器——对照窗
+    // 排除，语义注释见 graph/query.rs run_pair_delta）。
+    match live_core::graph::Store::open(&config.output_dir.join("graph").join("perception.sqlite3"))
+    {
+        Ok(store) => {
+            let graph_run = format!("run:{}", uuid::Uuid::new_v4().simple());
+            if let Err(err) = store.begin_run_typed(
+                &graph_run,
+                &now_iso(),
+                live_core::graph::Store::RUN_KIND_WS_RECORD,
+                live_core::graph::Store::RUN_KIND_WS_RECORD,
+                None,
+            ) {
+                emit(&format!("[WS] 弹幕窗 run 开账失败：{err}"));
+            } else {
+                match ingest_ws_window(&store, &graph_run, &capture) {
+                    Ok(()) => {
+                        if let Err(err) = store.complete_run(&graph_run) {
+                            emit(&format!("[WS] 弹幕窗 run 结清失败：{err}"));
+                        }
+                    }
+                    Err(err) => {
+                        emit(&format!("[WS] 弹幕窗线入账失败：{err}"));
+                        if let Err(close_err) = store.fail_run(&graph_run, &err.to_string(), false)
+                        {
+                            emit(&format!("[WS] 弹幕窗 run 记败失败：{close_err}"));
+                        }
+                    }
+                }
+            }
+        }
+        Err(err) => emit(&format!(
+            "[WS] graph store 打开失败（弹幕窗线未入账）：{err}"
+        )),
+    }
+
+    let ws_window = json!({
+        "lines": capture.episodes.len(),
+        "session": capture.session,
+        "unknowns": capture.unknowns,
+        "counts": capture.counts,
+        "end_reason": capture.end_reason,
+    });
+    Ok(Some(ws_window))
 }
 
 /// ag3-F1：partial = viewer 阶段已完整走得一遍。数据源是 pipeline 契约键
