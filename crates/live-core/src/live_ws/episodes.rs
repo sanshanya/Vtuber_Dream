@@ -1,5 +1,9 @@
 //! WS 事件流 → 场次窗 Episode 化（R2 批 2 D1 第二段 2B「WS 挂接 + 复盘卡换源」）。
 //!
+//! 体积备书（轮3）：超 500 线 = recorder 状态体 + LineRender/Episode 双形态 +
+//! 本模块自带的大型钉组（fixture 构建成本随轴走）。缝 = 钉组后移 tests/ 单独包；
+//! 真实需求到（第二挂接面/第二事实源）时再动。
+//!
 //! 承接 `session.rs`（2A）产出的 `WsEvent` 流，把单条 WS 会话切成稳定命名的
 //! 弹幕/SC/进场 Episode，规则按执行单批 2 的「WS 场次窗」小节：
 //!
@@ -20,8 +24,9 @@
 //!   entry 增 `interact_kind`。刻意**不产出** `creator_name` / `tags` /
 //!   `platform_category`（三键触发现货实体边，graph/build.rs）——WS 线只挂
 //!   房间身份（`_room`）与发送者真实 mid。
-//! - **ts_source**：弹幕永远本地受时（`local_recv`）；SC 用 `data.start_time`
-//!   （`protocol`），缺席回落本地；进场用协议 `timestamp`（`protocol`）。
+//! - **ts_source**：弹幕用 `info[9].ts`（`protocol`）、缺载回落本地受时
+//!   （`local_recv`）——幂等键随平台事实走，断线重发/同窗重跑才能撞库去重；
+//!   SC 用 `data.start_time`；进场用协议 `timestamp`（同标协议轨）。
 //! - **计数**（`counts`，BTreeMap 保序）：`Popularity` 只记账
 //!   `popularity_latest` 不产 Episode；`SUPER_CHAT_MESSAGE_DELETE` 只计数
 //!   `super_chat_delete`；弹幕/SC/进场各计本源事件数。
@@ -159,14 +164,25 @@ impl WsRecorder {
                     self.window_origin = WINDOW_START_LIVE;
                 }
             }
-            WsEvent::Danmaku { uid, uname, text } => {
+            WsEvent::Danmaku {
+                uid,
+                uname,
+                text,
+                ts,
+            } => {
                 *self.counts.entry(COUNT_DANMAKU.to_string()).or_insert(0) += 1;
+                // 平台时戳（info[9].ts）优先：幂等键随平台事实走——断线重发/同窗
+                // 重跑撞库去重才成立；缺载才落本地收到时刻并自标 ts_source。
+                let (ts_sec, ts_source) = match ts.filter(|t| *t > 0) {
+                    Some(t) => (t, TS_SOURCE_PROTOCOL),
+                    None => (recv_ts, TS_SOURCE_LOCAL_RECV),
+                };
                 if let Some(ep) = self.project(&LineRender {
                     uid: uid.as_str(),
                     uname: uname.as_str(),
                     text: text.as_str(),
-                    ts_sec: recv_ts,
-                    ts_source: TS_SOURCE_LOCAL_RECV,
+                    ts_sec,
+                    ts_source,
                     price: None,
                     interact_kind: None,
                 }) {
@@ -470,6 +486,7 @@ mod tests {
                 uid: "u-1".into(),
                 uname: "某人".into(),
                 text: "好耶".into(),
+                ts: None,
             },
             1_000_002,
         );
@@ -525,6 +542,7 @@ mod tests {
                 uid: "u-1".into(),
                 uname: String::new(),
                 text: "附着即播".into(),
+                ts: None,
             },
             1_000_001,
         );
@@ -553,6 +571,7 @@ mod tests {
                 uid: "u1".into(),
                 uname: "名".into(),
                 text: "好".into(),
+                ts: None,
             },
             1_000_002,
         );
@@ -669,6 +688,7 @@ mod tests {
                     uid: "u-1".into(),
                     uname: String::new(),
                     text: "好".into(),
+                    ts: None,
                 },
                 1_000_001,
             );
@@ -705,6 +725,7 @@ mod tests {
                 uid: "u-5".into(),
                 uname: String::new(),
                 text: "哈哈".into(),
+                ts: None,
             },
             1_000_002,
         );
@@ -772,6 +793,7 @@ mod tests {
                 uid: "u1".into(),
                 uname: String::new(),
                 text: "前".into(),
+                ts: None,
             },
             1_000_010,
         );
@@ -780,6 +802,7 @@ mod tests {
                 uid: "u2".into(),
                 uname: String::new(),
                 text: "后".into(),
+                ts: None,
             },
             1_000_012,
         );
@@ -813,6 +836,7 @@ mod tests {
                 uid: "u1".into(),
                 uname: String::new(),
                 text: "挂".into(),
+                ts: None,
             },
             1_000_010,
         );
@@ -845,6 +869,7 @@ mod tests {
                 uid: String::new(),
                 uname: String::new(),
                 text: "坏".into(),
+                ts: None,
             },
             0,
         );
@@ -862,6 +887,7 @@ mod tests {
                 uid: "u9".into(),
                 uname: String::new(),
                 text: "好".into(),
+                ts: None,
             },
             1_000_003,
         );
@@ -886,6 +912,7 @@ mod tests {
                 uid: "u-1".into(),
                 uname: "甲".into(),
                 text: "好耶".into(),
+                ts: None,
             },
             1_000_002,
         );

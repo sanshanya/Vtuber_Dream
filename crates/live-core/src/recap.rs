@@ -1059,6 +1059,7 @@ mod ws_recap_tests {
                 uid: "u-1001".into(),
                 uname: "Ａ".into(),
                 text: "好耶".into(),
+                ts: None,
             },
             1_000_002,
         );
@@ -1121,6 +1122,7 @@ mod ws_recap_tests {
                 uid: "u1".into(),
                 uname: "Ａ".into(),
                 text: "好耶".into(),
+                ts: None,
             },
             1100,
         );
@@ -1129,6 +1131,7 @@ mod ws_recap_tests {
                 uid: "u2".into(),
                 uname: "Ｂ".into(),
                 text: "来了".into(),
+                ts: None,
             },
             1200,
         );
@@ -1165,6 +1168,7 @@ mod ws_recap_tests {
                 uid: "u-1".into(),
                 uname: "Ａ".into(),
                 text: "附着即播".into(),
+                ts: None,
             },
             1_000_001,
         );
@@ -1246,6 +1250,7 @@ mod ws_recap_tests {
                 uid: "u1".into(),
                 uname: "Ａ".into(),
                 text: "hi".into(),
+                ts: None,
             },
             1_000_001,
         );

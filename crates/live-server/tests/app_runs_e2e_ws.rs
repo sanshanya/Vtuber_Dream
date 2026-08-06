@@ -296,6 +296,17 @@ fn preparing(round: i64) -> Vec<u8> {
     p(5, 0, body.to_string().as_bytes())
 }
 
+/// 带平台时戳的弹幕（info[9] = JSON 字符串，按线上真实线形）：幂等键随平台
+/// 事实走，同窗重发/断线重演才能撞库——缺 info[9] 的旧 helper 走的是本地受时回落。
+fn danmaku_at(text: &str, uid: i64, uname: &str, ts: i64) -> Vec<u8> {
+    let meta = json!({"ts": ts}).to_string();
+    let body = json!({
+        "cmd": "DANMU_MSG",
+        "info": [0, text, [uid, uname], 0, 0, 0, 0, 0, 0, meta],
+    });
+    p(5, 0, body.to_string().as_bytes())
+}
+
 fn unpack_client_frame(msg: &Message) -> Vec<RawPacket> {
     match msg {
         Message::Binary(d) => decode_packets(d).expect("客户端帧可切包"),
@@ -677,5 +688,105 @@ async fn ws_record_auth_refused_is_honest_window_no_token_leak() {
     assert!(
         !serialized.contains(WS_TEST_TOKEN),
         "token 不得出现在 outcome/run 面：{serialized}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// 钉 5（规格批 2 钉 1 补齐）：同窗重跑幂等——两条带固定平台 ts 的弹幕在两轮
+// collect_streamer 间原样重发（断线重发/重演的现实对应物），_room 的
+// live_ws_danmaku 账必须停在 2 行（撞库去重），且落库 ts = 平台 ts。
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn ws_window_same_platform_ts_rerun_is_idempotent() {
+    let bilibili = MockServer::start().await;
+    mount_bilibili_baseline(&bilibili).await;
+    mount_room_live_status(&bilibili, 1).await;
+
+    let (listener, ws_port) = bind_ws().await;
+    mount_danmu_info(&bilibili, ws_port).await;
+
+    // 两轮一模一样的下线流：同 ts 的两条弹幕 + preparing 收窗。
+    let make_script = || {
+        scr(move |mut ws| {
+            Box::pin(async move {
+                expect_auth(&mut ws).await;
+                ws.send(Message::Binary(auth_ok())).await.unwrap();
+                ws.send(Message::Binary(danmaku_at(
+                    "你好",
+                    1001,
+                    "弹幕甲",
+                    1_700_000_000,
+                )))
+                .await
+                .unwrap();
+                ws.send(Message::Binary(danmaku_at(
+                    "好耶",
+                    1002,
+                    "弹幕乙",
+                    1_700_000_005,
+                )))
+                .await
+                .unwrap();
+                ws.send(Message::Binary(preparing(1))).await.unwrap();
+                while let Some(Ok(_)) = ws.next().await {}
+            })
+        })
+    };
+    let server = spawn_mock(listener, vec![make_script(), make_script()]);
+
+    let (_tmp, config_path, app, registry) = build_ws_fixture(&bilibili.uri(), true);
+    let out_dir = live_core::config::load_config(&config_path)
+        .expect("config loads")
+        .output_dir;
+
+    for round in 1..=2 {
+        let (status, body) = oneshot(
+            &app,
+            "POST",
+            "/api/runs",
+            Some(json!({"kind": "collect_streamer"})),
+        )
+        .await;
+        assert_eq!(status, 202, "round {round}: {body}");
+        let run_id = body["run_id"].as_str().unwrap().to_string();
+        let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
+        assert_eq!(snapshot["status"], "done", "round {round}: {snapshot}");
+        assert_eq!(
+            snapshot["outcome"]["ws_window"]["lines"],
+            json!(2),
+            "round {round} 应各采 2 线：{snapshot}"
+        );
+    }
+    finish_mock(server).await;
+
+    let store = graph_store(&out_dir);
+    let eps = live_core::graph::query::episodes(&store, "_room", None).expect("episodes 查询");
+    let ws_lines: Vec<_> = eps
+        .iter()
+        .filter(|e| e["source"] == json!("live_ws_danmaku"))
+        .collect();
+    assert_eq!(
+        ws_lines.len(),
+        2,
+        "同窗重发不得增行（幂等键撞库）：实际 {} 行：{ws_lines:?}",
+        ws_lines.len()
+    );
+    // 平台事实落库：ts = info[9].ts（而非本地受时），来源自标 protocol。
+    let mut ts_set: Vec<i64> = ws_lines
+        .iter()
+        .map(|e| e["platform_facts"]["ts"].as_i64().expect("facts.ts"))
+        .collect();
+    ts_set.sort_unstable();
+    assert_eq!(
+        ts_set,
+        vec![1_700_000_000, 1_700_000_005],
+        "落库 ts 必须是平台 ts：{ts_set:?}"
+    );
+    assert!(
+        ws_lines
+            .iter()
+            .all(|e| e["platform_facts"]["ts_source"] == json!("protocol")),
+        "ts_source 应自标 protocol：{ws_lines:?}"
     );
 }

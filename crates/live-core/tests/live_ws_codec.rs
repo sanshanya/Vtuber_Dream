@@ -203,7 +203,8 @@ fn zlib_arm_expands_inner_stream() {
         WsEvent::Danmaku {
             uid: "42".into(),
             uname: "阿冰".into(),
-            text: "联赛三分".into()
+            text: "联赛三分".into(),
+            ts: None,
         }
     );
 }
@@ -262,6 +263,7 @@ fn danmaku_standard_body_fields() {
             uid: "3546595083686995".to_string(),
             uname: "苏夏陈树".to_string(),
             text: "我再打一把就睡".to_string(),
+            ts: None,
         }
     );
 }

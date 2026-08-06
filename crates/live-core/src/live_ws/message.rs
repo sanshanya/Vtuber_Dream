@@ -38,11 +38,14 @@ pub enum WsEvent {
     AuthAck { code: i64 },
     /// op=3 心跳回复：body 前 4 字节大端 u32 人气值（平台事实「在线数」）。
     Popularity { value: u32 },
-    /// DANMU_MSG：真实 mid / uname / 文本。
+    /// DANMU_MSG：真实 mid / uname / 文本；`ts` = 平台时戳（info[9].ts，缺载=None，
+    /// 消费侧落 local_recv 与 ts_source 标记——B-A4 教训：采集时刻≠行为时刻，
+    /// 且幂等键吃平台 ts 才能在断线重发/同窗重跑间稳定）。
     Danmaku {
         uid: String,
         uname: String,
         text: String,
+        ts: Option<i64>,
     },
     /// SUPER_CHAT_MESSAGE（含 _JPN 同构）：金额（元）/ 发者真实 mid / uname / 文本 /
     /// 平台时间戳（`data.start_time`，缺段=Some 缺到 None——绝不自造时间）。
@@ -138,7 +141,20 @@ fn parse_danmaku(v: &Value) -> Option<WsEvent> {
         .and_then(Value::as_str)
         .unwrap_or("")
         .to_string();
-    Some(WsEvent::Danmaku { uid, uname, text })
+    // info[9] = 平台元数据 JSON 串 `{"ts":<epoch秒>,"ct":"…"}`（message_stream.md）：
+    // 有则平台时戳（稳定幂等锚）；缺载 = None → 消费侧落 local_recv 并自标。
+    let ts = info
+        .get(9)
+        .and_then(Value::as_str)
+        .and_then(|meta| serde_json::from_str::<Value>(meta).ok())
+        .and_then(|meta| meta.get("ts").and_then(num_to_i64))
+        .or_else(|| info.get(9).and_then(num_to_i64));
+    Some(WsEvent::Danmaku {
+        uid,
+        uname,
+        text,
+        ts,
+    })
 }
 
 fn parse_super_chat(v: &Value) -> Option<WsEvent> {
