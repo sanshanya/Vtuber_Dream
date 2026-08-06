@@ -18,6 +18,10 @@
 //! 活跃归属已全部就位；merge 同参重放判据 = 源已全部缺失 ∧ 账上有同参 MAINTENANCE
 //! 完成记录（缺账的「源从未存在」照 404 报错面，不与重放混）。参数 canon：滤空串
 //! → 排序去重（输入序无关，写入与账单共用同一 canon）。
+//!
+//! 事实闸（§4 红线，merge/drop 同面）：merge 的源实体随并入被实删，故源必须全部
+//! source_kind='ai'；平台事实实体只可作 target（被并入方，自身行不被改写）。
+//! 本闸源于外部复审的如实指控：drop 有闸而 merge 漏闸，merge 路径可实删事实实体。
 
 use rusqlite::{OptionalExtension, params};
 use serde_json::{Map, Value};
@@ -273,6 +277,21 @@ impl Store {
                 });
             }
             return not_found(format!("entity_merge：源实体不存在：{}", missing.join(",")));
+        }
+        // 事实闸（§4 红线，与 entity_drop 同面）：merge 会实删源实体——源必须全部是
+        // AI 归属；平台事实 entity 只能做 target（被并入、自身行不被改写）。
+        for source in &sources {
+            let kind: String = self.conn.query_row(
+                "SELECT source_kind FROM entities WHERE entity_id=?",
+                params![source],
+                |row| row.get(0),
+            )?;
+            if kind != "ai" {
+                return invalid(format!(
+                    "entity_merge：源实体 {source} 的 source_kind={kind}，\
+                     仅 AI 归属（source_kind='ai'）实体可作 merge 源——平台事实只可当被并入方（target）"
+                ));
+            }
         }
         with_savepoint("entity_merge", self, move || {
             let now = self.now();

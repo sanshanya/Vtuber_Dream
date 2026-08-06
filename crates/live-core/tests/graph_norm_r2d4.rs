@@ -256,6 +256,46 @@ fn entity_drop_rejects_platform_facts_and_unknown_ids() {
 }
 
 // ---------------------------------------------------------------------------
+// merge 事实闸钉（外部复审如实指控的洞）：平台事实只可作 target（被并入、
+// 自身行不改写），作 merge 源必拒——merge 会实删源实体，§4 红线同 drop 面。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn entity_merge_rejects_platform_fact_source_but_allows_target() {
+    let fx = drop_fixture();
+    let platform_id = "entity:game:platform-demo";
+    fx.store
+        .upsert_platform_entity(
+            platform_id,
+            "平台星图",
+            "game",
+            &json!({"identity_source": "bilibili"}),
+        )
+        .unwrap();
+
+    // 平台事实作源：Invalid，且零写入（实体双方均在）。
+    let err = fx
+        .store
+        .entity_merge(&[platform_id.to_string()], &fx.entity)
+        .unwrap_err();
+    assert!(matches!(err, MaintenanceError::Invalid(_)), "{err}");
+    let text = err.to_string();
+    assert!(text.contains("platform_fact"), "{text}");
+    assert!(text.contains(platform_id), "{text}");
+    assert!(fx.store.entity_exists(platform_id).unwrap());
+    assert!(fx.store.entity_exists(&fx.entity).unwrap());
+
+    // 平台事实作 target：AI 碎片并入事实实体（事实行不被删除）→ 放行。
+    let outcome = fx
+        .store
+        .entity_merge(std::slice::from_ref(&fx.entity), platform_id)
+        .unwrap();
+    assert!(outcome.changed);
+    assert!(fx.store.entity_exists(platform_id).unwrap());
+    assert!(!fx.store.entity_exists(&fx.entity).unwrap());
+}
+
+// ---------------------------------------------------------------------------
 // list_entities 分页钉：稳定排序 / offset、limit 语义 / 钳制 / aliases 形状
 // ---------------------------------------------------------------------------
 

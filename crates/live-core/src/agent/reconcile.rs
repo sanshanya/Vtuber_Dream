@@ -172,14 +172,26 @@ pub fn search_entities_tool<C: HasStore>() -> AgentTool<C> {
 }
 
 /// 校验 Rule 概述：全部实体 ID 必须存在；merge target 不得出现在自身 sources；
-/// 全计划任何实体 ID 只能被使用一次；rationale 非空且 ≤200 字；drop 只允许
-/// source_kind == 'ai' 的实体（bilibili_tag/bilibili_category/creator 等平台
-/// 事实是 UI 事实面，不是 AI 可删面）。空计划恒合法（= 不确定就不动）。
+/// 全计划任何实体 ID 只能被使用一次；rationale 非空且 ≤200 字；drop 与 **merge 源**
+/// 只允许 source_kind == 'ai' 的实体（bilibili_tag/bilibili_category/creator 等平台
+/// 事实是 UI 事实面，不是 AI 可删面——merge 会实删源实体，故平台事实只可当被并入
+/// 方 target）。空计划恒合法（= 不确定就不动）。
 fn validate_draft(store: &Store, draft: &EntityReconcileDraft) -> Vec<String> {
     let mut errors = Vec::new();
     if draft.merges.is_empty() && draft.drops.is_empty() {
         return errors;
     }
+
+    let source_kind_of = |id: &str| -> Option<String> {
+        store
+            .conn
+            .query_row(
+                "SELECT source_kind FROM entities WHERE entity_id=?1",
+                [id],
+                |row| row.get(0),
+            )
+            .ok()
+    };
 
     let check_rationale = |label: &str, rationale: &str, errors: &mut Vec<String>| {
         let trimmed = rationale.trim();
@@ -242,6 +254,14 @@ fn validate_draft(store: &Store, draft: &EntityReconcileDraft) -> Vec<String> {
             if !store.entity_exists(source).unwrap_or(false) {
                 errors.push(format!("{label}.source_entity_ids[{j}] 不存在：{source}"));
             }
+            if let Some(kind) = source_kind_of(source)
+                && kind != "ai"
+            {
+                errors.push(format!(
+                    "{label}.source_entity_ids[{j}]：实体 {source} 的 source_kind={kind}，\
+                     merge 会实删源实体——平台事实只可当被并入方（target），不可作 merge 源"
+                ));
+            }
             claim(
                 source,
                 &format!("{label}.source_entity_ids[{j}]"),
@@ -264,15 +284,7 @@ fn validate_draft(store: &Store, draft: &EntityReconcileDraft) -> Vec<String> {
         if !store.entity_exists(id).unwrap_or(false) {
             errors.push(format!("{label}.entity_id 不存在：{id}"));
         }
-        let source_kind: Option<String> = store
-            .conn
-            .query_row(
-                "SELECT source_kind FROM entities WHERE entity_id=?1",
-                [id],
-                |row| row.get(0),
-            )
-            .ok();
-        if let Some(kind) = source_kind
+        if let Some(kind) = source_kind_of(id)
             && kind != "ai"
         {
             errors.push(format!(
@@ -536,6 +548,35 @@ mod tests {
                 .any(|e| e.contains("source_kind=platform_fact")),
             "{errors:?}"
         );
+    }
+
+    #[test]
+    fn platform_fact_merge_source_is_rejected_target_allowed() {
+        let store = mem_store();
+        seed(&store, "e:tag1", "platform_fact");
+        seed(&store, "e:a1", "ai");
+        // 平台事实作 merge 源：并入会实删源实体 → 事实闸拒。
+        let d = draft(
+            vec![
+                json!({"target_entity_id": "e:a1", "source_entity_ids": ["e:tag1"], "rationale": "r"}),
+            ],
+            vec![],
+        );
+        let errors = validate_draft(&store, &d);
+        assert!(
+            errors
+                .iter()
+                .any(|e| e.contains("source_kind=platform_fact")),
+            "{errors:?}"
+        );
+        // 平台事实作 target（被并入方）：自身行不被改写 → 放行。
+        let d = draft(
+            vec![
+                json!({"target_entity_id": "e:tag1", "source_entity_ids": ["e:a1"], "rationale": "r"}),
+            ],
+            vec![],
+        );
+        assert!(validate_draft(&store, &d).is_empty());
     }
 
     #[test]
