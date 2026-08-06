@@ -1,6 +1,9 @@
 //! 读路径（M3 工具面基元）：search_entities / references / episodes；
 //! 面板聚合读：graph_stats / run_pair_delta（live-server 概览指标条消费）。
 //!
+//! 体积备书（轮3）：超 500 线 = 两族消费者同卷（LLM 工具读 + server 概览读），
+//! 共 row_to_map/fetch_all 读原语。缝 = 概览统计收 `stats.rs`；真实需求到再动。
+//!
 //! 上限口径：全局 GRAPH_QUERY_LIMIT = 500（references 分块 / episodes 钳制），
 //! search_entities 另封顶 100（Python parity，SEARCH_ENTITIES_LIMIT）。
 //!

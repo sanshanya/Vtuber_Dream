@@ -1,6 +1,10 @@
 //! 下播复盘卡·纯规则层（迭代细则 v1 §1 P0-2）：从 `_room` 房间语料 Episode 的
 //! platform_facts 直接聚四个数——**全部程序事实，零 AI**。
 //!
+//! 体积备书（轮3）：超 500 线 = compute_recap 单遍四规则（共享 sessions 归类单元
+//! 走遍一次弹幕流）+ fixture 对齐测试 ~1/3。逐规则拆会复制 sessions/normalize 预处理；
+//! 拆缝 = 真实需求到（如新增第五数共享窗口）时按规则函数出 `rules.rs`。
+//!
 //! 四个数（细则原文）：
 //! 1. 本场 distinct 发言 uid 数（danmaku+comment 并集）；
 //! 2. 回来过的：本场 uid ∩ 前 N 场发言 uid（`RECAP_LOOKBACK_SESSIONS`；

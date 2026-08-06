@@ -1,5 +1,9 @@
 //! M4-D 合成 demo 通道（Python demo.py 平移，D-5 裁剪：不产 peers/* 与 HTML 站）。
 //!
+//! 体积备书（轮3）：超 500 线 = 端到端单一流水线 + 数据字面（demo_viewers/specs；
+//! 同观众断言的依据）。字面-行为同卷邻置正是金样本独立性原则（批次 B3 内特批）；
+//! 不要把字面挪出去。
+//!
 //! 与真实采集 schema 完全一致的合成三观众（demo-1/2 共享「异环」→ SAME_AS）→
 //! baseline → Episode → 合成终局提交 → 图应用 → project 取回实体/提及 ID →
 //! 合成 overall → apply_audience → complete_run → ai/* 落盘。全程零网络零 LLM。

@@ -1,5 +1,9 @@
 //! 线索账本（design §8.4 + §9.2 行 254 G2 JSONL→表迁移）。
 //!
+//! 体积备书（轮3）：超 500 线 = 账本状态机 + JSONL→表迁移卫 + P0-3 annex 回喂。
+//! annex 段只在「consumed」一行与账本体耦合——可分 `runs/annex.rs`，待 annex 条规
+//! 增生再动（现在拆是切正交设计面，无收益）。
+//!
 //! - 账面 = graph store 的 `discovery_leads` 表；身份 = (type, locator) 的
 //!   `dedupe_key`（hash_parts 同源 sha1·16hex），表主键即幂等唯一键——
 //!   同键任意状态再入账 → OR IGNORE 跳行（幂等）。

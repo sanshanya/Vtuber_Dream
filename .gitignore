@@ -19,3 +19,5 @@ live-server.log
 kizuna-snapshot.md
 *-snapshot.md
 target-probe/
+# ZCode/代理本会话工作面（plans/阶段产物，与仓体无关）
+.zcode/

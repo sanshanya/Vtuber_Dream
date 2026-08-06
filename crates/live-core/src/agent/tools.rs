@@ -1,5 +1,9 @@
 //! M3-B 调查工具面（只读）+ ResearchService（缓存 / 按运行隔离的注册表 / 搜索快照）。
 //!
+//! 体积备书（轮3）：超 500 线是粘合成形——工具工厂闭包按名借 ctx 的 HasResearch/
+//! HasStore 引用，ResearchService 的缓存读写/快照落盘/tuple 软锚集中不拆。潜在缝=
+//! 服务面拆 `research.rs` 收 Service + Cache；当真实需求到（G2 扩展工具族）再动。
+//!
 //! 原语化定界（design §7.9 开工预审结论，docs/2026-08-04-m3-kickoff.md）：
 //! - `search_bilibili_videos` 为**聚合型**：平台搜索原语外加三块程序职责——query 截断、
 //!   order 白名单回落、limit 双层钳制 + 结果注册（按运行隔离，修复6）+ 快照落盘

@@ -5,7 +5,7 @@ use serde_json::{Map, Value};
 use super::{Config, ConfigError};
 
 /// Python `cookie_names`：Cookie 字符串中的键集合。
-pub fn cookie_names(cookie: &str) -> std::collections::BTreeSet<String> {
+pub(crate) fn cookie_names(cookie: &str) -> std::collections::BTreeSet<String> {
     cookie
         .split(';')
         .filter_map(|part| {
@@ -20,7 +20,7 @@ pub fn cookie_names(cookie: &str) -> std::collections::BTreeSet<String> {
         .collect()
 }
 
-pub fn collection_issues(config: &Config) -> Vec<String> {
+pub(crate) fn collection_issues(config: &Config) -> Vec<String> {
     let mut issues = Vec::new();
     if config.bilibili.room_id.is_empty() {
         issues.push("bilibili.room_id is empty".to_string());
@@ -36,7 +36,7 @@ pub fn collection_issues(config: &Config) -> Vec<String> {
     issues
 }
 
-pub fn ai_issues(config: &Config) -> Vec<String> {
+pub(crate) fn ai_issues(config: &Config) -> Vec<String> {
     let mut issues = Vec::new();
     if config.ai.base_url.is_empty() {
         issues.push("ai.base_url is empty".to_string());

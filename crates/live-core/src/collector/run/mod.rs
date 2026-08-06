@@ -1,6 +1,9 @@
 //! collect() 编排（移植 Python `collector.py` 的 `_collect_viewer / _enrich_video_metadata /
 //! _write_platform_snapshot / _collect_streamer / collect`）。
 //!
+//! 体积备书（轮3）：超 500 线 = 预算簿记 + 编排主干一条线（budget 计数与失败隔离
+//! 同事务连写）；M4.x 已把 enrich/leads/room/viewer 出块，本卷是收完的壳。
+//!
 //! 预算纪律（与 Python 逐行对齐）：
 //! - profile / relation_stat 手工特判（不走 `_call_source`）。
 //! - followings/videos/dynamics/bangumi/games 走 `call_source`（1 请求/源）。

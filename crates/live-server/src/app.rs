@@ -83,6 +83,12 @@ pub(super) fn fail(status: StatusCode, message: &str) -> AppFail {
     AppFail::new(status, message)
 }
 
+/// 500 族同义闸（轮3 样板收口，B5 先例：≥5 处同款样板入公共件）——
+/// app 五子卷共 21 处 `.map_err(|e| fail(500, &e.to_string()))` 同款。
+pub(super) fn internal(error: impl std::fmt::Display) -> AppFail {
+    fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
+}
+
 pub(super) type AppResult<T> = Result<T, AppFail>;
 
 pub(super) fn load_config(state: &AppState) -> AppResult<live_core::config::Config> {

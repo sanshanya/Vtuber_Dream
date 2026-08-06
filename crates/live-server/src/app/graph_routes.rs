@@ -13,7 +13,8 @@ use axum::response::Response;
 use serde_json::Value;
 
 use super::{
-    AppFail, AppResult, AppState, data_root, fail, load_config, open_graph, room_guard, vid_guard,
+    AppFail, AppResult, AppState, data_root, fail, internal, load_config, open_graph, room_guard,
+    vid_guard,
 };
 
 /// project 用于一切图端点：interest_states 是面板信息主源。
@@ -37,7 +38,7 @@ fn project_for_viewer(
             ..live_core::graph::project::ProjectOptions::default()
         },
     )
-    .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
+    .map_err(internal)?;
     Ok((store, value))
 }
 
@@ -56,7 +57,7 @@ pub(super) async fn viewer_graph(
         Ok(crate::cytoscape::scoped(&value, &format!("viewer:{vid}")))
     })
     .await
-    .map_err(|join| fail(StatusCode::INTERNAL_SERVER_ERROR, &join.to_string()))??;
+    .map_err(internal)??;
     Ok(Json(elements))
 }
 
@@ -124,7 +125,7 @@ async fn compute_graph_bytes(
         Ok::<_, AppFail>(json.to_string().into_bytes())
     })
     .await
-    .map_err(|join| fail(StatusCode::INTERNAL_SERVER_ERROR, &join.to_string()))?
+    .map_err(internal)?
 }
 
 /// 物化确保（内容寻址）：探针 etag → 档命中直返；缺/陈旧 → 持锁双查重建。
@@ -154,7 +155,7 @@ async fn ensure_graph_artifact(
             &kinds_csv,
             crate::graph_artifact::GRAPH_FOLD_VERSION,
         )
-        .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+        .map_err(internal)?;
         if let Some(artifact) = crate::graph_artifact::read_artifact(&root, &etag) {
             return Ok(artifact);
         }
@@ -167,7 +168,7 @@ async fn ensure_graph_artifact(
             &kinds_csv,
             crate::graph_artifact::GRAPH_FOLD_VERSION,
         )
-        .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+        .map_err(internal)?;
         if let Some(artifact) = crate::graph_artifact::read_artifact(&root, &etag2) {
             return Ok(artifact);
         }
@@ -183,16 +184,16 @@ async fn ensure_graph_artifact(
                 ..live_core::graph::project::ProjectOptions::default()
             },
         )
-        .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+        .map_err(internal)?;
         drop(store);
         let folded = crate::cytoscape::elements_expanded(&value, &expanded);
         let artifact =
             crate::graph_artifact::write_artifact(&root, &etag2, folded.to_string().as_str())
-                .map_err(|err| fail(StatusCode::INTERNAL_SERVER_ERROR, &err.to_string()))?;
+                .map_err(internal)?;
         Ok(artifact)
     })
     .await
-    .map_err(|join| fail(StatusCode::INTERNAL_SERVER_ERROR, &join.to_string()))?
+    .map_err(internal)?
 }
 
 /// If-None-Match 宽松比对（多值/弱校验前缀均容忍——读面协商，非安全面）。

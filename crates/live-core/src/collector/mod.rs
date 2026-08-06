@@ -1,5 +1,8 @@
 //! Collector 编排基底（移植 Python `collector.py` 的 normalize 集）。
 //!
+//! 体积备书（轮3）：超 500 线 = normalize 集与 Python 锚 fixture 直连对账，逐行
+//! 同构比例是设计条款；编排层已出 `run/`，本卷只剩 normalize + collect_text。
+//!
 //! 移植策略（design M2）：normalize 集直连 Python 锚 fixture（tests-fixtures/m2/normalize.json）。
 //! 编排层（collect_viewer 预算循环 / enrich 逐文件写回（仅动变更文件）/ collect() 主入口）拆到 `run/`。
 //! 本节只到：**normalize 集 + _status/_content_id/_brief/collect_text**。

@@ -1,6 +1,9 @@
 //! 房间语料 Episode 化（迭代细则 v1 §1 P0-1）：`shared/replay_danmaku.json` 与
 //! `shared/room_comments.json` 的行 → 不可变 Episode，走既有 ingest 通道落图。
 //!
+//! 体积备书（轮3）：超 500 线 = 两语料入口 × 行→Episode 投影，共享每行 parity
+//! 选择（shard_index 打标/行序稳定化）的单通道语义；一文件一端口不拆。
+//!
 //! 归属裁决（细则原文）：
 //! - viewer_id = `"_room"`（保留命名空间，与 `_demo` 同款隔离；**不做观众级归属**——
 //!   弹幕 uid/评论 mid 只进 platform_facts，实体发现留给 mention 层）。

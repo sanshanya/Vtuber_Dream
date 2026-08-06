@@ -1,5 +1,9 @@
 //! 终局校验台：Python `validators.py` 平移 + 设计文档 §9.1 修复 1/6/8 + leads（M4.x 提前出生）。
 //!
+//! 体积备书（轮3）：超 500 线 = 终局校验台的 Python 逐条对齐（错误文案/顺序/ERROR_CAP
+//! 簿记一体）。真实拆缝 = 块按 section 竖切（mentions/entities/relations/...），但打破
+//! Python 滤镜的一卷对照面（parity 定位坐标与 tools.rs 生产线呼应）——未触发不动切。
+//!
 //! 修复 1：ContentOpportunity 必须引真实 mention_id（关闭 Python
 //! `required=not bool(search_result_ids)` 逃逸口）。
 //! 修复 6：a) origin↔kind 绑定——平台结构化字段（`platform_*` kind）上的 mention 必须

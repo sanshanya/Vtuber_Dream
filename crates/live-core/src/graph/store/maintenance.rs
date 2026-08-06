@@ -1,5 +1,9 @@
 //! §8.6 手动图维护：entity_split / entity_merge（store 受控写入族同族）。
 //!
+//! 体积备书（轮3）：超 500 线 = split/merge 两大件共享 Store impl 内私有件
+//! （canon_ids/savepoint/detail 账），同族隔离卷。缝 = 各成 split.rs/merge.rs
+//! 需把私有 helper 上提到 store 根，收益不抵扩散——留同卷。
+//!
 //! 语义锚点（design 行 228-229 原文）：
 //! - split：新建 entity，指定 mention 的归属重指到新实体（REFERS_TO 旧闭新开，
 //!   与 upsert_mention 的归属切换同族区间语义）；证据落在这些 mention 上的关系/

@@ -9,10 +9,10 @@ use serde_json::{Map, Value};
 
 mod check;
 
-pub use check::{
-    ai_issues, collection_issues, cookie_names, normalized_json, validate_for_ai,
-    validate_for_collection,
-};
+// 轮3 收窄：cookie_names/issues×2 仓库外零消费（grep 实证）→ 降 pub(crate)，不爬公面；
+// normalized_json 的具名消费者 = fixture parity 钉（example.normalized.json 子集相等，
+// M1 裁决：config 字段=外部承诺面+fixture 钉住）→ 留公面。
+pub use check::{normalized_json, validate_for_ai, validate_for_collection};
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]

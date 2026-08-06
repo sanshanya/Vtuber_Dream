@@ -11,8 +11,8 @@ use axum::http::StatusCode;
 use serde_json::{Value, json};
 
 use super::{
-    AppResult, AppState, MAX_VID_PATH_CHARS, data_root, fail, load_config, open_graph, room_guard,
-    uid_charset_legal, vid_guard,
+    AppResult, AppState, MAX_VID_PATH_CHARS, data_root, fail, internal, load_config, open_graph,
+    room_guard, uid_charset_legal, vid_guard,
 };
 
 /// 读面统一走 live_core::storage（轮2-R1-B3）：文件缺席 = None（合法空态）；
@@ -55,7 +55,7 @@ pub(super) async fn room_overview(
     // 不再卡 tokio executor。
     tokio::task::spawn_blocking(move || room_overview_blocking(&state, &uid))
         .await
-        .map_err(|join| fail(StatusCode::INTERNAL_SERVER_ERROR, &join.to_string()))?
+        .map_err(internal)?
 }
 
 fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>> {
@@ -78,26 +78,20 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
     // 即 500 响铃，绝不带病半账出面）。无库 → 空集合（M4.x 无账本的同义面）。
     let rows = match &store {
         Some(store) => {
-            live_core::leads::migrate_jsonl(store, &root)
-                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
-            live_core::leads::read_rows(store)
-                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?
+            live_core::leads::migrate_jsonl(store, &root).map_err(internal)?;
+            live_core::leads::read_rows(store).map_err(internal)?
         }
         None => Vec::new(),
     };
     let count =
         |status: live_core::leads::LeadStatus| rows.iter().filter(|r| r.status == status).count();
     let delta = match &store {
-        Some(store) => live_core::graph::query::run_pair_delta(store)
-            .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
+        Some(store) => live_core::graph::query::run_pair_delta(store).map_err(internal)?,
         None => serde_json::from_str(BASELINE_DELTA).expect("literal parses"),
     };
     // Z3 首页指标条：无图态 → null 空态（前端呈现「—」而非臆造数字）。
     let graph_stats = match &store {
-        Some(store) => Some(
-            live_core::graph::query::graph_stats(store)
-                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
-        ),
+        Some(store) => Some(live_core::graph::query::graph_stats(store).map_err(internal)?),
         None => None,
     };
     // Z5/C1：BriefingCard refs 可点的归属解析面——episode_id → {viewer_id, title}。
@@ -105,8 +99,7 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
     // 不抄整行（fields/platform_facts 大键留在 tree/graph 端点）。
     let episode_index: Value = match &store {
         Some(store) => {
-            let rows = live_core::graph::query::episodes(store, "", None)
-                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
+            let rows = live_core::graph::query::episodes(store, "", None).map_err(internal)?;
             let map = rows
                 .iter()
                 .filter_map(|row| {
@@ -238,10 +231,8 @@ pub(super) async fn viewer_tree(
     };
     let (episodes, mentions) = match open_graph(&root) {
         Some(store) => (
-            live_core::graph::query::episodes(&store, &vid, None)
-                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
-            live_core::graph::query::mentions_of_viewer(&store, &vid, None)
-                .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?,
+            live_core::graph::query::episodes(&store, &vid, None).map_err(internal)?,
+            live_core::graph::query::mentions_of_viewer(&store, &vid, None).map_err(internal)?,
         ),
         // 图尚未落盘 → 信息空面（viewer 原料 + ai 缓存仍可读，写盘前态）。
         None => (Vec::new(), Vec::new()),
@@ -299,14 +290,9 @@ pub(super) async fn lead_approve(
     let root = data_root(&state)?;
     // 写面端点：图库缺席则建仓（首触即 v7 schema；与纯读路径的「不建文件」纪律分野）。
     let store_path = root.join("graph").join("perception.sqlite3");
-    let store = live_core::graph::store::Store::open(&store_path)
-        .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
-    live_core::leads::migrate_jsonl(&store, &root)
-        .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
-    let Some(mut row) = store
-        .lead_row(&lead_id)
-        .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?
-    else {
+    let store = live_core::graph::store::Store::open(&store_path).map_err(internal)?;
+    live_core::leads::migrate_jsonl(&store, &root).map_err(internal)?;
+    let Some(mut row) = store.lead_row(&lead_id).map_err(internal)? else {
         return Err(fail(
             StatusCode::NOT_FOUND,
             &format!("lead {lead_id} 不存在"),
@@ -316,9 +302,7 @@ pub(super) async fn lead_approve(
         .map_err(|message| fail(StatusCode::UNPROCESSABLE_ENTITY, &message))?;
     if changed {
         row.status = live_core::leads::LeadStatus::Approved;
-        store
-            .update_lead_row(&row)
-            .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))?;
+        store.update_lead_row(&row).map_err(internal)?;
     }
     Ok(Json(json!({
         "dedupe_key": row.dedupe_key,
