@@ -287,9 +287,9 @@ pub fn summary_line(rows: &[LedgerRow], viewer: Option<&str>) -> String {
 // 零新增 → 同库逐字节一致；变化只随 consumed 漂移。
 // ---------------------------------------------------------------------------
 
-/// 每个 consumed lead 最多回链证据条数（细则：M ≤3 的 cap 防通胀位）。
-pub const ANNEX_FACTS_PER_LEAD: usize = 3;
 /// 每个 consumed lead 最多列名刷新画像的观众数（细则：N ≤3 的姊妹 cap）。
+/// 删码专项：原 ANNEX_FACTS_PER_LEAD 声明了 facts ≤3 但从未接进实现——
+/// ANNEX_TOTAL_CHARS 总闸已是 annex 行数的唯一裁（每行过闸），单件 cap 属无消费者声明，删。
 pub const ANNEX_VIEWERS_CAP: usize = 3;
 /// 单行摘要字符上限：一句话密度（ANNEX_LOCATOR_CAP=80 的半格位）。
 pub const ANNEX_SNIPPET_CHARS: usize = 40;

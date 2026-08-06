@@ -308,9 +308,8 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         .collect();
     let speakers = current_speakers.len() as i64;
     if speakers > 0 {
-        // 轮2-R1-A⑥a：身份键双轨照实说——弹幕 sender_uid_crc 轨与评论 mid 轨：
-        // 键名源自细则字面，平台回放接口实测吐真 uid，同人跨轨靠字符串相等合流；
-        // 但若平台对弹幕脱敏回 CRC，同人两轨不相等 → 人数系统性 +1。
+        // 轮2-R1-A⑥a：身份键双轨照实说——弹幕/评论两轨人数分计（去重按字符串相等）。
+        // 删码专项：原「平台脱敏成 CRC 会误计」假设句守的是不现况（实测吐真 uid），删。
         let danmaku_speakers: HashSet<&str> = current_lines
             .iter()
             .filter(|line| !line.is_comment)
@@ -325,8 +324,8 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
             .collect();
         if !danmaku_speakers.is_empty() && !comment_speakers.is_empty() {
             unknown.push(format!(
-                "本场发言两条轨并出场：弹幕 {} 人 + 评论 {} 人（去重按字符串相等）——\
-                 若平台把弹幕 uid 脱敏成 CRC，同人两轨会误计多 1；人数按当前呈现。",
+                "本场发言两条轨并出场：弹幕 {} 人 + 评论 {} 人（去重按字符串相等），\
+                 人数按当前呈现。",
                 danmaku_speakers.len(),
                 comment_speakers.len()
             ));
@@ -665,7 +664,7 @@ mod round2_tests {
     }
 
     /// 轮2-R1-A⑥a：弹幕+评论同场都有人 → 未知行必须明示身份键双轨
-    /// （sender_uid 并集按平台 uid 认定；若弹幕被平台脱敏成 CRC，人数可能 -1 误计）。
+    /// （sender_uid 并集按平台 uid 认定，去重按字符串相等）。
     #[test]
     fn mixed_kinds_raise_identity_risk_row() {
         let store = fresh_store("mix");
@@ -687,9 +686,9 @@ mod round2_tests {
         let card = compute_recap(&store).unwrap();
         assert_eq!(card.speakers, 1, "同一平台 uid 并集（唯一人）");
         assert!(
-            card.unknown
-                .iter()
-                .any(|row| row.contains("CRC") || row.contains("误计")),
+            card.unknown.iter().any(|row| row.contains("两条轨并出场")
+                && row.contains("弹幕")
+                && row.contains("评论")),
             "身份双轨必须明示入未知行: {:?}",
             card.unknown
         );

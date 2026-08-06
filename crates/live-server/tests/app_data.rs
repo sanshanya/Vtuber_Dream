@@ -78,6 +78,51 @@ async fn get(app: &axum::Router, path: &str) -> (u16, Value) {
     (status, json)
 }
 
+/// Z5c 时效位钉族公共夹具（删码专项 ID-3：viewers/tree 两钉的同源三参闭包原系逐字两份）。
+fn write_perception_cache(root: &std::path::Path, uid: &str, hash: &str) {
+    let cached = serde_json::json!({
+        "status": "complete",
+        "input_hash": hash,
+        "analysis": {"profile_summary": "x"},
+    });
+    let path = root
+        .join("ai")
+        .join("perception")
+        .join("viewers")
+        .join(format!("{uid}.json"));
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, serde_json::to_string_pretty(&cached).unwrap()).unwrap();
+}
+
+fn current_input_hash_of(
+    root: &std::path::Path,
+    config: &live_core::config::Config,
+    uid: &str,
+) -> String {
+    let raw = live_core::storage::read_json(&root.join("viewers").join(format!("{uid}.json")))
+        .expect("viewer reads")
+        .expect("viewer exists");
+    let profile = live_core::episodes::baseline::viewer_input(
+        &raw,
+        config.perception.max_evidence_per_viewer as usize,
+    );
+    let reasoning = serde_json::json!({
+        "enabled": config.ai.reasoning.enabled,
+        "effort": config.ai.reasoning.effort.clone(),
+        "replay_content": config.ai.reasoning.replay_content,
+    });
+    live_core::agent::pipeline::viewer_input_bundle(
+        &raw,
+        &profile,
+        &config.ai.model,
+        &config.ai.api,
+        &reasoning,
+        &config.ai.rules,
+        config.perception.max_evidence_per_viewer as usize,
+    )
+    .input_hash
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn overview_combines_collection_ai_leads_and_baseline_delta() {
     let fx = fixture();
@@ -210,51 +255,13 @@ async fn viewers_list_marks_stale_perception_hash_flips() {
     let config =
         live_core::config::load_config(fx._tmp.path().join("config.yaml")).expect("config loads");
 
-    let write_cache = |uid: &str, hash: &str| {
-        let cached = serde_json::json!({
-            "status": "complete",
-            "input_hash": hash,
-            "analysis": {"profile_summary": "x"},
-        });
-        let path = fx
-            .data_root
-            .join("ai")
-            .join("perception")
-            .join("viewers")
-            .join(format!("{uid}.json"));
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, serde_json::to_string_pretty(&cached).unwrap()).unwrap();
-    };
-    let current_hash_of = |uid: &str| -> String {
-        let raw = live_core::storage::read_json(
-            &fx.data_root.join("viewers").join(format!("{uid}.json")),
-        )
-        .expect("viewer reads")
-        .expect("viewer exists");
-        let profile = live_core::episodes::baseline::viewer_input(
-            &raw,
-            config.perception.max_evidence_per_viewer as usize,
-        );
-        let reasoning = serde_json::json!({
-            "enabled": config.ai.reasoning.enabled,
-            "effort": config.ai.reasoning.effort.clone(),
-            "replay_content": config.ai.reasoning.replay_content,
-        });
-        let bundle = live_core::agent::pipeline::viewer_input_bundle(
-            &raw,
-            &profile,
-            &config.ai.model,
-            &config.ai.api,
-            &reasoning,
-            &config.ai.rules,
-            config.perception.max_evidence_per_viewer as usize,
-        );
-        bundle.input_hash
-    };
-
     // demo-2 码现行哈希 → 绿灯；demo-1 栽错哈希 → 必亮过期
-    write_cache("demo-2", &current_hash_of("demo-2"));
-    write_cache("demo-1", "deadbeef");
+    write_perception_cache(
+        &fx.data_root,
+        "demo-2",
+        &current_input_hash_of(&fx.data_root, &config, "demo-2"),
+    );
+    write_perception_cache(&fx.data_root, "demo-1", "deadbeef");
     let (status, body) = get(&fx.app, "/api/rooms/983/viewers").await;
     assert_eq!(status, 200, "{body}");
     let rows = body.as_array().unwrap();
@@ -272,7 +279,11 @@ async fn viewers_list_marks_stale_perception_hash_flips() {
     );
 
     // demo-1 补码现行哈希 → 过期位应熄灭（时效位跟据哈希实况，不是一次性旗帜）
-    write_cache("demo-1", &current_hash_of("demo-1"));
+    write_perception_cache(
+        &fx.data_root,
+        "demo-1",
+        &current_input_hash_of(&fx.data_root, &config, "demo-1"),
+    );
     let (status, body) = get(&fx.app, "/api/rooms/983/viewers").await;
     assert_eq!(status, 200, "{body}");
     let demo1 = body
@@ -323,51 +334,13 @@ async fn viewer_tree_marks_stale_perception_hash_flips() {
     let config =
         live_core::config::load_config(fx._tmp.path().join("config.yaml")).expect("config loads");
 
-    let write_cache = |uid: &str, hash: &str| {
-        let cached = serde_json::json!({
-            "status": "complete",
-            "input_hash": hash,
-            "analysis": {"profile_summary": "x"},
-        });
-        let path = fx
-            .data_root
-            .join("ai")
-            .join("perception")
-            .join("viewers")
-            .join(format!("{uid}.json"));
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        std::fs::write(&path, serde_json::to_string_pretty(&cached).unwrap()).unwrap();
-    };
-    let current_hash_of = |uid: &str| -> String {
-        let raw = live_core::storage::read_json(
-            &fx.data_root.join("viewers").join(format!("{uid}.json")),
-        )
-        .expect("viewer reads")
-        .expect("viewer exists");
-        let profile = live_core::episodes::baseline::viewer_input(
-            &raw,
-            config.perception.max_evidence_per_viewer as usize,
-        );
-        let reasoning = serde_json::json!({
-            "enabled": config.ai.reasoning.enabled,
-            "effort": config.ai.reasoning.effort.clone(),
-            "replay_content": config.ai.reasoning.replay_content,
-        });
-        let bundle = live_core::agent::pipeline::viewer_input_bundle(
-            &raw,
-            &profile,
-            &config.ai.model,
-            &config.ai.api,
-            &reasoning,
-            &config.ai.rules,
-            config.perception.max_evidence_per_viewer as usize,
-        );
-        bundle.input_hash
-    };
-
     // demo-2 栽现行哈希 → 绿灯；demo-1 栽死哈希 → 必亮过期。
-    write_cache("demo-2", &current_hash_of("demo-2"));
-    write_cache("demo-1", "deadbeef");
+    write_perception_cache(
+        &fx.data_root,
+        "demo-2",
+        &current_input_hash_of(&fx.data_root, &config, "demo-2"),
+    );
+    write_perception_cache(&fx.data_root, "demo-1", "deadbeef");
     let (status, body) = get(&fx.app, "/api/rooms/983/viewers/demo-1/tree").await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(
@@ -384,7 +357,11 @@ async fn viewer_tree_marks_stale_perception_hash_flips() {
     );
 
     // demo-1 补码现行哈希 → 过期位应熄灭（时效位跟据哈希实况，不是一次性旗帜）。
-    write_cache("demo-1", &current_hash_of("demo-1"));
+    write_perception_cache(
+        &fx.data_root,
+        "demo-1",
+        &current_input_hash_of(&fx.data_root, &config, "demo-1"),
+    );
     let (status, body) = get(&fx.app, "/api/rooms/983/viewers/demo-1/tree").await;
     assert_eq!(status, 200, "{body}");
     assert_eq!(

@@ -147,7 +147,7 @@ impl AgentRuntimeConfig {
     }
 }
 
-pub const ALLOWED_APIS: [&str; 2] = ["chat_completions", "responses"];
+pub const ALLOWED_APIS: [&str; 1] = ["chat_completions"];
 
 #[derive(Debug, Clone)]
 pub struct AiConfig {
@@ -358,9 +358,7 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
     let runtime = mapping(ai, "agent", None)?;
     let api = string(ai, "api", "");
     if !ALLOWED_APIS.contains(&api.as_str()) {
-        return Err(ConfigError::new(
-            "'ai.api' must be 'chat_completions' or 'responses'",
-        ));
+        return Err(ConfigError::new("'ai.api' must be 'chat_completions'"));
     }
     let effort = string(reasoning, "effort", "high");
     if !ALLOWED_EFFORTS.contains(&effort.as_str()) {
@@ -642,9 +640,6 @@ pub fn ai_issues(config: &Config) -> Vec<String> {
     }
     if config.ai.model.is_empty() {
         issues.push("ai.model is empty".to_string());
-    }
-    if config.ai.api == "responses" && config.ai.reasoning.replay_content {
-        issues.push("ai.reasoning.replay_content only applies to chat_completions".to_string());
     }
     issues
 }
@@ -961,6 +956,17 @@ report:
         );
         let err = load_config(write_temp(&bad).path()).unwrap_err();
         assert!(err.to_string().contains("viewer_token_budget"), "{err}");
+    }
+
+    /// 删码专项：ai.api 白名单只剩 chat_completions（responses 死分支已拔）——
+    /// 非法值加载期即拒（原为加载软过 + runtime 启动硬拒的双层形态）。
+    #[test]
+    fn ai_api_rejects_non_chat_completions_at_load() {
+        let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
+        assert_eq!(ok.ai.api, "chat_completions");
+        let bad = EXAMPLE_YAML.replace("api: chat_completions", "api: responses");
+        let err = load_config(write_temp(&bad).path()).unwrap_err();
+        assert!(err.to_string().contains("ai.api"), "{err}");
     }
 
     /// Z6/P0-6：graph_default_expanded_kinds 默认五类白名单；"all" 展开七类全谱；

@@ -36,8 +36,8 @@ impl Store {
             String::new()
         };
         // 轮2-R1-B2：双分支归一（owner 谓词 = `?='' OR viewer_id=?`，空 owner 即不 scoped
-        // 与修前「无 viewer_id 条件」严格同义）；valid_from 平局 tie-break 追加 rowid DESC
-        // ——取物理最新插入行，修前平局计划依赖，新证据可能落进旧边。
+        // 与修前「无 viewer_id 条件」严格同义）；ORDER BY 追加 rowid DESC 纯为确定性排序
+        //（零成本卫生；删码专项裁决：生产对每 quad 至多一条活跃边，平局不可达，不立钉）。
         let row: Option<(String, String, String, String, Option<f64>)> = self
             .conn
             .query_row(

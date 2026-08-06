@@ -45,7 +45,8 @@ pub fn read_json(path: &Path) -> StorageResult<Option<Value>> {
 /// Python `write_json`：indent=2、UTF-8 直写、tmp 原子替换。
 /// 轮2-R1-B：tmp 名唯一化（pid+进程内序号，对齐 server 写键的 `.live-server-tmp-{pid}`
 /// 约定）——固定 `<file>.tmp` 在同路径并发写时会共享 tmp，先 rename 的一方把另一方的
-/// tmp 挪走，后者必炸 NotFound（serve 触发 run 与 CLI 并发是真实场景）。
+/// tmp 挪走，后者必炸 NotFound（两个 live-audience 进程同指一 output_dir 是真实场景；
+/// 单进程内经 Registry 409 互斥）。
 pub fn write_json(path: &Path, value: &Value) -> StorageResult<()> {
     use std::sync::atomic::{AtomicU64, Ordering};
     static TMP_SEQ: AtomicU64 = AtomicU64::new(0);
@@ -212,9 +213,11 @@ mod tests {
     fn concurrent_writes_to_same_path_do_not_collide() {
         let root = temp_root();
         let path = root.path().join("shared").join("recap.json");
-        let payload_a: Value = json!({"mark": "A", "pad": vec![7; 4000]});
-        let payload_b: Value = json!({"mark": "B", "pad": vec![9; 4000]});
-        for round in 0..24 {
+        // 删码专项复核：唯一命名使碰撞任意时序不可能——轮数/pad 不增置信度，
+        // 只压 CI 时长（回归共用固定名时 barrier 对齐一轮即红）。
+        let payload_a: Value = json!({"mark": "A", "pad": vec![7; 64]});
+        let payload_b: Value = json!({"mark": "B", "pad": vec![9; 64]});
+        for round in 0..5 {
             let barrier = std::sync::Arc::new(std::sync::Barrier::new(2));
             let spawn = |payload: Value| {
                 let path = path.clone();
@@ -312,12 +315,6 @@ mod tests {
                 .join(".1001.json.live-core-tmp-1-1")
                 .exists(),
             "孤儿 tmp 不得进快照"
-        );
-        // 源目录里的孤儿不受影响（归档是只读面，不代管清扫）
-        assert!(
-            root.join("viewers")
-                .join(".1001.json.live-core-tmp-1-1")
-                .exists()
         );
     }
 

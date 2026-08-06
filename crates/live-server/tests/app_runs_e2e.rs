@@ -332,6 +332,35 @@ fn read(path: &Path) -> Value {
 /// 从 collect 落定后的 out_dir 惰性推导 viewer/audience 双终局提交体
 /// （episode/mention/entity id 与 live-core mint 公式同一算法）。
 /// 返回 (viewer_submission, audience_submission)。
+/// SingleViewer("1003") scoped 直采公共件（删码专项 ID-4：原三处逐字同形）。
+/// W2-C1 纪律载体：blocking client 绝不能在 async ctx 直调——scoped 线程卸出去。
+fn collect_single_viewer_once(host: &str, config: &live_core::config::Config) {
+    let host = host.to_string();
+    std::thread::scope(|scope| {
+        scope
+            .spawn(move || {
+                let client = live_core::bilibili::BilibiliClient::with_origin(
+                    &host,
+                    &host,
+                    &config.bilibili.cookie,
+                    config.collection.request_delay_seconds,
+                    config.collection.timeout_seconds,
+                )
+                .expect("client builds");
+                let mut emit_fn = |_: &str| {};
+                live_core::collector::run::collect_with_client(
+                    client,
+                    config,
+                    live_core::collector::run::CollectMode::SingleViewer("1003".to_string()),
+                    &mut emit_fn,
+                )
+                .expect("collect completes");
+            })
+            .join()
+            .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
+    });
+}
+
 fn derive_submissions(out_dir: &Path) -> (Value, Value) {
     let analysis = build_factual_baseline(out_dir, 1000).expect("baseline");
     let raw = read(&out_dir.join("viewers").join("1003.json"));
@@ -715,30 +744,7 @@ async fn staged_ai_viewers_stops_then_ai_audience_completes_situation() {
     // additional_viewer_ids，Guards 空名单会拒采；单查种子自带 1003 即够生成采集面）。
     // 纪律（W2-C1 同刃）：blocking client 绝不能在 async ctx 直调——scoped 线程卸出去。
     let config = live_core::config::load_config(&config_path).expect("config loads");
-    let bilibili_host = bilibili.uri();
-    std::thread::scope(|scope| {
-        scope
-            .spawn(|| {
-                let client = live_core::bilibili::BilibiliClient::with_origin(
-                    &bilibili_host,
-                    &bilibili_host,
-                    &config.bilibili.cookie,
-                    config.collection.request_delay_seconds,
-                    config.collection.timeout_seconds,
-                )
-                .expect("client builds");
-                let mut emit_fn = |_: &str| {};
-                live_core::collector::run::collect_with_client(
-                    client,
-                    &config,
-                    live_core::collector::run::CollectMode::SingleViewer("1003".to_string()),
-                    &mut emit_fn,
-                )
-                .expect("seed collect completes");
-            })
-            .join()
-            .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
-    });
+    collect_single_viewer_once(&bilibili.uri(), &config);
     assert!(
         out_dir.join("viewers").join("1003.json").exists(),
         "布景采集应落 viewers/1003.json"
@@ -807,32 +813,6 @@ async fn recollect_same_data_keeps_viewer_input_hash_stable() {
     let config = live_core::config::load_config(&config_path).expect("config loads");
     let out_dir = config.output_dir.clone();
     let bilibili_host = bilibili.uri();
-    let collect_once = |config: &live_core::config::Config| {
-        let host = bilibili_host.clone();
-        std::thread::scope(|scope| {
-            scope
-                .spawn(move || {
-                    let client = live_core::bilibili::BilibiliClient::with_origin(
-                        &host,
-                        &host,
-                        &config.bilibili.cookie,
-                        config.collection.request_delay_seconds,
-                        config.collection.timeout_seconds,
-                    )
-                    .expect("client builds");
-                    let mut emit_fn = |_: &str| {};
-                    live_core::collector::run::collect_with_client(
-                        client,
-                        config,
-                        live_core::collector::run::CollectMode::SingleViewer("1003".to_string()),
-                        &mut emit_fn,
-                    )
-                    .expect("collect completes");
-                })
-                .join()
-                .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
-        });
-    };
     // 与 pipeline 运行期同向的输入面（settings 两轮同参，横比只盯采集面漂移）。
     let bundle_of = |out_dir: &Path| -> (String, Value) {
         let analysis = build_factual_baseline(out_dir, 1000).expect("baseline");
@@ -855,9 +835,9 @@ async fn recollect_same_data_keeps_viewer_input_hash_stable() {
         );
         (bundle.input_hash.clone(), bundle.input_payload.clone())
     };
-    collect_once(&config);
+    collect_single_viewer_once(&bilibili_host, &config);
     let (hash_round1, payload_round1) = bundle_of(&out_dir);
-    collect_once(&config);
+    collect_single_viewer_once(&bilibili_host, &config);
     let (hash_round2, payload_round2) = bundle_of(&out_dir);
     if hash_round1 != hash_round2 {
         for key in payload_round1.as_object().map(|o| o.keys()).unwrap() {
@@ -897,38 +877,10 @@ async fn staged_recollect_keeps_ai_cache_and_second_ai_run_reuses_zero_llm() {
     let config = live_core::config::load_config(&config_path).expect("config loads");
     let out_dir = config.output_dir.clone();
 
-    // 布景+重采共用的同一动作：scoped 线程直采 SingleViewer("1003")
-    //（纪律 W2-C1 同刃：blocking client 绝不能在 async ctx 直调）。
     let bilibili_host = bilibili.uri();
-    let collect_once = |config: &live_core::config::Config| {
-        let host = bilibili_host.clone();
-        std::thread::scope(|scope| {
-            scope
-                .spawn(move || {
-                    let client = live_core::bilibili::BilibiliClient::with_origin(
-                        &host,
-                        &host,
-                        &config.bilibili.cookie,
-                        config.collection.request_delay_seconds,
-                        config.collection.timeout_seconds,
-                    )
-                    .expect("client builds");
-                    let mut emit_fn = |_: &str| {};
-                    live_core::collector::run::collect_with_client(
-                        client,
-                        config,
-                        live_core::collector::run::CollectMode::SingleViewer("1003".to_string()),
-                        &mut emit_fn,
-                    )
-                    .expect("collect completes");
-                })
-                .join()
-                .unwrap_or_else(|payload| std::panic::resume_unwind(payload));
-        });
-    };
 
     // ── 第一轮采集 ──
-    collect_once(&config);
+    collect_single_viewer_once(&bilibili_host, &config);
     assert!(
         out_dir.join("viewers").join("1003.json").exists(),
         "第一轮采集应落 viewers/1003.json"
@@ -955,7 +907,7 @@ async fn staged_recollect_keeps_ai_cache_and_second_ai_run_reuses_zero_llm() {
     );
 
     // ── 同数据重采（Z5 主钉）：ai/ 现场实体零碾平 ──
-    collect_once(&config);
+    collect_single_viewer_once(&bilibili_host, &config);
     assert!(
         out_dir.join("ai/state.json").exists(),
         "Z5 重采保 AI：重采后 ai/state.json 必须原地保活"
@@ -1013,7 +965,7 @@ async fn staged_recollect_keeps_ai_cache_and_second_ai_run_reuses_zero_llm() {
     assert_eq!(llm_calls_audience1, 2, "viewer + audience 各一次提交");
 
     // ── 第三轮：重采 → ai_audience #2 零新增（态势哈希也跨采集稳定）──
-    collect_once(&config);
+    collect_single_viewer_once(&bilibili_host, &config);
     let (status, body) = oneshot(
         &app,
         "POST",

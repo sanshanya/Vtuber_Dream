@@ -1,19 +1,14 @@
 import { describe, expect, it } from "vitest";
 
-import { CNY_TINY_THRESHOLD, TOKEN_RATES_CNY_PER_MILLION } from "../constants";
+import { CNY_TINY_THRESHOLD } from "../constants";
 import { estimateCostCny, fmtCny, fmtInt, fmtTime } from "../format";
 
 describe("金额换算唯一真源（D8：服务端只出原始 token 数）", () => {
   it("两段式求和：input/output 按命名费率折算", () => {
     const usage = { input_tokens: 2_000_000, output_tokens: 500_000, total_tokens: 2_500_000 };
     const cost = estimateCostCny(usage);
-    expect(cost).toBeCloseTo(
-      (2_000_000 * TOKEN_RATES_CNY_PER_MILLION.input +
-        500_000 * TOKEN_RATES_CNY_PER_MILLION.output) /
-        1_000_000,
-      10,
-    );
-    // 2×2 + 0.5×8 = 8 元
+    // 字面钉（手算 2×2 + 0.5×8 = 8 元）——唯此句携带独立失效信号；
+    // 用同名常量重算的自洽核对（旧版有）删码专项已删：零检出力。
     expect(cost).toBeCloseTo(8, 10);
   });
 

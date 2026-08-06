@@ -594,7 +594,6 @@ fn episodes_readback_parses_json_fields_and_clamps_limit() {
 /// 手工 SQL 注入重复活跃 INTERESTED_IN 边（正常路径不可造）时：
 /// - project 导出的 edges 保留两行（不做 networkx add_edge 式折叠）；
 /// - detect_communities 对同一 pair 的权重累加后照常合并（Python 则只取最后权重）。
-/// - detect_communities 对同一 pair 的权重累加后照常合并（Python 则只取最后权重）。
 ///
 /// 若未来实现改为「最后权重胜出」以拉近 parity，本测试必须同步改写。
 #[test]

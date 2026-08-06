@@ -47,16 +47,6 @@ pub struct MentionSpan {
     pub confidence: f64,
 }
 
-impl MentionSpan {
-    /// Python model_validator：end 必须大于 start。
-    pub fn validate_offsets(&self) -> Result<(), String> {
-        if self.end <= self.start {
-            return Err("end must be greater than start".to_string());
-        }
-        Ok(())
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct EntityProposal {
@@ -409,7 +399,6 @@ mod tests {
         assert_eq!(submission.entities.len(), 2);
         assert_eq!(submission.interest_states.len(), 2);
         assert_eq!(submission.mentions[0].confidence, 0.96);
-        assert!(submission.mentions[0].validate_offsets().is_ok());
         assert_eq!(submission.entities[0].resolution, "NEW_ENTITY");
     }
 
@@ -436,27 +425,6 @@ mod tests {
     fn rejects_unknown_fields() {
         let raw = r#"{"viewer_id":"v","profile_summary":"x","bogus":1}"#;
         assert!(serde_json::from_str::<ViewerPerceptionSubmission>(raw).is_err());
-    }
-
-    #[test]
-    fn offset_validator() {
-        let mut span = MentionSpan {
-            mention_id: "m1".into(),
-            episode_id: "e".into(),
-            field_path: "title".into(),
-            text: "x".into(),
-            start: 3,
-            end: 3,
-            mention_type: "t".into(),
-            origin: "explicit".into(),
-            proposed_entity_name: "n".into(),
-            proposed_entity_type: "t".into(),
-            entity_ref: "entity:e1".into(),
-            confidence: 0.5,
-        };
-        assert!(span.validate_offsets().is_err());
-        span.end = 4;
-        assert!(span.validate_offsets().is_ok());
     }
 
     #[test]
