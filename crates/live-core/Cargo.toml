@@ -23,6 +23,8 @@ async-openai = { version = "0.41.3", features = ["byot", "chat-completion", "mid
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "time", "signal", "sync"] }
 reqwest13 = { version = "0.13", package = "reqwest" }
 blake2 = "0.10.6"
+flate2 = "1"
+brotli = "7"
 
 [dev-dependencies]
 tempfile = "3"
