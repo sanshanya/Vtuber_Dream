@@ -10,6 +10,7 @@ pub mod naming;
 pub mod pipeline;
 pub mod probe;
 pub mod prompts;
+pub mod reconcile;
 pub mod redact;
 pub mod runtime;
 pub mod specs;

@@ -212,6 +212,33 @@ impl Respond for DynamicSubmit {
             .as_array()
             .and_then(|m| m.get(1))
             .and_then(|m| m["content"].as_str());
+        // R2 尾门归并面：识别后立即回空计划（不占 cell），算一次请求即可终局。
+        if let Some(c) = content
+            && c.starts_with("当前长期实体注册表共")
+        {
+            return ResponseTemplate::new(200).set_body_json(json!({
+                "id": "chatcmpl-reconcile",
+                "object": "chat.completion",
+                "created": 1_800_000_000,
+                "model": self.model,
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "content": null,
+                        "reasoning_content": null,
+                        "tool_calls": [{
+                            "id": "call-reconcile-1",
+                            "type": "function",
+                            "function": {"name": "submit_entity_reconcile",
+                                "arguments": json!({"submission": {"merges": [], "drops": []}}).to_string()},
+                        }],
+                    },
+                    "finish_reason": "tool_calls",
+                }],
+                "usage": {"prompt_tokens": 10, "completion_tokens": 5, "total_tokens": 15},
+            }));
+        }
         let (kind, tool): (&'static str, &'static str) = match content {
             Some(c) if c.starts_with("对下面完整Episode") => {
                 ("viewer", "submit_viewer_perception")
@@ -578,12 +605,12 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
         "events 次序错乱：{events:?}"
     );
 
-    // wiremock 双侧请求证真
+    // wiremock 双侧请求证真：viewer + audience + R2 尾门归并（本轮铸了新实体）。
     let llm_requests = llm.received_requests().await.expect("llm requests");
     assert_eq!(
         llm_requests.len(),
-        2,
-        "LLM 面应当恰好两次终局提交：viewer + audience"
+        3,
+        "LLM 面应当恰好三次终局提交：viewer + audience + reconcile"
     );
     let bil_requests = bilibili
         .received_requests()
@@ -1336,11 +1363,12 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
             .join("\n")
     );
 
-    // LLM 面零新增：全程恰 1 次 viewer + 1 次 audience 终局提交。
+    // LLM 面零新增：全程恰 1 次 viewer + 1 次 audience 终局提交 + R2 尾门归并 1 次。
+    // （轮二 collect_guards 不涉 AI 层 LLM；reconcile 属 viewer 轮内的尾门行为。）
     assert_eq!(
         llm.received_requests().await.expect("llm requests").len(),
-        2,
-        "两轮全程不得有第三次 LLM 外呼（缓存全命中）"
+        3,
+        "两轮全程 LLM 面应当恰好三次提交：viewer + audience + reconcile（缓存零新增）"
     );
 
     // 终账对账：overview 读取侧呈现 consumed=1、pending 清零。

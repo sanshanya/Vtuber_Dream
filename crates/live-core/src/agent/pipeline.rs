@@ -451,6 +451,7 @@ use tokio::sync::Semaphore;
 
 use super::naming;
 use super::prompts::{audience_user_prompt, trace_run_start, viewer_user_prompt};
+use super::reconcile;
 use super::runtime::{AgentRuntime, AttemptPlan, RuntimeStats, Trace, run_toolcall_agent};
 use super::specs::{audience_agent_spec, viewer_agent_spec};
 use super::throttle::Throttle;
@@ -1736,6 +1737,34 @@ async fn run_pipeline_inner(
                 }
             }
             Err(err) => progress_say(knobs, &format!("[RECAP] 复盘卡计算失败：{err}")),
+        }
+    }
+    // R2 批1（用户裁决：AI 看图裁决归并，程序出纳）：实体「AI 归并」管道尾门。
+    // 本轮确实铸起了新实体（minted>0）才值得派归并 Agent 出场——minted=0 表示
+    // 本轮对实体事实面零触碰，归并无对象，跳过（保持零模型调用静默性）。
+    // 归并失败只响铃不绊管线：图事实、证据、账本均已落，归并属于聚合层润色。
+    {
+        let minted = store
+            .count_scalar(
+                "SELECT COUNT(*) FROM entities WHERE first_seen_at >= ?1",
+                &[rusqlite::types::Value::Text(run_started_at.clone())],
+            )
+            .unwrap_or(0);
+        if minted > 0 && !knobs.stop_after_viewer_stage {
+            match reconcile::run_entity_reconcile(runtime, config, &store).await {
+                Ok(report) => progress_say(
+                    knobs,
+                    &format!(
+                        "[RECONCILE] 实体归并完成：merge {} 组 / drop {} 个 / 失败 {} 项",
+                        report.merged_ok,
+                        report.dropped_ok,
+                        report.failed.len()
+                    ),
+                ),
+                Err(err) => {
+                    progress_say(knobs, &format!("[RECONCILE] 实体归并未达成：{err}"));
+                }
+            }
         }
     }
     let usage = aggregate_runtime_usage(&viewer_runtime, &overall_runtime);

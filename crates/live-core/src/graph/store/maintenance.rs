@@ -311,6 +311,53 @@ impl Store {
         })
     }
 
+    /// `entity_drop(entity_id)`（R2 批1 实体归并：AI 裁决的整货删除面）。
+    /// 关闭语义 = 行删除（entities 无 valid_to 列），范围：
+    /// - 前置：实体必须存在；`source_kind` 必须为 `'ai'`（平台事实
+    ///   bilibili_tag/bilibili_category/creator 等是 UI 事实面，读面依赖其存在，
+    ///   非 AI 可删面——`'ai'` 之外的任何来源一律报错）；
+    /// - 行删除：entity_aliases → nodes（Entity 镜像）→ entities；FK 序由内向外；
+    /// - 引用释放：edges 任一端指向该实体的**整行删除**（edges 无 host 列，身份
+    ///   即节点坐标；§8.6 区间语义只给 split/merge 边定义，drop 是收尸——不存在
+    ///   可迁的宿主）；
+    /// - mentions 无 entity 列（FK→episodes only，schema v8），结构性不触达；
+    /// - 自身**不记账** run（design：入账归 reconcile 的外层维护 run——本操作是
+    ///   事务原子单元，记账引出的嵌套 run 见 entity_merge 的同名注）。
+    pub fn entity_drop(&self, entity_id: &str) -> MResult<()> {
+        let source_kind: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT source_kind FROM entities WHERE entity_id=?",
+                params![entity_id],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(source_kind) = source_kind else {
+            return not_found(format!("entity_drop：实体 {entity_id} 不存在"));
+        };
+        if source_kind != "ai" {
+            return invalid(format!(
+                "entity_drop：实体 {entity_id} 的 source_kind={source_kind}，\
+                 仅 AI 归属（source_kind='ai'）实体可删，平台事实/托管数据不可删"
+            ));
+        }
+        with_savepoint("entity_drop", self, move || {
+            self.conn.execute(
+                "DELETE FROM edges WHERE source_id=? OR target_id=?",
+                params![entity_id, entity_id],
+            )?;
+            self.conn.execute(
+                "DELETE FROM entity_aliases WHERE entity_id=?",
+                params![entity_id],
+            )?;
+            self.conn
+                .execute("DELETE FROM nodes WHERE node_id=?", params![entity_id])?;
+            self.conn
+                .execute("DELETE FROM entities WHERE entity_id=?", params![entity_id])?;
+            Ok(())
+        })
+    }
+
     // ------------------------------------------------------------- 共享取数面
 
     fn entity_brief(&self, entity_id: &str) -> MResult<Option<(String, String, String)>> {

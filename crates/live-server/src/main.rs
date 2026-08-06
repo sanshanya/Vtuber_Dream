@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "用法: live-audience <命令>\n  demo [-c|--config <config.yaml>] [--output <目录>]  合成数据 Demo\n  agent-check [-c|--config <config.yaml>]              真实端点探针验收（opt-in：需环境变量 VTD_AGENT_CHECK=1）\n  serve [-c|--config <config.yaml>] [--port <n>]         本地服务（默认 3781）\n  run --demo [-c|--config <config.yaml>] [--port <n>]    先构建合成 Demo，再以其结果起服";
+const USAGE: &str = "用法: live-audience <命令>\n  demo [-c|--config <config.yaml>] [--output <目录>]  合成数据 Demo\n  agent-check [-c|--config <config.yaml>]              真实端点探针验收（opt-in：需环境变量 VTD_AGENT_CHECK=1）\n  serve [-c|--config <config.yaml>] [--port <n>]         本地服务（默认 3781）\n  run --demo [-c|--config <config.yaml>] [--port <n>]    先构建合成 Demo，再以其结果起服\n  graph-reconcile [-c|--config <config.yaml>]            长期实体「AI 归并」单轮回放";
 
 /// 真实端点验收的显式开关值（AGENTS.md 质量门禁：真实端点必须 opt-in）。只认 "1"。
 pub const AGENT_CHECK_ENV: &str = "VTD_AGENT_CHECK";
@@ -26,6 +26,9 @@ enum Parse {
     RunDemo {
         config: PathBuf,
         port: u16,
+    },
+    GraphReconcile {
+        config: PathBuf,
     },
     Help,
     Usage(String),
@@ -82,7 +85,12 @@ fn parse(args: &[String]) -> Parse {
     if command == "run" && rest.next().map(String::as_str) != Some("--demo") {
         return Parse::Usage("run 仅支持 --demo（合成演示通道）".to_string());
     }
-    if command != "demo" && command != "agent-check" && command != "serve" && command != "run" {
+    if command != "demo"
+        && command != "agent-check"
+        && command != "serve"
+        && command != "run"
+        && command != "graph-reconcile"
+    {
         return Parse::Usage(format!("未知命令 {command}"));
     }
     let mut config = PathBuf::from("config.yaml");
@@ -114,6 +122,7 @@ fn parse(args: &[String]) -> Parse {
         "demo" => Parse::Demo { config, output },
         "agent-check" => Parse::AgentCheck { config },
         "serve" => Parse::Serve { config, port },
+        "graph-reconcile" => Parse::GraphReconcile { config },
         _ => Parse::RunDemo { config, port },
     }
 }
@@ -174,6 +183,28 @@ fn main() -> ExitCode {
             })
         }
         Parse::Serve { config, port } => serve_command(config, port, false, None),
+        Parse::GraphReconcile { config } => run_json_task(|| {
+            live_core::config::load_config(&config)
+                .map_err(|error| error.to_string())
+                .and_then(|cfg| {
+                    let runtime = tokio::runtime::Builder::new_multi_thread()
+                        .enable_all()
+                        .build()
+                        .map_err(|error| format!("tokio runtime: {error}"))?;
+                    let graph_file = cfg.output_dir.join("graph").join("perception.sqlite3");
+                    let store = live_core::graph::store::Store::open(&graph_file)
+                        .map_err(|error| format!("graph store: {error}"))?;
+                    let report = runtime
+                        .block_on(live_core::agent::reconcile::run_entity_reconcile(
+                            &live_core::agent::runtime::AgentRuntime::from_ai_config(&cfg.ai)
+                                .map_err(|error| error.to_string())?,
+                            &cfg,
+                            &store,
+                        ))
+                        .map_err(|error| error.to_string())?;
+                    serde_json::to_value(report).map_err(|error| error.to_string())
+                })
+        }),
         Parse::RunDemo { config, port } => {
             // D5 run --demo：构建合成 Demo → 起服（demo 模式 = run 通道返回静态快照，G3）。
             let built = live_core::config::load_config(&config)

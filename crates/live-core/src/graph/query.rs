@@ -147,6 +147,55 @@ pub fn search_entities(
     Ok(result)
 }
 
+/// 全量实体列表的分页读数（reconcile 的 list_entities 调查工具背靠这里）：
+/// 分页稳定排序（entity_id 字节序），每页行的列 = entity_id/canonical_name/
+/// entity_type/description/aliases（与 search_entities 的实体面同构，但只含
+/// 列表必需列——reconcile 工具不关心 properties）。
+pub const LIST_ENTITIES_LIMIT: i64 = 100;
+
+pub fn list_entities(store: &Store, offset: i64, limit: i64) -> Result<Value> {
+    let offset = offset.max(0);
+    let limit = limit.clamp(1, LIST_ENTITIES_LIMIT);
+    let rows = select_all(
+        store,
+        "SELECT e.entity_id,e.canonical_name,e.entity_type,e.description, \
+                GROUP_CONCAT(a.alias, ' | ') AS aliases \
+         FROM entities e \
+         LEFT JOIN entity_aliases a ON a.entity_id=e.entity_id \
+         GROUP BY e.entity_id \
+         ORDER BY e.entity_id \
+         LIMIT ? OFFSET ?",
+        vec![limit.into(), offset.into()],
+    )?;
+    let items: Vec<Value> = rows
+        .into_iter()
+        .map(|row| {
+            let aliases: Vec<Value> = row
+                .get("aliases")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .split('|')
+                .map(str::trim)
+                .filter(|item| !item.is_empty())
+                .map(|item| Value::String(item.to_string()))
+                .collect();
+            json!({
+                "entity_id": row.get("entity_id").cloned().unwrap_or(Value::Null),
+                "canonical_name": row.get("canonical_name").cloned().unwrap_or(Value::Null),
+                "entity_type": row.get("entity_type").cloned().unwrap_or(Value::Null),
+                "description": row.get("description").cloned().unwrap_or(Value::String(String::new())),
+                "aliases": aliases,
+            })
+        })
+        .collect();
+    Ok(json!({
+        "offset": offset,
+        "limit": limit,
+        "count": items.len(),
+        "items": items,
+    }))
+}
+
 // ---------------------------------------------------------------------------
 // references / episodes
 // ---------------------------------------------------------------------------

@@ -238,7 +238,7 @@ fn audience_submission(viewers: &[&str]) -> Value {
 fn seed_entity(store: &Store) {
     store.conn.execute(
         "INSERT INTO entities(entity_id,canonical_name,normalized_name,entity_type,description,source_kind,properties_json,first_seen_at,last_seen_at) \
-         VALUES('ent-demo','演示聚合实体','演示聚合实体','游戏','','ai_semantic','{}','t0','t1')",
+         VALUES('ent-demo','演示聚合实体','演示聚合实体','游戏','','ai_semantic','{}','2000-01-01T00:00:00+00:00','2000-01-01T00:01:00+00:00')",
         [],
     ).unwrap();
     store

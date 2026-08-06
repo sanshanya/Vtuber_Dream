@@ -42,7 +42,7 @@ use serde_json::{Map, Value};
 
 use crate::episodes::json_canon;
 
-pub use maintenance::{MaintenanceError, MergeOutcome, SplitOutcome};
+pub use maintenance::{MAINTENANCE_RUN_MODEL, MaintenanceError, MergeOutcome, SplitOutcome};
 pub use mentions::mention_id_of;
 
 pub const GRAPH_SCHEMA_VERSION: i64 = 8;
