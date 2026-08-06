@@ -1425,7 +1425,7 @@ async fn pipeline_recap_card_lands_with_ai_naming() {
                     "peak_name": "落雨十分钟",
                     "sentence_name": "晚好三连",
                     "reuse_line": "明天开场把「晚上好」留成仪式句，复用",
-                    "cut_advice": "以 4000s±2min 切一段开场互动切片",
+                    "cut_advice": "沿复读句「晚上好！」密集段第一刀，留开场互动钩",
                 }}),
                 None,
             )),
