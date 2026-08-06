@@ -16,15 +16,21 @@
 //! （缺时间戳、没有历史场、复读句无达标项是负发现而不是未知，不进未知行）。
 //! AI 命名件（peak_name 等）由 pipeline 的终局 Tool Call 另行落进 naming 键；
 //! 本模块只造规则体，命名缺位 = null + 未知行（绝不伪造语义——AGENTS §11）。
+//!
+//! P0-4（复盘解耦）：出卡不再锁全量感知——`refresh_recap_card` 是 collect 尾与
+//! pipeline 尾的共用刷新闻（语料入账→四个数→旧命名留存/作废→落盘，纯规则零 AI）；
+//! AI 命名是认知层附加窗：同场次同数面旧命名直接留存（不白跑 AI），数面一动即显式
+//! 作废进未知行（绝不拿旧命名盖新数），等下一轮感知重命名。
 
 use std::collections::{HashMap, HashSet};
+use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::episodes::now_iso;
 use crate::graph::Store;
-use crate::graph::store::Result;
+use crate::graph::store::{Result, StoreError};
 
 /// 密度峰窗口（分钟）。依据：细则 §1 P0-2「10 分钟窗滑弹幕行数 top-1」——
 /// 10 分钟是主播节奏的可操作颗粒（一首歌/一段杂谈的长度）。改它须改细则。
@@ -471,6 +477,111 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
     })
 }
 
+// ---------------------------------------------------------------------------
+// P0-4（复盘解耦）：T0 出卡口——collect 尾与 pipeline 尾共用。四个数是语料
+// 纯规则（零 AI）；AI 命名只作「留存判定」：同场次同数面旧命名继续有效，
+// 数面一动即显式作废（命名本身仍只在 pipeline 尾的 AI 窗里新跑）。
+// ---------------------------------------------------------------------------
+
+fn recap_card_path(output_dir: &Path) -> std::path::PathBuf {
+    output_dir.join("ai").join("recap.json")
+}
+
+/// 旧卡读面——磁盘工件是命名的唯一载体，不留进程内暗账。
+fn read_previous_card(output_dir: &Path) -> Option<RecapCard> {
+    crate::storage::read_json(&recap_card_path(output_dir))
+        .ok()
+        .flatten()
+        .and_then(|value| serde_json::from_value::<RecapCard>(value).ok())
+}
+
+/// 命名有效性口径：场次 + 四个数（status/speakers/returning/peak/repeated）全等。
+fn fact_surface(card: &RecapCard) -> Value {
+    serde_json::to_value((
+        &card.status,
+        &card.session,
+        card.speakers,
+        &card.returning,
+        &card.peak,
+        &card.repeated,
+    ))
+    .unwrap_or(Value::Null)
+}
+
+/// 复盘卡落盘点（ai/recap.json）——refresh / pipeline 命名路径共用的唯一写门。
+pub fn write_recap_card(output_dir: &Path, card: &RecapCard) -> Result<()> {
+    crate::storage::write_json(
+        &recap_card_path(output_dir),
+        &serde_json::to_value(card).unwrap_or(Value::Null),
+    )
+    .map_err(|err| StoreError::Repo(format!("recap 落盘：{err}")))?;
+    Ok(())
+}
+
+/// 语料入账（幂等）→ 聚四个数 → 留存/作废旧命名 → 落盘。返回新卡——pipeline 尾
+/// 在其上叠 AI 命名窗（见 agent/pipeline.rs 尾部）。
+///
+/// 失败纪律：store 开账/规则计算失败 = Err（调用方响铃）；语料入账失败 = 响铃 +
+/// fail_run 记半账 + 按图里已有面出卡——卡是呈现层读物，一条缺账不放弃四个数。
+pub fn refresh_recap_card(output_dir: &Path, progress: &dyn Fn(&str)) -> Result<RecapCard> {
+    let store = Store::open(&output_dir.join("graph").join("perception.sqlite3"))?;
+    // 入账挂独立 run（kind=recap-refresh）：completed 照常记账，但
+    // run_pair_delta 显式排除（对照窗语义见 query.rs 头注）。
+    let run_id = format!("run:{}", uuid::Uuid::new_v4().simple());
+    store.begin_run_typed(
+        &run_id,
+        &now_iso(),
+        "recap-refresh",
+        Store::RUN_KIND_RECAP_REFRESH,
+        None,
+    )?;
+    let (corpus, counts) =
+        crate::episodes::room_corpus::room_corpus_episodes(&output_dir.join("shared"));
+    let danmaku_count = counts["live_danmaku"].as_i64().unwrap_or(0);
+    let comment_count = counts["room_comment"].as_i64().unwrap_or(0);
+    let mut ingest_note: Option<String> = None;
+    match crate::episodes::room_corpus::ingest_room_corpus(&store, &run_id, &corpus) {
+        Ok(()) => {
+            progress(&format!(
+                "[RECAP] 房间语料入账：弹幕 {danmaku_count} 行、评论 {comment_count} 条（_room 命名空间）"
+            ));
+            if let Err(err) = store.complete_run(&run_id) {
+                progress(&format!("[RECAP] 刷新 run 结清失败：{err}"));
+            }
+        }
+        Err(err) => {
+            let note = format!(
+                "房间语料入账失败：{err}（弹幕 {danmaku_count}、评论 {comment_count} 按图里已有面出卡）"
+            );
+            progress(&format!("[RECAP] {note}"));
+            if let Err(close_err) = store.fail_run(&run_id, &err.to_string(), false) {
+                progress(&format!("[RECAP] 刷新 run 记败失败：{close_err}"));
+            }
+            ingest_note = Some(note);
+        }
+    }
+    let mut card = compute_recap(&store)?;
+    if let Some(note) = ingest_note {
+        card.unknown.push(note);
+    }
+    // 旧命名留存纪律：双方 ready 且场次+四个数全等 → 旧 AI 命名继续有效（同场次
+    // 同数面不白跑 AI）；旧卡带命名而数面已动 → 显式作废 + 未知行（绝不盖新数）。
+    if card.naming.is_none()
+        && let Some(previous) = read_previous_card(output_dir)
+        && previous.naming.is_some()
+    {
+        if fact_surface(&previous) == fact_surface(&card) {
+            card.naming = previous.naming;
+        } else if previous.status == "ready" {
+            card.unknown
+                .push("四个数较上次命名时有变化——旧 AI 命名已作废，下一轮感知重新命名".to_string());
+        }
+    }
+    write_recap_card(output_dir, &card)?;
+    progress(&format!("[RECAP] 复盘卡落盘（status={}）", card.status));
+    Ok(card)
+}
+
 #[cfg(test)]
 mod tests {
     use serde_json::json;
@@ -726,5 +837,140 @@ mod round2_tests {
             "旧文案=谎话: {}",
             card.headline
         );
+    }
+}
+
+/// P0-4 钉组：refresh_recap_card 的纪律面值——零 AI 出卡 / refresh run 记账 /
+/// 旧命名留存 / 数面动即作废。布景直接写 shared/*.json（真通道读面）。
+#[cfg(test)]
+mod refresh_tests {
+    use serde_json::{Value, json};
+
+    use super::*;
+
+    fn seed_records(output_dir: &Path, records: Value) {
+        let shared = output_dir.join("shared");
+        std::fs::create_dir_all(&shared).unwrap();
+        std::fs::write(
+            shared.join("replay_danmaku.json"),
+            json!({"records": records}).to_string(),
+        )
+        .unwrap();
+    }
+
+    fn one_session_records() -> Value {
+        json!([{
+            "rid": "r1", "start_timestamp": 1000, "end_timestamp": 2000,
+            "messages": [
+                {"text": "hi", "uid": "1001", "shard_index": 0, "ts": 1100},
+                {"text": "yo", "uid": "1002", "shard_index": 0, "ts": 1200},
+            ],
+        }])
+    }
+
+    /// 人工垫上旧命名（等价于上一轮 AI 已命名落盘）。
+    fn graft_old_naming(output_dir: &Path) {
+        let path = recap_card_path(output_dir);
+        let mut value = crate::storage::read_json(&path).unwrap().unwrap();
+        value["naming"] = json!({
+            "peak_name": "旧峰名", "sentence_name": "旧句名",
+            "reuse_line": "旧复用句", "cut_advice": "旧切口", "named_at": "t0",
+        });
+        crate::storage::write_json(&path, &value).unwrap();
+    }
+
+    /// 钉子①：零 AI 出卡——磁盘只见 shared/ 语料，refresh 即落 ready 卡；
+    /// refresh run 以 recap-refresh 类完整结账在案（kind + completed 双钉）。
+    #[test]
+    fn refresh_writes_card_with_zero_ai() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_records(dir.path(), one_session_records());
+        let card = refresh_recap_card(dir.path(), &|_| {}).expect("refresh");
+        assert_eq!(card.status, "ready");
+        assert_eq!(card.speakers, 2);
+        assert!(card.naming.is_none(), "纯规则路径绝不伪造 AI 命名");
+        let on_disk = crate::storage::read_json(&recap_card_path(dir.path()))
+            .unwrap()
+            .expect("card on disk");
+        assert_eq!(on_disk["status"], "ready");
+        let store = Store::open(&dir.path().join("graph").join("perception.sqlite3")).unwrap();
+        assert_eq!(
+            store
+                .count_scalar(
+                    "SELECT COUNT(*) FROM graph_runs \
+                     WHERE kind='recap-refresh' AND completed_at IS NOT NULL",
+                    &[]
+                )
+                .unwrap(),
+            1,
+            "refresh run 必须完整结账"
+        );
+    }
+
+    /// 钉子②：同场次同数面 → 旧 AI 命名直接留存（懒惰语义锚：不白跑 AI）。
+    #[test]
+    fn refresh_preserves_naming_when_facts_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_records(dir.path(), one_session_records());
+        refresh_recap_card(dir.path(), &|_| {}).unwrap();
+        graft_old_naming(dir.path());
+        let card = refresh_recap_card(dir.path(), &|_| {}).unwrap();
+        assert_eq!(card.naming.expect("旧命名留存").peak_name, "旧峰名");
+        assert!(
+            !card.unknown.iter().any(|row| row.contains("作废")),
+            "数面未动不得作废旧命名: {:?}",
+            card.unknown
+        );
+    }
+
+    /// 钉子③：数面动了（新场次进场）→ 旧命名显式作废 + 未知行，绝不盖新数。
+    #[test]
+    fn refresh_drops_stale_naming_into_unknown() {
+        let dir = tempfile::tempdir().unwrap();
+        seed_records(dir.path(), one_session_records());
+        refresh_recap_card(dir.path(), &|_| {}).unwrap();
+        graft_old_naming(dir.path());
+        // 第二场进场——本场窗从 [1000,2000] 换到 [3000,4600]。
+        seed_records(
+            dir.path(),
+            json!([
+                {
+                    "rid": "r1", "start_timestamp": 1000, "end_timestamp": 2000,
+                    "messages": [
+                        {"text": "hi", "uid": "1001", "shard_index": 0, "ts": 1100},
+                        {"text": "yo", "uid": "1002", "shard_index": 0, "ts": 1200},
+                    ],
+                },
+                {
+                    "rid": "r2", "start_timestamp": 3000, "end_timestamp": 4600,
+                    "messages": [
+                        {"text": "新场", "uid": "1003", "shard_index": 0, "ts": 3100},
+                    ],
+                },
+            ]),
+        );
+        let card = refresh_recap_card(dir.path(), &|_| {}).unwrap();
+        assert!(card.naming.is_none(), "数面动了旧命名必须作废");
+        assert!(
+            card.unknown.iter().any(|row| row.contains("已作废")),
+            "作废必须进未知行: {:?}",
+            card.unknown
+        );
+        // 落盘面同样作废——读到磁盘的卡不得残留旧命名。
+        let on_disk = crate::storage::read_json(&recap_card_path(dir.path()))
+            .unwrap()
+            .unwrap();
+        assert_eq!(on_disk["naming"], Value::Null);
+    }
+
+    /// 钉子④：入账通道缺席（连 shared/ 目录都没有）也是零语料空场卡，
+    /// 不报错、场次门有 genuinely 空集兜底。
+    #[test]
+    fn refresh_without_any_corpus_is_honest_empty() {
+        let dir = tempfile::tempdir().unwrap();
+        let card = refresh_recap_card(dir.path(), &|_| {}).unwrap();
+        assert_eq!(card.status, "empty");
+        assert!(card.empty_copy.is_some());
+        assert!(!card.unknown.is_empty(), "未知行恒在");
     }
 }

@@ -308,6 +308,17 @@ impl Registry {
                         if collect_only {
                             // Z4a：collect_* 是事实层终局——collect_with_client 的汇总
                             // 即 outcome（无 viewer_failures 键 → 默认 0 → 非 partial）。
+                            // P0-4（复盘解耦）：事实层终局顺带 T0 出卡——下播复盘四个数
+                            // 是 shared/ 语料的纯规则聚合（零 AI），不再等全量感知；
+                            // AI 命名仍属认知层（缺位 = null）。出卡失败响铃不绊 run
+                            // （采集产物已落盘，卡只是呈现层读物）。
+                            if let Err(err) =
+                                live_core::recap::refresh_recap_card(&config.output_dir, &emit)
+                            {
+                                emit(&format!(
+                                    "[RECAP] 复盘卡刷新失败（采集产物不受影响）：{err}"
+                                ));
+                            }
                             emit("[runs] 采集完成（collect_* 终局，未涉 AI 层）");
                             return Ok(summary);
                         }

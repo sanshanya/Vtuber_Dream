@@ -716,6 +716,26 @@ async fn staged_collect_streamer_is_facts_only_terminal() {
         !out_dir.join("ai/state.json").exists(),
         "collect_streamer 不得涉 AI 状态面"
     );
+
+    // P0-4（复盘解耦）：事实层终局即 T0 出卡——四个数是语料纯规则，零 AI；
+    // 命名仍属认知层（缺位 null），出卡足迹进 events。
+    let recap = read(&out_dir.join("ai").join("recap.json"));
+    assert!(
+        matches!(recap["status"].as_str(), Some("ready") | Some("empty")),
+        "复盘卡 status 必须是枚举字面：{recap}"
+    );
+    assert!(recap["naming"].is_null(), "事实层终局绝不伪造 AI 命名");
+    assert!(recap["unknown"].is_array(), "未知行恒在（验收钉④）");
+    assert!(
+        snapshot["events"]
+            .as_array()
+            .expect("events list")
+            .iter()
+            .any(|row| row
+                .as_str()
+                .is_some_and(|text| text.contains("[RECAP] 复盘卡落盘"))),
+        "复盘卡落盘足迹应在 events 里：{snapshot}"
+    );
 }
 
 /// Z4b/c：同一份采集面先 ai_viewers（收口到 viewer 阶段停点、态势不动），

@@ -35,7 +35,7 @@ export function RecapCard({ recap }: { recap: RecapPayload | null | undefined })
     return (
       <section className="section card" data-testid="recap-card">
         <h2>下播复盘卡</h2>
-        <div className="empty">复盘尚未生成——跑一次全量感知后，这里会有一张纸递到你手上。</div>
+        <div className="empty">复盘尚未生成——跑一次采集（collect）即可出卡，不必等全量感知。</div>
         <div className="muted small" data-testid="recap-unknown">
           未知的部分：复盘卡工件（ai/recap.json）还不存在。
         </div>

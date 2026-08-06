@@ -473,12 +473,15 @@ pub fn graph_stats(store: &Store) -> Result<Value> {
 /// `{ baseline_only, from_run_id, to_run_id,
 ///    interest: { opened, closed, changed }, guards: { added, removed } }`。
 pub fn run_pair_delta(store: &Store) -> Result<Value> {
-    let runs = select_all(
-        store,
+    // P0-4（复盘解耦）：recap-refresh 类 run（collect 尾的四个数刷新）不进对照窗——
+    // 它只重放语料、零 AI 边；若放行，每日 collect 的 refresh 会把「vs 上轮感知」
+    // 稀释成「无变化」。maintenance 类照旧参窗（它真实地动过边，排除即是谎报）。
+    let sql = format!(
         "SELECT run_id, completed_at FROM graph_runs WHERE completed_at IS NOT NULL \
-         ORDER BY completed_at DESC, run_id DESC LIMIT 2",
-        Vec::new(),
-    )?;
+         AND kind != '{}' ORDER BY completed_at DESC, run_id DESC LIMIT 2",
+        Store::RUN_KIND_RECAP_REFRESH
+    );
+    let runs = select_all(store, &sql, Vec::new())?;
     if runs.len() < 2 {
         return Ok(json!({
             "baseline_only": true,  // 面板显示「基线已建」

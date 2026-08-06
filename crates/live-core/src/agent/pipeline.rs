@@ -1708,13 +1708,18 @@ async fn run_pipeline_inner(
         Ok(()) => {}
         Err(err) => bail!(PipelineError::Store(err)),
     }
-    // P0-2（迭代细则 v1 §1）：下播复盘卡——四数纯规则（recap.rs）+ AI 只命名
-    // （naming.rs 一击终局）。卡是呈现层读物：任何子失败响铃不绊管线，
-    // 图与 situation 已落的事实不受影响（AI 命名缺位 = naming:null + 未知行）。
+    // P0-2（迭代细则 v1 §1）+ P0-4（复盘解耦）：四个数 + 旧命名留存/作废判定全沉
+    // 进 recap::refresh_recap_card（collect 尾同门进出——出卡不再锁全量感知）。
+    // 本处只叠 AI 命名窗：卡 ready 且命名缺位才跑 naming 一击终局——同场次同数面
+    // 的旧命名已被 refresh 留存，不白跑 AI。子失败响铃不绊管线（图与 situation
+    // 已落的事实不受影响；AI 命名缺位 = naming:null + 未知行）。
     {
-        match recap::compute_recap(&store) {
+        match recap::refresh_recap_card(&config.output_dir, &|msg| progress_say(knobs, msg)) {
             Ok(mut card) => {
-                if card.status == "ready" && (card.peak.is_some() || card.repeated.is_some()) {
+                let need_naming = card.status == "ready"
+                    && card.naming.is_none()
+                    && (card.peak.is_some() || card.repeated.is_some());
+                if need_naming {
                     match naming::run_recap_naming(runtime, config, &card).await {
                         Ok(named) => {
                             progress_say(knobs, "[RECAP] AI 命名落卡");
@@ -1725,16 +1730,9 @@ async fn run_pipeline_inner(
                             card.unknown.push(format!("AI 命名未达成：{err}"));
                         }
                     }
-                }
-                match storage::write_json(
-                    &config.output_dir.join("ai").join("recap.json"),
-                    &serde_json::to_value(&card).unwrap_or(Value::Null),
-                ) {
-                    Ok(()) => progress_say(
-                        knobs,
-                        &format!("[RECAP] 复盘卡落盘（status={}）", card.status),
-                    ),
-                    Err(err) => progress_say(knobs, &format!("[RECAP] 复盘卡落盘失败：{err}")),
+                    if let Err(err) = recap::write_recap_card(&config.output_dir, &card) {
+                        progress_say(knobs, &format!("[RECAP] 复盘卡落盘失败：{err}"));
+                    }
                 }
             }
             Err(err) => progress_say(knobs, &format!("[RECAP] 复盘卡计算失败：{err}")),

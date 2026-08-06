@@ -388,6 +388,10 @@ impl Store {
     /// run 类型面（§8.6 行 228/231）：entity_split / entity_merge 维护操作必记
     /// 一条 MAINTENANCE run（detail_json 载全参数，可回放审计）。
     pub const RUN_KIND_MAINTENANCE: &str = "maintenance";
+    /// run 类型面（P0-4 复盘解耦）：collect 尾的复盘卡刷新 run——只重放房间语料
+    /// Episode、零 AI 边。completed 照常记账，但 run_pair_delta 显式排除本类，
+    /// 否则每日 collect 的 refresh 会把「vs 上轮感知」对照窗稀释成「无变化」。
+    pub const RUN_KIND_RECAP_REFRESH: &str = "recap-refresh";
 
     pub fn begin_run(&self, model: &str) -> Result<String> {
         let run_id = format!("run:{}", uuid::Uuid::new_v4().simple());

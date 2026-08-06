@@ -266,3 +266,28 @@ fn run_pair_delta_baseline_when_fewer_than_two_complete_runs() {
     assert_eq!(delta["baseline_only"], true);
     assert_eq!(delta["to_run_id"], Value::Null);
 }
+
+/// P0-4（复盘解耦）：recap-refresh 类 run（collect 尾的四个数刷新）虽照常
+/// complete，但绝不进「相邻 complete」对照窗——夹心两条 refresh 后配对必须
+/// 仍是 (run-1, run-2)，「vs 上轮感知」不被「每日只收」稀释成无变化。
+#[test]
+fn recap_refresh_runs_stay_out_of_pairing() {
+    let (_tmp, store) = staging();
+    insert_run(&store, "run-2", Some(T2));
+    for (run_id, at) in [
+        ("run-refresh-1", "2026-08-01T18:00:00"),
+        ("run-refresh-2", "2026-08-01T23:00:00"),
+    ] {
+        store
+            .conn
+            .execute(
+                "INSERT INTO graph_runs(run_id, started_at, completed_at, kind) VALUES(?,?,?,?)",
+                rusqlite::params![run_id, T0, at, Store::RUN_KIND_RECAP_REFRESH],
+            )
+            .unwrap();
+    }
+    let delta = run_pair_delta(&store).expect("delta builds");
+    assert_eq!(delta["baseline_only"], false);
+    assert_eq!(delta["from_run_id"], "run-1");
+    assert_eq!(delta["to_run_id"], "run-2");
+}
