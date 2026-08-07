@@ -26,5 +26,8 @@ fn ws_record_unknown_option_is_usage_2() {
         .expect("spawn live-audience");
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.starts_with("未知参数") && stderr.contains("用法: "), "{stderr}");
+    assert!(
+        stderr.starts_with("未知参数") && stderr.contains("用法: "),
+        "{stderr}"
+    );
 }
