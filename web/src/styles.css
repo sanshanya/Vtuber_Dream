@@ -1,12 +1,12 @@
 /* 视觉资产：源流 = Python 报告层（原 live-audience report.py CSS）。
-   ── 视觉系统 v1（Z5，终裁 P0-5 的 T4 条款）——14 基础 token / 4 级阅读字阶 /
+   ── 视觉系统 v1（终裁 P0-5 的 T4 条款）——14 基础 token / 4 级阅读字阶 /
    3 档语义圆角 / 8px 网格（4px 半步白名单）/ 3 断点 1200-768-767 / dark 全映射。
 
    14 基础 token 清单（light 值在下，dark 映射在第二 :root 块，缺一即违例）：
      --bg --panel --panel2 --text --muted --line --accent --accent2
      --good --warn --danger --shadow --mark-bg --mark-text
    图谱层色 6 token（--layer-*）另组管理：cytoscape canvas 不解析 var()，DOM 件
-   与 GraphPage KIND_COLORS 字面同源——见文件尾 FE-F2 段。
+   与 GraphPage KIND_COLORS 字面同源——见文件尾「图谱层色变量」段。
    字阶 4 级：--fs-xs(徽标/辅助) --fs-sm(表单/清单次级) --fs-md(正文基) --fs-lg(卡内小节题)。
      display 白名单（数字自豪位/英雄标题，不入阅读字阶）：hero h1 32、stat 27、
      streamer-face fallback 44、streamer-body h2 24、hero h1 收缩档 26。
@@ -89,7 +89,7 @@ tr:last-child td{border-bottom:0}
 mark{background:var(--mark-bg);color:var(--mark-text);border-radius:4px;padding:0 2px}
 .notice{border:1px solid #f59e0b;background:color-mix(in srgb,#f59e0b 10%,var(--panel));border-radius:var(--r-md);padding:12px}
 
-/* ---- T1 三态纪律（Z5）：loading / empty / error 是三种具名知识态，禁止混用或裸挂。
+/* ---- T1 三态纪律：loading / empty / error 是三种具名知识态，禁止混用或裸挂。
    收纳约定：.empty = 空态（含「暂无」与静态等待位）、.notice = 错态引导、
    .state-loading = 进行中（呼吸点，区别于终态空——等待必须看起来在动）。 */
 .empty{color:var(--muted);padding:16px;text-align:center}
@@ -111,7 +111,7 @@ mark{background:var(--mark-bg);color:var(--mark-text);border-radius:4px;padding:
 .timeline-item{position:relative;margin:0 0 16px}
 .timeline-item:before{content:"";position:absolute;left:-22px;top:7px;width:10px;height:10px;border-radius:50%;background:var(--accent)}
 
-/* ---- Z5/C1 制片人简报卡（终裁 P0-5：c-ai 左边条 + refs 可点 + 空缺位纪律） ---- */
+/* ---- 制片人简报卡（终裁：c-ai 左边条 + refs 可点 + 空缺位纪律） ---- */
 .briefing-card{border-left:3px solid #a78bfa}
 .briefing-card .section-title{margin-bottom:8px}
 .brief-list{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:12px}
@@ -155,9 +155,9 @@ mark{background:var(--mark-bg);color:var(--mark-text);border-radius:4px;padding:
 .badge.run-status-failed{border-color:var(--danger);color:var(--danger)}
 .badge.run-status-per_viewer_ai,.badge.run-status-audience{border-color:#a78bfa}
 .badge.run-status-collecting,.badge.run-status-episodes{border-color:#60a5fa}
-/* W2/r5-F10(i)：队列态同 fact 蓝族——run 注册即 queued，缺这条就裸灰一拍。 */
+/* 队列态同 fact 蓝族——run 注册即 queued，缺这条就裸灰一拍。 */
 .badge.run-status-queued{border-color:#60a5fa}
-/* W2/r5-F1：events 弹层现挂 hero（color:white）内但底色是 --panel 浅底——
+/* events 弹层现挂 hero（color:white）内但底色是 --panel 浅底——
    必须自救复位文字色，否则白字白底不可读。 */
 .run-events{position:absolute;z-index:3;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:var(--r-md);padding:8px;max-width:520px;box-shadow:var(--shadow)}
 .run-events pre{max-height:304px;overflow:auto;font-size:var(--fs-xs);margin:8px 0 0}
@@ -175,17 +175,17 @@ mark{background:var(--mark-bg);color:var(--mark-text);border-radius:4px;padding:
 .delta-list{list-style:none;margin:8px 0;padding:0;font-size:var(--fs-sm)}
 .delta-list li{padding:4px 0;border-bottom:1px dashed var(--line)}
 .delta-list li:last-child{border-bottom:0}
-/* X2 追加段：hero 单点挂载 RunButton（ag7 页头钮裁决兑现）+ 丢失提示钮形
-   Z4c 修订：hero 去触发钮，只挂只读 RunStatusBadge（动作全数落页）——选择器跟随改 .run-status。 */
+/* hero 单点挂载 RunButton（页头钮裁决兑现）+ 丢失提示钮形
+   hero 去触发钮，只挂只读 RunStatusBadge（动作全数落页）——选择器跟随改 .run-status。 */
 .hero-runbar{margin-top:16px;padding-top:10px;border-top:1px solid rgba(255,255,255,.18)}
 .hero-runbar .run-status{background:rgba(255,255,255,.06);padding:6px 10px;border-radius:var(--r-md)}
-/* W2/r5-F1：hero 重着色收窄为排除 danger——0-3-0 特异度压过 .badge.danger（0-2-0），
+/* hero 重着色收窄为排除 danger——0-3-0 特异度压过 .badge.danger（0-2-0），
    丢失/失败徽标的红字会被抹成近白，而恰是 hero 上最需要保全的警示信号。 */
 .hero-runbar .run-status .badge:not(.danger){--panel2:rgba(255,255,255,.10);color:#eef2ff}
 button.badge{cursor:pointer;font:inherit;font-size:var(--fs-xs)}
-/* W2/r5-F3：footer 全局 synthetic 徽标（裸 badge——合成标记是元信息，四层色不入）。 */
+/* footer 全局 synthetic 徽标（裸 badge——合成标记是元信息，四层色不入）。 */
 .footer .badge{margin-left:8px;vertical-align:middle}
-/* ---- Z 批追加段：主播卡 / 直播数据页 / Markdown 态势渲染 / 房间入口钮 ---- */
+/* ---- 追加段：主播卡 / 直播数据页 / Markdown 态势渲染 / 房间入口钮 ---- */
 
 /* 主播卡：头像在左、信息体在右（参照 laplace.live 主播卡层级）。 */
 .streamer-card{display:flex;gap:16px;align-items:flex-start}
@@ -211,17 +211,13 @@ button.badge{cursor:pointer;font:inherit;font-size:var(--fs-xs)}
 .live-cover{width:96px;height:54px;object-fit:cover;border-radius:var(--r-sm);border:1px solid var(--line);background:var(--panel2)}
 table.data-table td{vertical-align:middle}
 
-/* 房间入口钮（引导跳设置页）：hero 上的次级钮形。 */
-.room-entry{display:inline-flex;align-items:center;margin-left:10px;padding:6px 12px;border:1px solid rgba(255,255,255,.35);border-radius:var(--r-md);color:#eef2ff;text-decoration:none}
-.room-entry:hover{background:rgba(255,255,255,.12);text-decoration:none}
-
-/* Z2b 追加段：首页舰长栏 */
+/* 首页舰长栏 */
 .guard-strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(192px,1fr));gap:8px}
 .guard-chip{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2);text-decoration:none;color:var(--text)}
 .guard-chip:hover{border-color:var(--accent)}
 .guard-chip strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
-/* Z3 追加段：舰长头像列 / 指标条 / 观众单元 */
+/* 追加段：舰长头像列 / 指标条 / 观众单元 */
 .avatar-xs{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--panel2);border:1px solid var(--line);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:var(--fs-xs);font-weight:700;color:var(--muted)}
 .avatar-fallback{display:inline-flex;align-items:center;justify-content:center}
 .viewer-cell{display:flex;align-items:center;gap:8px}
@@ -232,7 +228,7 @@ table.data-table td{vertical-align:middle}
 .room-current:hover{background:rgba(255,255,255,.24);text-decoration:none}
 .hero-runbar{display:flex;align-items:center;gap:12px}
 
-/* ---- Z4c/d 追加段：动作平面分层 ---- */
+/* ---- 追加段：动作平面分层 ---- */
 /* 只读状态徽标（hero/卡片内通用）：与 .run-trigger 同构的 inline-flex 容器，
    position:relative 给 .run-events 的 absolute 浮层锚点。 */
 .run-status{display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;position:relative}
@@ -251,7 +247,7 @@ table.data-table td{vertical-align:middle}
 .run-confirm-actions button{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:var(--r-sm);padding:8px 12px;cursor:pointer;font:inherit}
 .run-confirm-actions .primary{background:var(--accent);border:0;color:#fff}
 
-/* Z6 件2/件5：预算阻断卡（hero/卡片内通用）——自持面板底色，hero 白字面自救
+/* 预算阻断卡（hero/卡片内通用）——自持面板底色，hero 白字面自救
    （同 .run-events 策略）；flex-basis:100% 让卡在 .run-status inline-flex 里换行整宽。 */
 .budget-block{display:flex;flex-direction:column;gap:6px;flex-basis:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px;box-shadow:var(--shadow)}
 .budget-block-copy{margin:0;font-size:var(--fs-sm)}
@@ -261,7 +257,7 @@ table.data-table td{vertical-align:middle}
 .budget-block-actions button:disabled{opacity:.6;cursor:wait}
 .budget-block-link{margin-top:2px;color:var(--accent)}
 
-/* ---- FE-F2 追加段：图谱层色变量 + 详情徽标 + a11y 清单 ----
+/* ---- 追加段：图谱层色变量 + 详情徽标 + a11y 清单 ----
    层色唯一锚点：GraphPage 画布 KIND_COLORS（cytoscape canvas 不解析 var()，
    3.31 实测判 invalid 回落基色，故那边保留同值字面锚）与所有 DOM 面
    （详情 kind 徽标等 inline style 引用）同源本组变量——数值走形只改这里一处。 */
@@ -269,15 +265,15 @@ table.data-table td{vertical-align:middle}
 @media(prefers-color-scheme:dark){:root{--layer-viewer:#58a6ff;--layer-entity:#a78bfa;--layer-mention:#8b949e;--layer-episode:#22d3ee;--layer-state:#3fb950;--layer-action:#d29922}}
 /* 图谱详情 kind 徽标：底色由 GraphPage inline style 注入 var(--layer-*)，文字反白。 */
 .graph-kind-chip{color:#fff;border-color:transparent}
-/* R3#9 a11y：cytoscape canvas 外叠的节点清单——视觉藏、焦点可达
+/* a11y：cytoscape canvas 外叠的节点清单——视觉藏、焦点可达
    （禁 display:none/visibility:hidden，二者会连焦点与读屏一起灭）。 */
 .graph-a11y{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;list-style:none}
 .graph-a11y li:focus{outline:2px solid var(--accent);outline-offset:1px}
 
-/* ---- R2 批6 D7/D8 追加段：时间戳语义徽标 + 分层跑菜单 + 主钮旁预估 ---- */
-/* D7：Episode 行时间戳徽标（发布于/采集于）与常规 badge 同形，不另造强调。 */
+/* ---- 追加段：时间戳语义徽标 + 分层跑菜单 + 主钮旁预估 ---- */
+/* Episode 行时间戳徽标（发布于/采集于）与常规 badge 同形，不另造强调。 */
 .episode-ts{white-space:nowrap}
-/* D8「分层跑」次级菜单：details/disclosure 小家——summary 是触发面，body 竖排。
+/* 「分层跑」次级菜单：details/disclosure 小家——summary 是触发面，body 竖排。
    .action-bar 内与主钮同列，默认收起不抢「主钮唯一」的焦点。 */
 .tiered-runs{border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2);margin-top:2px}
 .tiered-runs summary{cursor:pointer;padding:8px 12px;font-weight:600;color:var(--text)}
@@ -287,11 +283,11 @@ table.data-table td{vertical-align:middle}
 .tiered-runs-body .tiered-guide{margin:0;line-height:1.6}
 .tiered-guide a{color:var(--accent);text-decoration:none}
 .tiered-guide a:hover{text-decoration:underline}
-/* D8：主钮旁预估行——一行小字（上限口径 + 墙钟带宽），缺席落「预估 —」不臆造。 */
+/* 主钮旁预估行——一行小字（上限口径 + 墙钟带宽），缺席落「预估 —」不臆造。 */
 .run-estimate{line-height:1.6}
-/* R2 批6 D10：舰长卡→关系卡四微件的微行 */
+/* 舰长卡→关系卡四微件的微行 */
 .micro-line{font-size:var(--fs-xs);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
-/* ---- R2 批6 D11 追加段：存档页（存活 + 周健康 + 里程碑日历） ---- */
+/* ---- 追加段：存档页（存活 + 周健康 + 里程碑日历） ---- */
 /* 存活天数：数字自豪位（27px 在 display 白名单 stat 档内），副注灰行不压迫数字。 */
 .archive-alive-days{font-size:27px;font-weight:700;line-height:1.2}
 .archive-health dd.muted{font-style:italic}
@@ -305,7 +301,7 @@ table.data-table td{vertical-align:middle}
 .archive-milestone.pending{border-left-color:var(--warn)}
 .archive-milestone.unknown{border-left-color:var(--line)}
 .archive-milestone.unknown span{color:var(--muted)}
-/* D9/R2-批6：线索拒绝面——pending 持有人分组折叠、行内拒因区、rejected 明细徽标 */
+/* 线索拒绝面——pending 持有人分组折叠、行内拒因区、rejected 明细徽标 */
 .lead-groups{display:flex;flex-direction:column;gap:8px;margin-top:8px}
 .lead-group{border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2)}
 .lead-group-summary{cursor:pointer;padding:6px 10px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;flex-wrap:wrap}

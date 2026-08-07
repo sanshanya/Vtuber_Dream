@@ -5,7 +5,7 @@ import { api, type OverviewView } from "./api";
 import { RunStatusBadge } from "./components/RunButton";
 import { matchRoute, useHashPath, type PageId } from "./router";
 
-/** R4-F1 → Z4 扩展：八页全懒加载——每路由一个 chunk，首屏 main 只背壳
+/** 八页全懒加载——每路由一个 chunk，首屏 main 只背壳
  *  （react + react-query + App + RunTracker + styles）。图谱页（cytoscape 重组件）
  *  之外的七页同样是路由级边界，没有提前融合进首屏包的理由。 */
 const Streamer = lazy(() =>
@@ -30,7 +30,7 @@ const ArchivePage = lazy(() =>
 );
 
 /**
- * footer synthetic 徽标的析取口径（W2/r5-F3，R3#6 单源）：collection/ai/situation
+ * footer synthetic 徽标的析取口径（单源）：collection/ai/situation
  * 任一 synthetic_demo=true → 亮；三分段全缺席/全 false → 不亮（合成标示宁可缺席，
  * 不许凭失败/缺省臆造）。注：Streamer 内的同源口径是他单辖区，保留不动。
  */
@@ -42,7 +42,7 @@ export function isSyntheticRun(overview: OverviewView | undefined): boolean {
   );
 }
 
-/** 页面键 → 组件实体装配（ROUTES 数据表在 router.tsx；Z4 八页全懒，
+/** 页面键 → 组件实体装配（ROUTES 数据表在 router.tsx；八页全懒，
  *  Suspense 边界唯一，挂在 <main> 出口——见 App 返回体）。
  *  archive 不在 PageId 联合（router.tsx 未列入）——路由分支见 App() 内段首选判。 */
 function renderPage(page: PageId, params: string[], roomId: string) {
@@ -71,7 +71,7 @@ export default function App() {
   // 现布局单房间：任何数据页先解析第一条 room（uid 由 config 房号背书）。
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const roomId = rooms.data?.[0]?.id;
-  // W2/r5-F3：synthetic_demo 全局明示（README「页面以徽标明示」承诺兑现）。
+  // synthetic_demo 全局明示（README「页面以徽标明示」承诺兑现）。
   // overview 失败静默缺省——合成标示宁可缺席，不许凭失败臆造。
   const overview = useQuery({
     queryKey: ["overview", roomId],
@@ -93,10 +93,10 @@ export default function App() {
   } else if (rooms.isLoading) {
     page = <div className="empty">正在连接 live-server…</div>;
   } else if (!roomId) {
-    // ag4-F7：查询成功但空数组不得悬挂「正在连接」——显式空态。
+    // 查询成功但空数组不得悬挂「正在连接」——显式空态。
     page = <div className="notice">服务端未配置任何房间（/api/rooms 返回空）。</div>;
   } else if (segments[0] === "archive") {
-    // 裁决 R2-γ：存档页（R2 批6 D11）承接原「图谱」导航槽位；router.tsx 的
+    // 裁决：存档页承接原「图谱」导航槽位；router.tsx 的
     // PageId/ROUTES 未列入 archive（TS2678 禁区）——段首选判不吞 matchRoute 判据。
     page = <ArchivePage />;
   } else if (route === null) {
@@ -117,11 +117,11 @@ export default function App() {
       <header className="hero">
         <div className="container">
           {/* 英雄区上行 = 应用品牌（用户裁决摆位：红箭头行 = 虚梦应用标题，
-              黄箭头行 = 房间名=主播名 + ＋房间入口）。 */}
+              黄箭头行 = 房间名=主播名 + 只读 run 状态徽标）。 */}
           <h1>虚梦 · Vtuber Dream</h1>
-          {/* Z3 定稿序 + 裁决 R2-γ：主播介绍（首页）→ 舰长列表 → 直播数据 →
+          {/* 定稿序 + 裁决：主播介绍（首页）→ 舰长列表 → 直播数据 →
               线索账本 → 存档 → 设置。图谱退出主导航（#/graph 原路由仍可达，
-              仅不再陈列入口）——存档槽位即原图谱槽位（R2 批6 D11）。 */}
+              仅不再陈列入口）——存档槽位即原图谱槽位。 */}
           <nav className="nav">
             <a href="#/">主播介绍</a>
             <a href="#/viewers">舰长列表</a>
@@ -131,10 +131,10 @@ export default function App() {
             <a href="#/settings">设置</a>
           </nav>
         </div>
-        {/* Z4c：hero 去触发钮——动作全数落页（哪个页面数据由哪个动作产出，钮住哪），
+        {/* 英雄区 hero 去触发钮——动作全数落页（哪个页面数据由哪个动作产出，钮住哪），
             hero 只保留只读状态徽标（RunTracker 全局共享，任何页面触发的 run 在此回报）。
-            房间模型：当前房间 = 主播名（房间即主播），名列最前，点击回主播介绍页；
-            「＋房间」行为 = 引导（跳设置页），多房间后端不在本原型。 */}
+            房间模型：单房间原型——当前房间 = 主播名（房间即主播），名列最前，点击回
+            主播介绍页。 */}
         <div className="container hero-runbar">
           <a
             className="room-current"
@@ -147,17 +147,10 @@ export default function App() {
               : (rooms.data?.[0]?.project_name ?? "直播房间")}
           </a>
           <RunStatusBadge />
-          <a
-            className="room-entry"
-            href="#/settings"
-            title="房间配置在设置页——单房间原型，入口负责引导"
-          >
-            ＋ 房间
-          </a>
         </div>
       </header>
       <main className="container">
-        {/* Z4：唯一懒加载边界——任何路由切页 fallback 一律走空态文案（T1 三态前的中性态）。 */}
+        {/* 唯一懒加载边界——任何路由切页 fallback 一律走空态文案（T1 三态前的中性态）。 */}
         <Suspense fallback={<div className="state-loading">载入页面…</div>}>{page}</Suspense>
       </main>
       <footer className="container footer">
