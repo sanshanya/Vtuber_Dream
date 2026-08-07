@@ -29,7 +29,6 @@ mod maintenance;
 mod rooms;
 mod runs;
 
-pub use config_routes::{MAX_PUT_VALUE_CHARS, WRITABLE_CONFIG_KEYS};
 pub use runs::MAX_VIEWER_UID_CHARS;
 
 /// serve/run 共用默认端口（魔数命名）。
@@ -47,9 +46,6 @@ pub struct AppState {
     pub registry: Registry,
     /// 测试接缝：POST runs → spawn 的 Bilibili 根地址注入（生产 None → 官方端点）。
     pub bilibili_hosts: Option<(String, String)>,
-    /// config 写互斥——并发 PUT 的 read-modify-write 会互相覆盖丢更新。
-    /// write_keys 是同步原子写（tmp+rename），持锁窗口不含 await，std Mutex 足够。
-    pub config_write_lock: Arc<Mutex<()>>,
     /// graph artifact 重建互斥——并发首访同时 miss 时只许一个线程重建
     /// （≈0.6s SQL + 压缩），其余等待者复用其产物。持锁在 spawn_blocking 内。
     pub graph_artifact_lock: Arc<Mutex<()>>,
@@ -147,10 +143,7 @@ pub fn build_app(state: AppState) -> Router {
             "/rooms/:uid/maintenance/entity_merge",
             axum::routing::post(maintenance::maintenance_entity_merge),
         )
-        .route(
-            "/config",
-            get(config_routes::config_get).put(config_routes::config_put),
-        )
+        .route("/config", get(config_routes::config_get))
         .route("/budget", get(config_routes::budget_get))
         .route("/runs", axum::routing::post(runs::runs_post))
         .route("/runs/:id", get(runs::run_get))
@@ -251,7 +244,6 @@ pub fn serve(options: StartOptions) -> Result<(), String> {
             web_root: options.web_root,
             registry: Registry::new(),
             bilibili_hosts: options.bilibili_hosts,
-            config_write_lock: Default::default(),
             graph_artifact_lock: Default::default(),
         };
         let addr = SocketAddr::from(([127, 0, 0, 1], options.port));

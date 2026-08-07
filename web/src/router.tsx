@@ -16,7 +16,6 @@ export type PageId =
   | "live"
   | "leads"
   | "graph"
-  | "settings";
 
 export interface RouteEntry {
   /** 段形态：字面段精确比；"*" 吃一段、按序收入 params。 */
@@ -33,7 +32,6 @@ export const ROUTES: RouteEntry[] = [
   { seg: ["live"], page: "live" },
   { seg: ["leads"], page: "leads" },
   { seg: ["graph"], page: "graph" },
-  { seg: ["settings"], page: "settings" },
 ];
 
 export interface MatchedRoute {

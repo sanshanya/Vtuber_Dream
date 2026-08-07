@@ -50,7 +50,6 @@ fn fixture(bilibili_hosts: Option<(String, String)>) -> Fixture {
         web_root: tmp.path().join("no-dist"),
         registry: registry.clone(),
         bilibili_hosts,
-        config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
     });
     Fixture {

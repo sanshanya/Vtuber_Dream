@@ -186,7 +186,6 @@ async fn overview_delta_after_second_complete_run_is_non_baseline() {
         web_root: Path::new("no-dist").to_path_buf(),
         registry: live_server::registry::Registry::new(),
         bilibili_hosts: None,
-        config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
     });
     let (status, overview) = get(&app, "/api/rooms/983/overview").await;

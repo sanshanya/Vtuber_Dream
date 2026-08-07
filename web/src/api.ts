@@ -242,7 +242,6 @@ export interface ConfigView {
     run_budget_cny: number | null;
     [key: string]: unknown;
   };
-  writable_keys: string[];
 }
 
 /** 主钮旁预估段（服务端预算闸同源口径：fresh = 输入哈希已变 ∪ 无完整旧结论）。
@@ -307,7 +306,6 @@ export const api = {
   roomGraph: (roomId: string) =>
     request<{ elements: unknown[] }>("GET", `/rooms/${encodeURIComponent(roomId)}/graph`),
   config: () => request<ConfigView>("GET", "/config"),
-  putConfig: (body: unknown) => request<{ status: string; keys?: number }>("PUT", "/config", body),
   run: (id: string) => request<RunRecordView>("GET", `/runs/${encodeURIComponent(id)}`),
   startRun: (body: {
     kind: RunKind;

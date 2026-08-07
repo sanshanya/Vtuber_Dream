@@ -136,7 +136,6 @@ fn fixture() -> Fixture {
         web_root: tmp.path().join("no-dist"),
         registry: live_server::registry::Registry::new(),
         bilibili_hosts: None,
-        config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
     });
     Fixture {
@@ -297,7 +296,6 @@ async fn entity_split_not_found_surface() {
         web_root: tmp.path().join("no-dist"),
         registry: live_server::registry::Registry::new(),
         bilibili_hosts: None,
-        config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
     });
     let (status, resp) = oneshot(

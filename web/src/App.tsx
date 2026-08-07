@@ -19,9 +19,6 @@ const ViewerTree = lazy(() =>
 );
 const Live = lazy(() => import("./pages/Live").then((module) => ({ default: module.Live })));
 const Leads = lazy(() => import("./pages/Leads").then((module) => ({ default: module.Leads })));
-const Settings = lazy(() =>
-  import("./pages/Settings").then((module) => ({ default: module.Settings })),
-);
 const GraphPage = lazy(() =>
   import("./pages/GraphPage").then((module) => ({ default: module.GraphPage })),
 );
@@ -44,8 +41,6 @@ function renderPage(page: PageId, params: string[], roomId: string) {
       return <Live roomId={roomId} />;
     case "leads":
       return <Leads roomId={roomId} />;
-    case "settings":
-      return <Settings />;
   }
 }
 
@@ -103,7 +98,6 @@ export default function App() {
             <a href="#/viewers">舰长列表</a>
             <a href="#/live">直播数据</a>
             <a href="#/leads">线索账本</a>
-            <a href="#/settings">设置</a>
           </nav>
         </div>
         {/* 英雄区 hero 去触发钮——动作全数落页（哪个页面数据由哪个动作产出，钮住哪），

@@ -49,7 +49,6 @@ fn fixture() -> Fixture {
         web_root: tmp.path().join("no-dist"),
         registry: live_server::registry::Registry::new(),
         bilibili_hosts: None,
-        config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
     });
     Fixture {
@@ -803,7 +802,6 @@ async fn graph_endpoints_404_when_graph_absent() {
         web_root: tmp.path().join("no-dist"),
         registry: live_server::registry::Registry::new(),
         bilibili_hosts: None,
-        config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
     });
     let (status, _body) = get(&app, "/api/rooms/983/graph").await;

@@ -528,7 +528,6 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
         web_root: tmp.path().join("no-dist"),
         registry: registry.clone(),
         bilibili_hosts: Some((bilibili.uri(), bilibili.uri())),
-        config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
     });
 
@@ -681,7 +680,6 @@ fn build_zip_fixture(
         web_root: tmp.path().join("no-dist"),
         registry: registry.clone(),
         bilibili_hosts: Some((bilibili_uri.to_string(), bilibili_uri.to_string())),
-        config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
     });
     (tmp, config_path, app, registry)
@@ -1074,7 +1072,6 @@ async fn single_viewer_run_audience_failure_marks_partial_true() {
         web_root: tmp.path().join("no-dist"),
         registry: registry.clone(),
         bilibili_hosts: Some((bilibili.uri(), bilibili.uri())),
-        config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
     });
 
