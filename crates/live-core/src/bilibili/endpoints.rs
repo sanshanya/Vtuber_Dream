@@ -500,6 +500,11 @@ impl BilibiliClient {
             .and_then(Value::as_i64)
             .and_then(|port| u16::try_from(port).ok())
             .unwrap_or(0);
+        let wss_port = first
+            .and_then(|row| row.get("wss_port"))
+            .and_then(Value::as_i64)
+            .and_then(|port| u16::try_from(port).ok())
+            .unwrap_or(0);
         let token = data
             .get("token")
             .and_then(Value::as_str)
@@ -509,7 +514,12 @@ impl BilibiliClient {
                 detail: "getDanmuInfo 响应缺 token".to_string(),
             })?
             .to_string();
-        Ok(DanmakuInfo { host, port, token })
+        Ok(DanmakuInfo {
+            host,
+            port,
+            wss_port,
+            token,
+        })
     }
 
     /// 场次窗兜底轮询：房间信息接口的 `live_status`
@@ -538,19 +548,32 @@ impl BilibiliClient {
 pub struct DanmakuInfo {
     /// `host_list[0].host`（原始字符串，未归一）。
     pub host: String,
-    /// `host_list[0].port`（取不到按 0 处理，URL 组装回落 wss 标准端）。
+    /// `host_list[0].port`（原生 TCP 面端口——**不进 WebSocket URL**；取不到按 0）。
     pub port: u16,
+    /// `host_list[0].wss_port`（WSS 面端口——WS 连接地址的唯一消费键；
+    /// 取不到回落 `port`）。实证（2026-08-07）：真端 `port=2243`（comet TCP 面）/
+    /// `wss_port=2245`，拿 port 直连 = ws://…:2243 63 秒 reconnect_exhausted。
+    pub wss_port: u16,
     /// 认证 key（op=7 认证包负载的一部分；只进连接，绝不进任何错误串）。
     pub token: String,
 }
 
 impl DanmakuInfo {
-    /// WS 连接地址：port=443（或取不到）→ `wss://{host}/sub` 标准端点；
-    /// 非标准端口（含本地 mock 的随机端口）→ `ws://{host}:{port}/sub`。
+    /// WS 连接地址：本机回环（127.0.0.1/localhost）→ `ws://{host}:{port}/sub`
+    /// （测试 mock 是裸 TCP listener，无 TLS）；其余：`443/取不到 → wss://{host}/sub`
+    /// 标准端点，否则 `wss://{host}:{wss_port}/sub`（真端 2245）。
     pub fn url(&self) -> String {
-        match self.port {
+        let port = if self.wss_port != 0 {
+            self.wss_port
+        } else {
+            self.port
+        };
+        if self.host == "127.0.0.1" || self.host == "localhost" {
+            return format!("ws://{}:{}/sub", self.host, port);
+        }
+        match port {
             0 | 443 => format!("wss://{}/sub", self.host),
-            port => format!("ws://{}:{}/sub", self.host, port),
+            port => format!("wss://{}:{}/sub", self.host, port),
         }
     }
 }

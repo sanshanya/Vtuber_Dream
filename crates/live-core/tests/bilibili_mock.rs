@@ -733,13 +733,63 @@ async fn get_danmu_info_parses_host_port_and_token() {
         info.host, "broadcastlv.chat.bilibili.com",
         "取 host_list[0].host"
     );
-    assert_eq!(info.port, 2243);
+    assert_eq!(info.port, 2243, "port = 原生 TCP 面端口（不进 WS URL）");
+    assert_eq!(
+        info.wss_port, 443,
+        "wss_port = WSS 面端口（WS URL 唯一消费键）"
+    );
     assert_eq!(info.token, "A8j2KqWrN7mP0sXz5vLcYbT1uRfEiOdH");
     assert_eq!(
         info.url(),
-        "ws://broadcastlv.chat.bilibili.com:2243/sub",
-        "非标准端口走显式端口的 ws://"
+        "wss://broadcastlv.chat.bilibili.com/sub",
+        "wss_port=443 → 标准 wss 端点（2243 的 TCP 面不得进 URL）"
     );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn danmu_info_url_real_host_shape_uses_wss_port_2245() {
+    // 真端形状钉（2026-08-07 实证）：host_list[0] = {port: 2243, ws_port: 2244, wss_port: 2245}
+    // ——WS 地址必须走 wss 面 2245；ws://…:2243（TCP 面）曾吃 63 秒 reconnect_exhausted。
+    let server = MockServer::start().await;
+    mount_wbi_nav(&server).await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {
+                "token": "t",
+                "host_list": [{"host": "zj-cn-live-comet.chat.bilibili.com", "port": 2243, "wss_port": 2245}]
+            }
+        })))
+        .mount(&server)
+        .await;
+    let info = call(server, |client| client.get_danmu_info("983"))
+        .await
+        .expect("danmu info");
+    assert_eq!(info.port, 2243);
+    assert_eq!(info.wss_port, 2245);
+    assert_eq!(
+        info.url(),
+        "wss://zj-cn-live-comet.chat.bilibili.com:2245/sub"
+    );
+    // mock 缝钉：本机回环保 ws://（裸 TCP listener 无 TLS）——wss_port 缺省回落 port。
+    let server2 = MockServer::start().await;
+    mount_wbi_nav(&server2).await;
+    Mock::given(method("GET"))
+        .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {
+                "token": "t",
+                "host_list": [{"host": "127.0.0.1", "port": 12345}]
+            }
+        })))
+        .mount(&server2)
+        .await;
+    let info2 = call(server2, |client| client.get_danmu_info("983"))
+        .await
+        .expect("danmu info");
+    assert_eq!(info2.url(), "ws://127.0.0.1:12345/sub");
 }
 
 #[tokio::test(flavor = "multi_thread")]

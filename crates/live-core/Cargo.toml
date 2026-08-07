@@ -29,6 +29,9 @@ brotli = "7"
 # 工作区 reqwest 0.12/0.13 均为 rustls 栈（见 Cargo.lock hyper-rustls/tokio-rustls），
 # 不引 native-tls，避免双 TLS 栈。
 tokio-tungstenite = { version = "0.24", features = ["rustls-tls-native-roots"] }
+# rustls 直依：双 provider（aws-lc-rs/ring 经工作区同框都被拉进依赖树）下 0.23
+# 不再自作主张选默认件，须进程级显式 install_default（见 session.rs 会话入口）。
+rustls = { version = "0.23", features = ["ring"] }
 futures-util = "0.3"
 url = "2"
 
