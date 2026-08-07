@@ -48,7 +48,8 @@ use crate::episodes::now_iso;
 use crate::graph::Store;
 use crate::graph::store::{Result, StoreError};
 use crate::live_ws::episodes::{
-    SESSION_RID_PREFIX, SOURCE_WS_DANMAKU, SOURCE_WS_ENTRY, SOURCE_WS_SC, WINDOW_START_ATTACH,
+    SESSION_RID_PREFIX, SOURCE_WS_DANMAKU, SOURCE_WS_ENTRY, SOURCE_WS_GIFT, SOURCE_WS_GUARD_BUY,
+    SOURCE_WS_SC, SOURCE_WS_TOAST, WINDOW_START_ATTACH,
 };
 
 /// 密度峰窗口（分钟）。依据：细则 §1「10 分钟窗滑弹幕行数 top-1」——
@@ -295,7 +296,10 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
             Some(source)
                 if source == SOURCE_WS_DANMAKU
                     || source == SOURCE_WS_SC
-                    || source == SOURCE_WS_ENTRY =>
+                    || source == SOURCE_WS_ENTRY
+                    || source == SOURCE_WS_GIFT
+                    || source == SOURCE_WS_GUARD_BUY
+                    || source == SOURCE_WS_TOAST =>
             {
                 // 换轨：WS 窗的场次窗 = facts["session"]（窗线共享同一窗边界）；
                 // 身份 = 真实 mid（`sender_uid_mid`，非回放 crc 轨）。
@@ -329,9 +333,9 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
                 if start_ts > 0 && end_ts > 0 && !ws_windows.contains(&meta) {
                     ws_windows.push(meta);
                 }
-                if source != SOURCE_WS_ENTRY {
-                    // 弹幕/SC 行入 lines——SC 也是发言轨（含文本）；进场事件
-                    // 是纯氛围事件（无文本），不进四数行轨但场次窗照归。
+                if source == SOURCE_WS_DANMAKU || source == SOURCE_WS_SC {
+                    // 弹幕/SC 行入 lines——SC 也是发言轨（含文本）；进场/礼物/上舰/
+                    // 播报是纯氛围事实（无发言文本），不进四数行轨但场次窗照归。
                     line_rows.push(LineRow {
                         session_key: (start_ts, end_ts),
                         track: TRACK_WS,

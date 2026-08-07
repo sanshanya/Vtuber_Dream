@@ -18,6 +18,10 @@
 //!   SUPER_CHAT_MESSAGE_DELETE  data.ids（只登记撤销事件）
 //!   INTERACT_WORD         data.{msg_type（1 进场/2 关注/3 分享）, uid, uname, timestamp}
 //!                         kind 取值原样登记
+//!   SEND_GIFT             data.{uid, uname, giftName, num, price, total_coin, coin_type,
+//!                         timestamp（毫秒→协议层归一秒）}
+//!   GUARD_BUY             data.{uid, username, guard_level, num, price, gift_name, start_time}
+//!   USER_TOAST_V2         data.{uid, username, role_name, guard_level, start_time}
 //!   LIVE                  {cmd:"LIVE", live_time:<epoch 秒>} 开播信号
 //!   PREPARING             {cmd:"PREPARING", round?: 1} 下播/轮播信号（round 缺省=0）
 
@@ -65,6 +69,39 @@ pub enum WsEvent {
         uname: String,
         ts: i64,
     },
+    /// SEND_GIFT：真实 mid / uname / 礼物名 / 个数 / 单价 / 总金瓜子 / 币种。
+    /// 时戳归一在协议层：`timestamp` 平台给毫秒（message_stream.md），本变体存
+    /// **秒**（与 Danmaku/SC 同标——消费侧不做单位猜测）。缺席=None。
+    Gift {
+        uid: String,
+        uname: String,
+        gift_name: String,
+        num: i64,
+        price: f64,
+        total_coin: i64,
+        coin_type: String,
+        ts: Option<i64>,
+    },
+    /// GUARD_BUY（上舰）：guard_level ∈ {1 总督, 2 提督, 3 舰长}，price 元；
+    /// 时戳 = `start_time`（秒，同 SC 轨）。
+    GuardBuy {
+        uid: String,
+        uname: String,
+        guard_level: u32,
+        gift_name: String,
+        num: i64,
+        price: f64,
+        ts: Option<i64>,
+    },
+    /// USER_TOAST_V2（上舰播报，含续费）：时戳 = `start_time`（秒）。
+    /// uid 可能为 0（匿名/平台播报）——消费侧无身份锚即跳过（不产 Episode）。
+    Toast {
+        uid: String,
+        uname: String,
+        role_name: String,
+        guard_level: u32,
+        ts: Option<i64>,
+    },
     /// LIVE：开播信号；live_time 供第二段校正场次窗起点。
     Live { live_time: i64 },
     /// PREPARING：下播/轮播信号；round=1 轮播按下播同等处理。
@@ -110,6 +147,9 @@ fn downstream_body(body: &[u8]) -> Result<Option<WsEvent>, CodecError> {
         "SUPER_CHAT_MESSAGE" | "SUPER_CHAT_MESSAGE_JPN" => parse_super_chat(&v),
         "SUPER_CHAT_MESSAGE_DELETE" => parse_super_chat_delete(&v),
         "INTERACT_WORD" => parse_interact_word(&v),
+        "SEND_GIFT" => parse_send_gift(&v),
+        "GUARD_BUY" => parse_guard_buy(&v),
+        "USER_TOAST_V2" => parse_user_toast(&v),
         "LIVE" => parse_live(&v),
         "PREPARING" => parse_preparing(&v),
         // 未知 cmd（含 INTERACT_WORD_V2）：登记不解析，由第二段量 IgnoreTally。
@@ -207,6 +247,93 @@ fn parse_interact_word(v: &Value) -> Option<WsEvent> {
         kind,
         uid,
         uname,
+        ts,
+    })
+}
+
+/// SEND_GIFT：data.{uid, uname, giftName, num, price, total_coin, coin_type, timestamp}。
+/// `timestamp` 平台为毫秒——协议层归一秒（除千），事实层的单位约定只此一处承担。
+fn parse_send_gift(v: &Value) -> Option<WsEvent> {
+    let data = v.get("data")?.as_object()?;
+    let uid = num_to_string(data.get("uid")?)?;
+    let uname = data
+        .get("uname")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let gift_name = data.get("giftName")?.as_str()?.to_string();
+    let num = num_to_i64(data.get("num")?)?;
+    let price = data.get("price")?.as_f64()?;
+    let total_coin = num_to_i64(data.get("total_coin")?)?;
+    let coin_type = data
+        .get("coin_type")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let ts = num_to_i64(data.get("timestamp")?).map(|ms| ms / 1000);
+    Some(WsEvent::Gift {
+        uid,
+        uname,
+        gift_name,
+        num,
+        price,
+        total_coin,
+        coin_type,
+        ts,
+    })
+}
+
+/// GUARD_BUY：data.{uid, username, guard_level, num, price, gift_name, start_time}（秒）。
+fn parse_guard_buy(v: &Value) -> Option<WsEvent> {
+    let data = v.get("data")?.as_object()?;
+    let uid = num_to_string(data.get("uid")?)?;
+    let uname = data
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let guard_level = data.get("guard_level").and_then(Value::as_u64)? as u32;
+    let gift_name = data
+        .get("gift_name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let num = num_to_i64(data.get("num")?).unwrap_or(1);
+    let price = data.get("price").and_then(Value::as_f64).unwrap_or(0.0);
+    let ts = num_to_i64(data.get("start_time")?);
+    Some(WsEvent::GuardBuy {
+        uid,
+        uname,
+        guard_level,
+        gift_name,
+        num,
+        price,
+        ts,
+    })
+}
+
+/// USER_TOAST_V2：data.{uid, username, role_name, guard_level, start_time}（秒）。
+/// 播报面无礼物名——事实层不补。
+fn parse_user_toast(v: &Value) -> Option<WsEvent> {
+    let data = v.get("data")?.as_object()?;
+    let uid = num_to_string(data.get("uid")?)?;
+    let uname = data
+        .get("username")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let role_name = data
+        .get("role_name")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    let guard_level = data.get("guard_level").and_then(Value::as_u64).unwrap_or(0) as u32;
+    let ts = num_to_i64(data.get("start_time")?);
+    Some(WsEvent::Toast {
+        uid,
+        uname,
+        role_name,
+        guard_level,
         ts,
     })
 }

@@ -329,6 +329,80 @@ fn super_chat_message_jpn_same_shape() {
 }
 
 #[test]
+fn send_gift_fields_and_ms_timestamp_normalized_to_secs() {
+    // SAX 实证形状（bilibili-API-collect message_stream.md）：timestamp 平台给毫秒，
+    // 协议层归一秒——消费侧永不做单位猜测。
+    let raw = p(
+        5,
+        0,
+        r#"{"cmd":"SEND_GIFT","data":{"uid":313200,"uname":"投喂人","giftName":"小花花","num":2,"price":100.0,"total_coin":200,"coin_type":"gold","timestamp":1700000001234}}"# .as_bytes(),
+    );
+    assert_eq!(
+        parse_packet(&raw).expect("parse").expect("some"),
+        WsEvent::Gift {
+            uid: "313200".into(),
+            uname: "投喂人".into(),
+            gift_name: "小花花".into(),
+            num: 2,
+            price: 100.0,
+            total_coin: 200,
+            coin_type: "gold".into(),
+            ts: Some(1700000001)
+        }
+    );
+}
+
+#[test]
+fn guard_buy_fields() {
+    let raw = p(
+        5,
+        0,
+        r#"{"cmd":"GUARD_BUY","data":{"uid":66,"username":"舰长甲","guard_level":3,"num":1,"price":198,"gift_name":"舰长","start_time":1700000002}}"# .as_bytes(),
+    );
+    assert_eq!(
+        parse_packet(&raw).expect("parse").expect("some"),
+        WsEvent::GuardBuy {
+            uid: "66".into(),
+            uname: "舰长甲".into(),
+            guard_level: 3,
+            gift_name: "舰长".into(),
+            num: 1,
+            price: 198.0,
+            ts: Some(1700000002)
+        }
+    );
+}
+
+#[test]
+fn user_toast_v2_fields_and_anonymous_uid_zero_passthrough() {
+    let raw = p(
+        5,
+        0,
+        r#"{"cmd":"USER_TOAST_V2","data":{"uid":88,"username":"提督乙","role_name":"提督","guard_level":2,"start_time":1700000003}}"# .as_bytes(),
+    );
+    assert_eq!(
+        parse_packet(&raw).expect("parse").expect("some"),
+        WsEvent::Toast {
+            uid: "88".into(),
+            uname: "提督乙".into(),
+            role_name: "提督".into(),
+            guard_level: 2,
+            ts: Some(1700000003)
+        }
+    );
+    // 缺 data / 缺 start_time → 登记不解析（不造时间）。
+    let no_data = p(5, 0, r#"{"cmd":"USER_TOAST_V2"}"#.as_bytes());
+    assert!(parse_packet(&no_data).expect("parse").is_none());
+    let no_ts = p(
+        5,
+        0,
+        r#"{"cmd":"SEND_GIFT","data":{"uid":1,"giftName":"x","num":1,"price":1.0,"total_coin":1}}"#
+            .as_bytes(),
+    );
+    assert!(parse_packet(&no_ts).expect("parse").is_none());
+}
+
+#[test]
 fn super_chat_delete_ids_collected() {
     let raw = p(
         5,

@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use live_core::config::Config;
 use live_core::episodes::{now_iso, now_unix_secs};
 use live_core::live_ws::episodes::{WsRecorder, ingest_ws_window};
+use live_core::live_ws::replay::replay_jsonl;
 use live_core::live_ws::session::{WsSessionConfig, run_session};
 
 /// WS 弹幕窗采录全过程（同步阻塞直至收窗）：
@@ -143,4 +144,80 @@ pub fn run_ws_record(
         "end_reason": capture.end_reason,
     });
     Ok(Some(ws_window))
+}
+
+/// 外部录播 JSONL 回放入图（离线闭轨，不占 run 槽）：
+/// 多文件合并 → `WsRecorder` 同轨窗 → kind=ws-record 入账（事实现平面，对照
+/// 窗排除同实时轨）→ 复盘卡即刷（回放是闭轨命令，刷复盘是收尾本体）。
+///
+/// 返回摘要 JSON：ws_window（同实时轨键形）+ rows/skipped/families/money/recap。
+/// Err = 无可入账行 / 落账失败 / 复盘刷新失败（失败显形不装成功）。
+pub fn run_ws_replay(
+    config: &Config,
+    paths: &[std::path::PathBuf],
+    emit: &dyn Fn(&str),
+) -> Result<Value, String> {
+    let Ok(room_id) = config.bilibili.room_id.parse::<i64>() else {
+        return Err(format!(
+            "房间号非法（{}），无法回放",
+            config.bilibili.room_id
+        ));
+    };
+    emit(&format!("[回放] 读入 {} 份录播底稿…", paths.len()));
+    let outcome = replay_jsonl(room_id, paths)?;
+    emit(&format!(
+        "[回放] 行账 {}/{}（跳 {}），窗内 {} 线，礼物 ¥{:.1} + SC ¥{:.1}，上舰 {} 播报 {}",
+        outcome.rows - outcome.skipped,
+        outcome.rows,
+        outcome.skipped,
+        outcome.capture.episodes.len(),
+        outcome.money.gift_yuan,
+        outcome.money.sc_yuan,
+        outcome.money.guard_count,
+        outcome.money.toast_count,
+    ));
+
+    let store =
+        live_core::graph::Store::open(&config.output_dir.join("graph").join("perception.sqlite3"))
+            .map_err(|err| format!("graph store 打开失败：{err}"))?;
+    let graph_run = format!("run:{}", uuid::Uuid::new_v4().simple());
+    store
+        .begin_run_typed(
+            &graph_run,
+            &now_iso(),
+            live_core::graph::Store::RUN_KIND_WS_RECORD,
+            live_core::graph::Store::RUN_KIND_WS_RECORD,
+            None,
+        )
+        .map_err(|err| format!("回放 run 开账失败：{err}"))?;
+    if let Err(err) = ingest_ws_window(&store, &graph_run, &outcome.capture) {
+        let _ = store.fail_run(&graph_run, &err.to_string(), false);
+        return Err(format!("回放线入账失败：{err}"));
+    }
+    store
+        .complete_run(&graph_run)
+        .map_err(|err| format!("回放 run 结清失败：{err}"))?;
+    emit(&format!(
+        "[回放] 入账完成（run={graph_run}，{} 线）",
+        outcome.capture.episodes.len()
+    ));
+
+    emit("[回放] 刷新复盘卡…");
+    let recap = live_core::recap::refresh_recap_card(&config.output_dir, emit)
+        .map_err(|err| format!("复盘卡刷新失败：{err}"))?;
+
+    Ok(json!({
+        "ws_window": {
+            "lines": outcome.capture.episodes.len(),
+            "session": outcome.capture.session,
+            "unknowns": outcome.capture.unknowns,
+            "counts": outcome.capture.counts,
+            "end_reason": outcome.capture.end_reason,
+        },
+        "rows": outcome.rows,
+        "skipped": outcome.skipped,
+        "families": outcome.families,
+        "money": outcome.money,
+        "recap": recap,
+    }))
 }

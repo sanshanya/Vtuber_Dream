@@ -21,4 +21,5 @@
 pub mod codec;
 pub mod episodes;
 pub mod message;
+pub mod replay;
 pub mod session;

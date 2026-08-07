@@ -26,3 +26,4 @@ target-probe/
 /_demo/
 /output/
 .vite/
+.local-rec/

@@ -52,6 +52,15 @@ pub const EVENT_WS_SC: &str = "live_ws_sc";
 /// WS 进场 Episode 的 source / event_type。
 pub const SOURCE_WS_ENTRY: &str = "live_ws_entry";
 pub const EVENT_WS_ENTRY: &str = "live_ws_entry";
+/// WS 礼物 Episode 的 source / event_type（复盘折叠同进场轨：进窗轨不进发言轨）。
+pub const SOURCE_WS_GIFT: &str = "live_ws_gift";
+pub const EVENT_WS_GIFT: &str = "live_ws_gift";
+/// WS 上舰 Episode 的 source / event_type。
+pub const SOURCE_WS_GUARD_BUY: &str = "live_ws_guardbuy";
+pub const EVENT_WS_GUARD_BUY: &str = "live_ws_guardbuy";
+/// WS 上舰播报 Episode 的 source / event_type。
+pub const SOURCE_WS_TOAST: &str = "live_ws_toast";
+pub const EVENT_WS_TOAST: &str = "live_ws_toast";
 
 /// 场次窗会话 rid 前缀：`ws:{win_start}`（复盘折叠层：WS 源优先于回放束）。
 pub const SESSION_RID_PREFIX: &str = "ws";
@@ -74,6 +83,9 @@ pub const COUNT_SC_DELETE: &str = "super_chat_delete";
 pub const COUNT_DANMAKU: &str = "danmaku";
 pub const COUNT_SC: &str = "super_chat";
 pub const COUNT_ENTRY: &str = "interact";
+pub const COUNT_GIFT: &str = "gift";
+pub const COUNT_GUARD_BUY: &str = "guard_buy";
+pub const COUNT_TOAST: &str = "toast";
 
 /// text 首 16 位 hex（sha256）——幂等键末段（WS 无平台事件 id 的替代指纹；
 /// 空文本（进场/空弹幕）亦按空串散列，窗口内同人同秒同文本同指纹）。
@@ -94,15 +106,30 @@ pub const END_REASON_TIMED_OUT: &str = "timed_out";
 pub const END_REASON_AUTH_FAILED: &str = "auth_failed";
 pub const END_REASON_TRANSPORT: &str = "transport";
 
+/// 线族判定（投影分派：WS 事件六产线各走各的 source/facts 键集）。
+#[derive(Clone, Copy)]
+enum LineKind {
+    Danmaku,
+    Sc,
+    Entry,
+    Gift,
+    GuardBuy,
+    Toast,
+}
+
 /// 单条 WS 场线（投影中间形态：源判定 + 事实键由 `WsRecorder::project` 完成）。
 struct LineRender<'a> {
+    kind: LineKind,
     uid: &'a str,
     uname: &'a str,
     text: &'a str,
     ts_sec: i64,
     ts_source: &'a str,
+    /// 付费金额（人民币元）——仅 SC/上舰轨消费；礼物的币轨单价走 extra，不混键。
     price: Option<f64>,
     interact_kind: Option<u32>,
+    /// 族专属事实键（礼物面/播报面）——原样落 facts，键名纪律同幕头注。
+    extra: Vec<(&'static str, Value)>,
 }
 
 /// WS 场窗记录器：`attach` 开窗（在播校验）→ `on_event` 逐事投影 →
@@ -178,6 +205,7 @@ impl WsRecorder {
                     None => (recv_ts, TS_SOURCE_LOCAL_RECV),
                 };
                 if let Some(ep) = self.project(&LineRender {
+                    kind: LineKind::Danmaku,
                     uid: uid.as_str(),
                     uname: uname.as_str(),
                     text: text.as_str(),
@@ -185,6 +213,7 @@ impl WsRecorder {
                     ts_source,
                     price: None,
                     interact_kind: None,
+                    extra: Vec::new(),
                 }) {
                     self.lines.push(ep);
                 }
@@ -202,6 +231,7 @@ impl WsRecorder {
                     None => (recv_ts, TS_SOURCE_LOCAL_RECV),
                 };
                 if let Some(ep) = self.project(&LineRender {
+                    kind: LineKind::Sc,
                     uid: uid.as_str(),
                     uname: uname.as_str(),
                     text: text.as_str(),
@@ -209,6 +239,7 @@ impl WsRecorder {
                     ts_source,
                     price: Some(*price),
                     interact_kind: None,
+                    extra: Vec::new(),
                 }) {
                     self.lines.push(ep);
                 }
@@ -226,6 +257,7 @@ impl WsRecorder {
                     (recv_ts, TS_SOURCE_LOCAL_RECV)
                 };
                 if let Some(ep) = self.project(&LineRender {
+                    kind: LineKind::Entry,
                     uid: uid.as_str(),
                     uname: uname.as_str(),
                     text: "",
@@ -233,6 +265,105 @@ impl WsRecorder {
                     ts_source,
                     price: None,
                     interact_kind: Some(*kind),
+                    extra: Vec::new(),
+                }) {
+                    self.lines.push(ep);
+                }
+            }
+            WsEvent::Gift {
+                uid,
+                uname,
+                gift_name,
+                num,
+                price,
+                total_coin,
+                coin_type,
+                ts,
+            } => {
+                *self.counts.entry(COUNT_GIFT.to_string()).or_insert(0) += 1;
+                let (ts_sec, ts_source) = match ts.filter(|t| *t > 0) {
+                    Some(t) => (t, TS_SOURCE_PROTOCOL),
+                    None => (recv_ts, TS_SOURCE_LOCAL_RECV),
+                };
+                // 币轨原价原样落 facts（price=单价、total_coin=金瓜子总额、coin_type=
+                // gold/silver）——换算成元的解读权归消费侧（复盘/报表），事实层不动算。
+                if let Some(ep) = self.project(&LineRender {
+                    kind: LineKind::Gift,
+                    uid: uid.as_str(),
+                    uname: uname.as_str(),
+                    text: "",
+                    ts_sec,
+                    ts_source,
+                    price: None,
+                    interact_kind: None,
+                    extra: vec![
+                        ("gift_name", Value::String(gift_name.clone())),
+                        ("gift_num", serde_json::json!(*num)),
+                        ("gift_price", serde_json::json!(*price)),
+                        ("total_coin", serde_json::json!(*total_coin)),
+                        ("coin_type", Value::String(coin_type.clone())),
+                    ],
+                }) {
+                    self.lines.push(ep);
+                }
+            }
+            WsEvent::GuardBuy {
+                uid,
+                uname,
+                guard_level,
+                gift_name,
+                num,
+                price,
+                ts,
+            } => {
+                *self.counts.entry(COUNT_GUARD_BUY.to_string()).or_insert(0) += 1;
+                let (ts_sec, ts_source) = match ts.filter(|t| *t > 0) {
+                    Some(t) => (t, TS_SOURCE_PROTOCOL),
+                    None => (recv_ts, TS_SOURCE_LOCAL_RECV),
+                };
+                if let Some(ep) = self.project(&LineRender {
+                    kind: LineKind::GuardBuy,
+                    uid: uid.as_str(),
+                    uname: uname.as_str(),
+                    text: "",
+                    ts_sec,
+                    ts_source,
+                    price: Some(*price),
+                    interact_kind: None,
+                    extra: vec![
+                        ("guard_level", serde_json::json!(*guard_level)),
+                        ("gift_name", Value::String(gift_name.clone())),
+                        ("gift_num", serde_json::json!(*num)),
+                    ],
+                }) {
+                    self.lines.push(ep);
+                }
+            }
+            WsEvent::Toast {
+                uid,
+                uname,
+                role_name,
+                guard_level,
+                ts,
+            } => {
+                *self.counts.entry(COUNT_TOAST.to_string()).or_insert(0) += 1;
+                let (ts_sec, ts_source) = match ts.filter(|t| *t > 0) {
+                    Some(t) => (t, TS_SOURCE_PROTOCOL),
+                    None => (recv_ts, TS_SOURCE_LOCAL_RECV),
+                };
+                if let Some(ep) = self.project(&LineRender {
+                    kind: LineKind::Toast,
+                    uid: uid.as_str(),
+                    uname: uname.as_str(),
+                    text: "",
+                    ts_sec,
+                    ts_source,
+                    price: None,
+                    interact_kind: None,
+                    extra: vec![
+                        ("role_name", Value::String(role_name.clone())),
+                        ("guard_level", serde_json::json!(*guard_level)),
+                    ],
                 }) {
                     self.lines.push(ep);
                 }
@@ -313,15 +444,17 @@ impl WsRecorder {
     /// 场次窗 facts 以「当前已知值」落稿（终点未知先落线时刻），`finish`
     /// 以最终窗事实统一重指纹（`refinalize`），此处 id 只作中间态。
     fn project(&self, line: &LineRender<'_>) -> Option<Episode> {
-        if line.uid.is_empty() || line.ts_sec <= 0 {
+        if line.uid.is_empty() || line.uid == "0" || line.ts_sec <= 0 {
+            // uid 空或平台 0（匿名/播报占位）都无身份锚——不产 Episode。
             return None;
         }
-        let (source, event_type) = if line.interact_kind.is_some() {
-            (SOURCE_WS_ENTRY, EVENT_WS_ENTRY)
-        } else if line.price.is_some() {
-            (SOURCE_WS_SC, EVENT_WS_SC)
-        } else {
-            (SOURCE_WS_DANMAKU, EVENT_WS_DANMAKU)
+        let (source, event_type) = match line.kind {
+            LineKind::Danmaku => (SOURCE_WS_DANMAKU, EVENT_WS_DANMAKU),
+            LineKind::Sc => (SOURCE_WS_SC, EVENT_WS_SC),
+            LineKind::Entry => (SOURCE_WS_ENTRY, EVENT_WS_ENTRY),
+            LineKind::Gift => (SOURCE_WS_GIFT, EVENT_WS_GIFT),
+            LineKind::GuardBuy => (SOURCE_WS_GUARD_BUY, EVENT_WS_GUARD_BUY),
+            LineKind::Toast => (SOURCE_WS_TOAST, EVENT_WS_TOAST),
         };
         let fields = if line.text.is_empty() {
             Vec::new()
@@ -365,6 +498,9 @@ impl WsRecorder {
         }
         if let Some(kind) = line.interact_kind {
             facts.insert("interact_kind".to_string(), serde_json::json!(kind));
+        }
+        for (key, value) in &line.extra {
+            facts.insert((*key).to_string(), value.clone());
         }
         Some(finalize_episode(
             ROOM_VIEWER_ID,
