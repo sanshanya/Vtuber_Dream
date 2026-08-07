@@ -59,66 +59,48 @@ describe("request 错误信道", () => {
   });
 });
 
-describe("Z6 件3/件5 预算面客户端与析取", () => {
-  it("api.budget() → BudgetInfo 全段解析（budget_cny null 透传 + D8 estimate 段）", async () => {
+describe("预算面客户端与析取（删码刀3 收口：薄预估面 + 四数阻断）", () => {
+  it("api.budget() → BudgetInfo 解析（budget_cny 透传 + estimate 段）", async () => {
     stubFetch(
       200,
       JSON.stringify({
         budget_cny: null,
-        month: "2026-08",
-        month_cost_cny: 0.35,
-        month_runs: 3,
-        last_run: {
-          run_id: "r-1",
-          ts: "2026-08-05T00:00:00+00:00",
-          cost_cny: 3.0,
-          status: "failed",
-          kind: "full",
-          spend_mode: "normal",
-        },
         estimate: {
           roster_viewers: 22,
-          normal_cny: 34.5,
-          briefing_cny: 1.5,
-          etd_minutes: [17, 35],
+          fresh_viewers: 17,
+          estimated_cny: 27.0,
+          etd_minutes: [13, 27],
         },
       }),
     );
     const info = await api.budget();
-    expect(info.month).toBe("2026-08");
     expect(info.budget_cny).toBeNull();
-    expect(info.month_cost_cny).toBe(0.35);
-    expect(info.month_runs).toBe(3);
-    expect(info.last_run?.kind).toBe("full");
-    expect(info.estimate?.normal_cny).toBe(34.5);
-    expect(info.estimate?.etd_minutes).toEqual([17, 35]);
+    expect(info.estimate?.fresh_viewers).toBe(17);
+    expect(info.estimate?.roster_viewers).toBe(22);
+    expect(info.estimate?.estimated_cny).toBe(27.0);
+    expect(info.estimate?.etd_minutes).toEqual([13, 27]);
   });
 
-  it("api.budget() → estimate 段缺席/全 null 透传为缺省（前端「预估 —」读面）", async () => {
+  it("api.budget() → estimate 段全 null 透传为缺省（前端「预估 —」读面）", async () => {
     stubFetch(
       200,
       JSON.stringify({
         budget_cny: 4.0,
-        month: "2026-08",
-        month_cost_cny: 0,
-        month_runs: 0,
-        last_run: null,
-        estimate: { roster_viewers: null, normal_cny: null, briefing_cny: null, etd_minutes: null },
+        estimate: { roster_viewers: null, fresh_viewers: null, estimated_cny: null, etd_minutes: null },
       }),
     );
     const info = await api.budget();
-    expect(info.estimate?.normal_cny).toBeNull();
+    expect(info.budget_cny).toBe(4.0);
+    expect(info.estimate?.estimated_cny).toBeNull();
     expect(info.estimate?.etd_minutes).toBeNull();
   });
 
-  it("budgetBlockOf：完整 budget_block → 六键析出；缺预算块/数字不齐 → null", () => {
+  it("budgetBlockOf：完整 budget_block → 四数析出；缺块/数字不齐 → null", () => {
     const block = {
-      spend_mode: "normal",
       estimated_cny: 3.0,
       budget_cny: 0.01,
       fresh_viewers: 1,
       total_viewers: 1,
-      hint: "两选重发：spend_mode=incremental 只更新变化者 / briefing_only 只推简报",
     };
     expect(budgetBlockOf({ budget_block: block })).toEqual(block);
     // 无 budget_block → null（其他 failed 体不误触卡）。

@@ -333,9 +333,9 @@ describe("Streamer 感知动作收敛与主钮旁预估（R2 批6 D8）", () => 
   };
   const estimateBody = {
     roster_viewers: 22,
-    normal_cny: 34.5,
-    briefing_cny: 1.5,
-    etd_minutes: [17, 35],
+    fresh_viewers: 17,
+    estimated_cny: 27.0,
+    etd_minutes: [13, 27],
   };
 
   it("首页主钮唯一性：room-actions 内 primary 按钮计数==1，且是「触发全量感知」", async () => {
@@ -368,7 +368,7 @@ describe("Streamer 感知动作收敛与主钮旁预估（R2 批6 D8）", () => 
     expect(guideHrefs).toEqual(["#/live", "#/viewers", "#/viewers"]);
   });
 
-  it("主钮旁预估行数字钉：normal_cny/etd 在场 → 「预估 ≈¥34.50（上限口径）· 约 17~35 分钟」", async () => {
+  it("主钮旁预估行数字钉：estimated_cny/etd 在场 → 「预估 ≈¥27.00（新鲜 17/22 人）· 约 13~27 分钟」", async () => {
     stubFetchMap({
       overview: { status: 200, body: base },
       viewers: { status: 200, body: [] },
@@ -376,10 +376,6 @@ describe("Streamer 感知动作收敛与主钮旁预估（R2 批6 D8）", () => 
         status: 200,
         body: {
           budget_cny: null,
-          month: "2026-08",
-          month_cost_cny: 0,
-          month_runs: 0,
-          last_run: null,
           estimate: estimateBody,
         },
       },
@@ -387,7 +383,7 @@ describe("Streamer 感知动作收敛与主钮旁预估（R2 批6 D8）", () => 
     renderStreamer();
     await waitFor(() =>
       expect(screen.getByTestId("run-estimate").textContent).toBe(
-        "预估 ≈¥34.50（上限口径）· 约 17~35 分钟",
+        "预估 ≈¥27.00（新鲜 17/22 人）· 约 13~27 分钟",
       ),
     );
   });
@@ -400,14 +396,10 @@ describe("Streamer 感知动作收敛与主钮旁预估（R2 批6 D8）", () => 
         status: 200,
         body: {
           budget_cny: null,
-          month: "2026-08",
-          month_cost_cny: 0,
-          month_runs: 0,
-          last_run: null,
           estimate: {
             roster_viewers: null,
-            normal_cny: null,
-            briefing_cny: null,
+            fresh_viewers: null,
+            estimated_cny: null,
             etd_minutes: null,
           },
         },

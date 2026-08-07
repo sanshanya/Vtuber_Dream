@@ -402,95 +402,17 @@ fn named_security_knobs_and_state_machine_litera_pin() {
 }
 
 // ---------------------------------------------------------------------------
-// history.jsonl 实耗账 + GET /api/budget
+// GET /api/budget —— 薄预估面（删码刀3 收口：月耗账本随 history.jsonl 同删，
+// 实耗真相唯一源 = ai/state.json usage；月对账走平台计费后台）。
 // ---------------------------------------------------------------------------
 
-/// ts 前 7 字符 = "YYYY-MM"（UTC 月界，代码里 `&now_iso()[..7]` 即此口径）。
-/// 给出与当前 UTC 月相邻的上一月号，供「跨两月」钉造数据。
-fn previous_month(now: &str) -> String {
-    let year: i32 = now[0..4].parse().expect("year");
-    let month: u32 = now[5..7].parse().expect("month");
-    if month == 1 {
-        format!("{}-12", year - 1)
-    } else {
-        format!("{}-{:02}", year, month - 1)
-    }
-}
-
-/// 钉（a）：读到坏行跳过、只按 UTC 月界聚合 cost，last_run 取最后有效行。
-#[tokio::test(flavor = "multi_thread")]
-async fn budget_get_monthly_sum_tolerates_bad_lines_and_crosses_months() {
-    let fx = fixture(None);
-    let now = live_core::episodes::now_iso();
-    let current = now[..7].to_string();
-    let before = previous_month(&now);
-    let ledger = fx.config_path.parent().unwrap().join("out/history.jsonl");
-    std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
-    // 三行跨两月 + 一行坏数据（顺序刻意混杂：坏行在中间，证明不影响后续行）。
-    std::fs::write(
-        &ledger,
-        format!(
-            "{c1}\n{bad}\n{c2}\n{p}\n{c3}\n",
-            c1 = json!({"ts": format!("{current}-01T00:00:00+00:00"), "run_id": "r1", "kind": "full",
-                        "spend_mode": "normal", "status": "done", "usage": {"llm_requests": 1, "input_tokens": 100, "output_tokens": 10, "total_tokens": 110}, "cost_cny": 0.28}),
-            bad = "这一行不是 JSON，必须被容忍跳过",
-            c2 = json!({"ts": format!("{current}-15T12:00:00+00:00"), "run_id": "r2", "kind": "viewer",
-                        "spend_mode": "briefing_only", "status": "done", "usage": {"llm_requests": 1, "input_tokens": 200, "output_tokens": 20, "total_tokens": 220}, "cost_cny": 0.56}),
-            p = json!({"ts": format!("{before}-28T23:59:59+00:00"), "run_id": "r3", "kind": "full",
-                       "spend_mode": "incremental", "status": "done", "usage": {"llm_requests": 1, "input_tokens": 300, "output_tokens": 30, "total_tokens": 330}, "cost_cny": 0.84}),
-            c3 = json!({"ts": format!("{current}-20T08:00:00+00:00"), "run_id": "r4", "kind": "ai_viewers",
-                        "spend_mode": "incremental", "status": "done", "cost_cny": 0.3}),
-        ),
-    )
-    .unwrap();
-    let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
-    assert_eq!(status, 200, "{body}");
-    assert_eq!(body["month"], current);
-    // 本月三行 = 0.28 + 0.56 + 0.3，上月 0.84 不计；坏行不绊也不计。
-    assert_eq!(body["month_cost_cny"], 1.14);
-    assert_eq!(body["month_runs"], 3);
-    let last = &body["last_run"];
-    assert_eq!(last["run_id"], "r4", "{last}");
-    assert_eq!(
-        last["ts"].as_str().unwrap(),
-        &format!("{current}-20T08:00:00+00:00")
-    );
-    assert_eq!(last["cost_cny"], 0.3);
-    assert_eq!(last["status"], "done");
-    assert_eq!(last["kind"], "ai_viewers");
-    assert_eq!(last["spend_mode"], "incremental");
-}
-
-/// 钉（b）：无 budget 行 → null；有 budget 行 → Some（前端「未设预算」分支）。
+/// 钉（a）：budge_cny 无预算行 → null；写入预算行 → 回读 Some。
 #[tokio::test(flavor = "multi_thread")]
 async fn budget_get_exposes_null_then_some_budget_cny() {
     let fx = fixture(None);
-    let now = live_core::episodes::now_iso();
-    let current = now[..7].to_string();
-    let ledger = fx.config_path.parent().unwrap().join("out/history.jsonl");
-    // 未造账本：文件缺失 → 全零 + last_run null（前端首屏空态）。
     let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
     assert_eq!(status, 200, "{body}");
     assert!(body["budget_cny"].is_null(), "{body}");
-    assert_eq!(body["month"], current);
-    assert_eq!(body["month_cost_cny"], 0.0);
-    assert_eq!(body["month_runs"], 0);
-    assert!(body["last_run"].is_null(), "{body}");
-    // 有账本也先 null（模板默认无 run_budget_cny 行）。
-    std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
-    std::fs::write(
-        &ledger,
-        format!(
-            "{}\n",
-            json!({"ts": format!("{current}-01T00:00:00+00:00"), "run_id": "rx", "kind": "full",
-                   "spend_mode": "normal", "status": "done", "usage": {"llm_requests": 1, "input_tokens": 100, "output_tokens": 10, "total_tokens": 110}, "cost_cny": 0.28})
-        ),
-    )
-    .unwrap();
-    let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
-    assert_eq!(status, 200, "{body}");
-    assert!(body["budget_cny"].is_null(), "模板无预算行 → null：{body}");
-    assert_eq!(body["month_cost_cny"], 0.28);
     // 写入预算行后回读 Some。
     let yaml = std::fs::read_to_string(&fx.config_path).unwrap();
     std::fs::write(
@@ -506,185 +428,68 @@ async fn budget_get_exposes_null_then_some_budget_cny() {
     assert_eq!(body["budget_cny"], 2.0, "{body}");
 }
 
-/// 钉（c）：collect_* 无 ai/state.json → usage 四零 + cost 0——
-/// 账本诚实记账的最朴素姿势（不臆造任何 AI 消耗）。
-#[test]
-fn append_history_line_for_collect_kind_records_zero_usage() {
-    let tmp = tempfile::tempdir().unwrap();
-    let out = tmp.path().join("out");
-    std::fs::create_dir_all(&out).unwrap(); // 无 ai/state.json：collect_* 从不写认知层
-    let emitted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let ring = emitted.clone();
-    live_server::registry::append_history_line(
-        &out,
-        "run-collect",
-        "collect_guards",
-        live_core::agent::budget::SpendMode::Normal,
-        "done",
-        &move |message| ring.lock().expect("ring").push(message.to_string()),
-    );
-    let line = std::fs::read_to_string(out.join("history.jsonl")).unwrap();
-    let record: Value = serde_json::from_str(line.trim()).unwrap();
-    assert_eq!(record["kind"], "collect_guards");
-    assert_eq!(record["status"], "done");
-    assert_eq!(
-        record["usage"],
-        json!({"llm_requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}),
-        "collect_* 账本须诚实记零：{record}"
-    );
-    assert_eq!(record["cost_cny"], 0.0, "{record}");
-    assert!(
-        emitted.lock().expect("ring").is_empty(),
-        "正常记账不响铃：{:?}",
-        emitted.lock().expect("ring")
-    );
-}
-
-/// 钉（c-2）：有 ai/state.json 的 run 按 usage 记 cost_cny（成本公式复算），
-/// 且 usage 只取契约五键（丢弃 tool_calls）。
-#[test]
-fn append_history_line_reads_state_usage_and_drops_tool_calls() {
-    let tmp = tempfile::tempdir().unwrap();
-    let out = tmp.path().join("out");
-    let ai = out.join("ai");
-    std::fs::create_dir_all(&ai).unwrap();
-    std::fs::write(
-        ai.join("state.json"),
-        r#"{"status":"done","usage":{"llm_requests":3,"tool_calls":9,
-           "input_tokens":1250,"output_tokens":500,"total_tokens":1750}}"#,
-    )
-    .unwrap();
-    let emitted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let ring = emitted.clone();
-    live_server::registry::append_history_line(
-        &out,
-        "run-full",
-        "full",
-        live_core::agent::budget::SpendMode::IncrementalOnly,
-        "done",
-        &move |message| ring.lock().expect("ring").push(message.to_string()),
-    );
-    let line = std::fs::read_to_string(out.join("history.jsonl")).unwrap();
-    let record: Value = serde_json::from_str(line.trim()).unwrap();
-    assert_eq!(
-        record["usage"],
-        json!({"llm_requests": 3, "input_tokens": 1250, "output_tokens": 500, "total_tokens": 1750}),
-        "usage 只取契约四键：{record}"
-    );
-    assert_eq!(
-        record["usage"].get("tool_calls"),
-        None,
-        "tool_calls 不得入账本：{record}"
-    );
-    // cost_cny = (1250*2 + 500*8)/1e6 = (2500+4000)/1e6 = 0.0065。
-    assert_eq!(record["cost_cny"], 0.0065, "{record}");
-    assert_eq!(record["spend_mode"], "incremental", "{record}");
-    assert!(
-        emitted.lock().expect("ring").is_empty(),
-        "正常记账不响铃：{:?}",
-        emitted.lock().expect("ring")
-    );
-}
-
-/// 记账失败面：history.jsonl 写失败只响铃不改终态。
-/// append_history_line 用只读目录模拟写失败（OpenOptions append 必然 Err）。
-#[test]
-fn append_history_line_write_failure_only_rings() {
-    let tmp = tempfile::tempdir().unwrap();
-    let out = tmp.path().join("out");
-    std::fs::create_dir_all(&out).unwrap();
-    // 目录以同名文件占位 → OpenOptions append 打不开（路径存在但非目录）。
-    std::fs::write(out.join("history.jsonl"), "I am a file, not a dir").unwrap();
-    let emitted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let ring = emitted.clone();
-    // 在 history.jsonl 同路径旁放一个同名「目录」不可能；改为把 history.jsonl 做成
-    // 目录名，OpenOptions 以 append=true 打目录必然 Err——等价模拟写失败。
-    // （write 前先毁掉刚才的文件占位，recreate 成目录。）
-    std::fs::remove_file(out.join("history.jsonl")).unwrap();
-    std::fs::create_dir(out.join("history.jsonl")).unwrap();
-    live_server::registry::append_history_line(
-        &out,
-        "run-x",
-        "full",
-        live_core::agent::budget::SpendMode::Normal,
-        "failed",
-        &move |message| ring.lock().expect("ring").push(message.to_string()),
-    );
-    let rung = emitted.lock().expect("ring");
-    assert_eq!(rung.len(), 1, "写失败必须响铃：{rung:?}");
-    assert!(rung[0].contains("[LEDGER]"), "响铃须带账本前缀：{rung:?}");
-}
-
-// 主钮旁预估段（GET /api/budget 的 estimate）——名册口径钉团。
-// ---------------------------------------------------------------------------
-
-/// 钉（a）：collection.json 缺件 → estimate 四字段全 null（前端「预估 —」）。
+/// 钉（b）：名册/baseline 缺席（空 output 根）→ estimate 四字段全 null
+/// （前端「预估 —」不臆造）。
 #[tokio::test(flavor = "multi_thread")]
-async fn budget_get_estimate_all_null_when_collection_missing() {
+async fn budget_get_estimate_all_null_when_roster_missing() {
     let fx = fixture(None);
     let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
     assert_eq!(status, 200, "{body}");
-    let estimate = &body["estimate"];
     assert_eq!(
-        *estimate,
-        json!({"roster_viewers": null, "normal_cny": null, "briefing_cny": null, "etd_minutes": null}),
-        "{estimate}"
+        body["estimate"],
+        json!({"roster_viewers": null, "fresh_viewers": null, "estimated_cny": null, "etd_minutes": null}),
+        "{body}"
     );
 }
 
-/// 钉（b）：viewer_count=22 → normal_cny≈34.5（闸同公式上限口径）、
-/// briefing_cny=1.5（恰 audience 平段）、etd 区间 = 常量带宽上取整到分钟。
+/// 钉（c）：demo 布景（3 观众、零缓存）→ roster=3、fresh=3（无完整旧结论
+/// 即新鲜）、estimated=3×1.5+1.5=6.0（闸同公式）、etd 上取整 [4,6]。
+/// fresh 口径 = budget 闸同源（pipeline::roster_estimate）。
 #[tokio::test(flavor = "multi_thread")]
-async fn budget_get_estimate_pins_22_viewer_roster() {
-    let fx = fixture(None);
-    let out = fx.config_path.parent().unwrap().join("out/collection.json");
-    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+async fn budget_get_estimate_pins_demo_roster_all_fresh() {
+    let tmp = tempfile::tempdir().unwrap();
+    let output_dir = tmp.path().join("out");
+    let config_path = tmp.path().join("config.yaml");
     std::fs::write(
-        &out,
-        json!({"status": "complete", "viewer_count": 22}).to_string(),
+        &config_path,
+        common::yaml_template(
+            None,
+            "budget-ctl",
+            "SESSDATA=test",
+            "test-key",
+            "http://127.0.0.1:9/v1",
+            "budget-ctl",
+        )
+        .replace(
+            "OUTPUT_DIR",
+            &output_dir.display().to_string().replace('\\', "/"),
+        ),
     )
     .unwrap();
-    let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
+    let config = live_core::config::load_config(&config_path).expect("config loads");
+    live_core::demo::build_demo(&config, Some(&output_dir)).expect("demo builds");
+    let app = build_app(AppState {
+        config_path,
+        web_root: tmp.path().join("no-dist"),
+        registry: live_server::registry::Registry::new(),
+        bilibili_hosts: None,
+        config_write_lock: Default::default(),
+        graph_artifact_lock: Default::default(),
+    });
+    let (status, body) = oneshot(&app, "GET", "/api/budget", None).await;
     assert_eq!(status, 200, "{body}");
     let estimate = &body["estimate"];
-    assert_eq!(estimate["roster_viewers"], 22, "{estimate}");
-    let normal = estimate["normal_cny"].as_f64().unwrap();
-    assert!(
-        (normal - 34.5).abs() < 1e-9,
-        "22 人全量预估应≈34.5：{estimate}"
-    );
+    assert_eq!(estimate["roster_viewers"], 3, "{estimate}");
     assert_eq!(
-        estimate["briefing_cny"].as_f64().unwrap(),
-        1.5,
-        "{estimate}"
+        estimate["fresh_viewers"], 3,
+        "零缓存全员新鲜（无完整旧结论即新鲜）：{estimate}"
+    );
+    assert!(
+        (estimate["estimated_cny"].as_f64().unwrap() - 6.0).abs() < 1e-9,
+        "3 fresh × ¥1.5 + ¥1.5 audience = ¥6.0：{estimate}"
     );
     let etd = estimate["etd_minutes"].as_array().unwrap();
-    assert_eq!(etd.len(), 2, "{estimate}");
-    let lo = etd[0].as_u64().unwrap();
-    let hi = etd[1].as_u64().unwrap();
-    // 常量带宽：22×(40..90)s + 90s 底 → 970s..2070s → 上取整 17..35 分钟。
-    assert_eq!(lo, 17, "{estimate}");
-    assert_eq!(hi, 35, "{estimate}");
-    assert!(lo <= hi, "{estimate}");
-}
-
-/// 钉（c）：viewer_count=0（名册空）与缺 viewer_count 键 → 都是全 null（不臆造
-/// 空名册的「全量」预估；前端「预估 —」字面即此面）。
-#[tokio::test(flavor = "multi_thread")]
-async fn budget_get_estimate_all_null_when_roster_empty_or_key_missing() {
-    for collection in [
-        json!({"status": "complete", "viewer_count": 0}),
-        json!({"status": "complete"}),
-    ] {
-        let fx = fixture(None);
-        let out = fx.config_path.parent().unwrap().join("out/collection.json");
-        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
-        std::fs::write(&out, collection.to_string()).unwrap();
-        let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
-        assert_eq!(status, 200, "{body}");
-        let estimate = &body["estimate"];
-        assert!(estimate["normal_cny"].is_null(), "{estimate}");
-        assert!(estimate["briefing_cny"].is_null(), "{estimate}");
-        assert!(estimate["etd_minutes"].is_null(), "{estimate}");
-    }
+    // 常量带宽：3×(40..90)s + 90s 底 → 210s..360s → 上取整 4..6 分钟。
+    assert_eq!(etd[0], 4, "{estimate}");
+    assert_eq!(etd[1], 6, "{estimate}");
 }

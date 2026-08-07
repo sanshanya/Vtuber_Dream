@@ -115,16 +115,11 @@ async fn runs_post_validation_battery_422() {
         json!({"kind": "collect_guards", "force": true}),
         json!({"kind": "ai_viewers", "force": true}),
         json!({"kind": "ai_audience", "viewer_uid": "123"}),
-        // spend_mode 只收字面 incremental / briefing_only——分号以外的
-        // 任何值（含 spend_mode=normal、中文、非字符串）都 422。
-        json!({"kind": "full", "spend_mode": "normal"}),
-        json!({"kind": "full", "spend_mode": "分层"}),
-        json!({"kind": "full", "spend_mode": 1}),
-        // spend_mode 只对带单人感知段的 kind（full/viewer/ai_viewers）合法，
-        // 四分层无单人感知 → 携该键一律 422。
-        json!({"kind": "collect_streamer", "spend_mode": "incremental"}),
-        json!({"kind": "collect_guards", "spend_mode": "briefing_only"}),
-        json!({"kind": "ai_audience", "spend_mode": "incremental"}),
+        // 旧 spend_mode 键（省钱模式面已删）一律 422——旧客户端必须被
+        // 讲规则，静默吞掉会让人以为省到钱而实际没有。
+        json!({"kind": "full", "spend_mode": "incremental"}),
+        json!({"kind": "full", "spend_mode": "briefing_only"}),
+        json!({"kind": "viewer", "viewer_uid": "1003", "spend_mode": "incremental"}),
     ];
     for case in &cases {
         let (status, body) = oneshot(&fx.app, "POST", "/api/runs", Some(case.clone())).await;
@@ -136,78 +131,6 @@ async fn runs_post_validation_battery_422() {
     }
     // 对账：副作用断言必须是「零登记」对账，不是选一个不存在的键自嗨。
     assert_eq!(fx.registry.record_count(), 0, "校验电池不得登记任何 run");
-}
-
-/// spend_mode 双钉：非字面 → 422 且错文指向白名单；合法字面落在
-/// 无单人感知段 kind 上 → 422 且错文指向 kind 语义。两钉合起来证明 parse
-/// 复用 + kind 语义门都在生效。
-#[tokio::test(flavor = "multi_thread")]
-async fn runs_post_spend_mode_bad_literal_and_kind_mismatch_both_422() {
-    let fx = fixture(None);
-    for (case, needle) in [
-        (
-            json!({"kind": "full", "spend_mode": "normal"}),
-            "incremental / briefing_only",
-        ),
-        (
-            json!({"kind": "full", "spend_mode": "分层"}),
-            "incremental / briefing_only",
-        ),
-        (
-            json!({"kind": "full", "spend_mode": true}),
-            "incremental / briefing_only",
-        ),
-        (
-            json!({"kind": "collect_guards", "spend_mode": "briefing_only"}),
-            "无单人感知段",
-        ),
-        (
-            json!({"kind": "ai_audience", "spend_mode": "incremental"}),
-            "无单人感知段",
-        ),
-    ] {
-        let (status, body) = oneshot(&fx.app, "POST", "/api/runs", Some(case.clone())).await;
-        assert_eq!(status, 422, "case {case} → {body}");
-        let error = body["error"].as_str().expect("error 文案");
-        assert!(
-            error.contains(needle),
-            "case {case} 错文须含 {needle}: {error}"
-        );
-    }
-    assert_eq!(
-        fx.registry.record_count(),
-        0,
-        "spend_mode 422 不得登记任何 run"
-    );
-}
-// 分层四 kind 的「合法体面」（202/409 区别、行为面）由 app_runs_e2e 三钉兜底——
-// 本文件的 fixture 指向真实 B 站端点（SESSDATA=test 布景），合法分面会直接产真实网络，
-// 不在这里钉。
-
-/// viewer_uid 穿透必须短路在 422 且绝不落盘——
-/// 字符集白名单 [A-Za-z0-9_-]，dot-dot/内嵌斜杠/非 ASCII 一律拒（r6 「不落盘」是证据主位）。
-#[tokio::test(flavor = "multi_thread")]
-async fn runs_post_rejects_malicious_viewer_uid_without_side_effects() {
-    let fx = fixture(None);
-    for uid in ["..", "../escape", "12/34", "USP-中"] {
-        let (status, body) = oneshot(
-            &fx.app,
-            "POST",
-            "/api/runs",
-            Some(json!({"kind": "viewer", "viewer_uid": uid})),
-        )
-        .await;
-        assert_eq!(status, 422, "uid={uid} → {body}");
-        assert!(
-            body["error"].as_str().unwrap_or_default().contains("非法"),
-            "错文须指向字符集守卫：{body}"
-        );
-    }
-    assert_eq!(fx.registry.record_count(), 0, "穿透拒不得登记 run");
-    assert!(
-        !fx._tmp.path().join("out").join("viewers").exists(),
-        "穿透拒不得落盘任何观众文件"
-    );
 }
 
 // ---------------------------------------------------------------------------

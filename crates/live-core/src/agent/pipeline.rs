@@ -449,7 +449,7 @@ use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::Semaphore;
 
-use super::budget::{self, SpendMode};
+use super::budget;
 use super::naming;
 use super::prompts::{audience_user_prompt, trace_run_start, viewer_user_prompt};
 use super::reconcile;
@@ -482,17 +482,17 @@ pub enum PipelineError {
     Store(#[from] StoreError),
     #[error("storage: {0}")]
     Storage(String),
-    /// 花费预算闸阻断。块内附预估/预算/名册数字与建议方向（wire 文案
-    /// 首字「budget_blocked」供运行概览归类；两选即省钱模式三选的前两项）。
+    /// 花费预算闸阻断。块内附预估/预算/名册数字（wire 文案首字「budget_blocked」
+    /// 供运行概览归类）。出路只有两条：调 `ai.run_budget_cny`，或先跑舰长采集让
+    /// 缓存变新（fresh 随 input_hash 失效面缩小）——不再提供模式侧门。
     #[error(
-        "budget_blocked：预估 ¥{estimated_cny:.2} > 预算 ¥{budget_cny:.2}（新鲜 {fresh_viewers}/{total_viewers} 人）——两选重发：spend_mode=incremental 只更新变化者 / briefing_only 只推简报"
+        "budget_blocked：预估 ¥{estimated_cny:.2} > 预算 ¥{budget_cny:.2}（新鲜 {fresh_viewers}/{total_viewers} 人）"
     )]
     BudgetBlocked {
         estimated_cny: f64,
         budget_cny: f64,
         fresh_viewers: usize,
         total_viewers: usize,
-        spend_mode: SpendMode,
     },
 }
 
@@ -525,10 +525,6 @@ pub struct PipelineKnobs<'a> {
     /// 动作平面 kind=ai_viewers：viewer 阶段写盘完成即收——不跑 audience。
     /// 语义边界：situation.json 保持上一轮；终盘 state.json 落 `stage_terminal=per_viewer_ai`。
     pub stop_after_viewer_stage: bool,
-    /// 省钱模式。Normal=全量扇出（默认，现状一字不动）；IncrementalOnly=
-    /// 只更新完整旧结论且输入已变者；BriefingOnly=跳过单人感知只推简报。budget.json
-    /// 的 failure 文案由 PipelineError::BudgetBlocked 携带（wire 为 spend_mode 串）。
-    pub spend_mode: SpendMode,
 }
 
 fn progress_say(knobs: &PipelineKnobs<'_>, message: &str) {
@@ -699,55 +695,87 @@ fn complete_cache(cache: &Value, input_hash: &str) -> bool {
         && cache.get("analysis").is_some_and(Value::is_object)
 }
 
-/// 增量模式「缺席」判定件：无**完整**旧结论（complete + analysis 是 dict 即够，哈希
-/// 不参与）→ 本轮缺席。增量语义只负责「更新有结论且输入已变者」，纯新建者不在其
-/// 职责内（让位 Normal 全量重发）。
-fn has_complete_cache(viewer_cache_dir: &Path, uid: &str) -> bool {
-    let Some(cached) = storage::read_json(&viewer_cache_dir.join(format!("{uid}.json")))
-        .ok()
-        .flatten()
-    else {
-        return false;
-    };
-    cached.get("status").and_then(Value::as_str) == Some("complete")
-        && cached.get("analysis").is_some_and(Value::is_object)
-}
-
-/// 名册 →「本轮真的会新建/更新」的 fresh 集合（预算闸的分子）。
-/// Normal=全员（现状一字不动）；BriefingOnly=空（单人感知整体跳过）；IncrementalOnly=
-/// 有完整旧结论**且**输入已变者。缓存缺失/读取失败一律视无旧结论——读错保守不扩大
-/// fresh；force 清缓存路径下增量模式自然全员缺席（无旧结论可增量）。
+/// 名册 →「本轮真的会新建/更新」的 fresh 集合（预算闸的分子，唯一口径件）。
+/// fresh = 输入哈希已变 ∪ 无完整旧结论（含缓存缺失/读坏一律算新鲜——估错方向
+/// 只会保守多估，绝不漏估烧成实账）。与执行面同源：扇出后 run_one_viewer 的
+/// complete_cache 短路恰是这个集合的补集，预估从此不再与实跑两张皮。
 pub fn fresh_viewer_ids(
     viewer_ids: &[String],
     bundles: &HashMap<String, ViewerInputBundle>,
     viewer_cache_dir: &Path,
-    mode: SpendMode,
 ) -> Vec<String> {
-    match mode {
-        SpendMode::Normal => viewer_ids.to_vec(),
-        SpendMode::BriefingOnly => Vec::new(),
-        SpendMode::IncrementalOnly => viewer_ids
-            .iter()
-            .filter(|uid| {
-                let Some(bundle) = bundles.get(*uid) else {
-                    return false;
-                };
-                let Some(cached) =
-                    storage::read_json(&viewer_cache_dir.join(format!("{uid}.json")))
-                        .ok()
-                        .flatten()
-                else {
-                    return false;
-                };
-                cached.is_object()
-                    && cached.get("status").and_then(Value::as_str) == Some("complete")
-                    && cached.get("analysis").is_some_and(Value::is_object)
-                    && cached.get("input_hash").and_then(Value::as_str)
-                        != Some(bundle.input_hash.as_str())
-            })
-            .cloned()
-            .collect(),
+    viewer_ids
+        .iter()
+        .filter(|uid| {
+            let Some(bundle) = bundles.get(*uid) else {
+                return true;
+            };
+            let cached = storage::read_json(&viewer_cache_dir.join(format!("{uid}.json")))
+                .ok()
+                .flatten()
+                .unwrap_or(Value::Null);
+            !complete_cache(&cached, &bundle.input_hash)
+        })
+        .cloned()
+        .collect()
+}
+
+/// 薄 GET（/api/budget）预估口径：与运行内预算闸同公式同源 fresh。
+/// 返回 (fresh, total)；名册/baseline 缺席 → None（前端「预估 —」不臆造）。
+pub fn roster_estimate(config: &Config) -> Option<(usize, usize)> {
+    let analysis = episodes::baseline::build_factual_baseline(
+        &config.output_dir,
+        config.perception.max_evidence_per_viewer as usize,
+    )
+    .ok()?;
+    let profiles = analysis.get("viewer_profiles")?.as_array()?;
+    if profiles.is_empty() {
+        return None;
     }
+    let raw_viewers: Map<String, Value> = load_viewers(&config.output_dir)
+        .ok()?
+        .into_iter()
+        .filter_map(|viewer| {
+            let id = viewer["viewer"]["id"].as_str()?.to_string();
+            Some((id, viewer))
+        })
+        .collect();
+    let viewer_ids: Vec<String> = profiles
+        .iter()
+        .filter_map(|profile| profile["viewer"]["id"].as_str().map(str::to_string))
+        .filter(|uid| raw_viewers.contains_key(uid))
+        .collect();
+    if viewer_ids.is_empty() {
+        return None;
+    }
+    let reasoning = reasoning_json(config);
+    let mut bundles: HashMap<String, ViewerInputBundle> = HashMap::new();
+    for uid in &viewer_ids {
+        let profile = profiles
+            .iter()
+            .find(|p| p["viewer"]["id"].as_str() == Some(uid.as_str()))
+            .cloned()
+            .unwrap_or(json!({}));
+        bundles.insert(
+            uid.clone(),
+            viewer_input_bundle(
+                &raw_viewers[uid],
+                &profile,
+                &config.ai.model,
+                &config.ai.api,
+                &reasoning,
+                &config.ai.rules,
+                config.perception.max_evidence_per_viewer as usize,
+            ),
+        );
+    }
+    let viewer_cache_dir = config
+        .output_dir
+        .join("ai")
+        .join("perception")
+        .join("viewers");
+    let fresh = fresh_viewer_ids(&viewer_ids, &bundles, &viewer_cache_dir);
+    Some((fresh.len(), viewer_ids.len()))
 }
 
 struct ViewerTaskOut {
@@ -1479,41 +1507,25 @@ async fn run_pipeline_inner(
     // master 由 run_pipeline 传入（Python 次序：research 先于 begin_graph_run）。
     // 并发扇出 + 有序应用栅栏（M5-B3：状态机 hook——queued/collecting/episodes 由
     // registry 自己直接进入 per_viewer_ai）。
-    // 花费预算闸：先于扇出决定 fresh 集合与放行/阻断，budget.json 侧文件
-    // 一次 run 一写（放行/阻断都落盘，供运行概览/上次实耗并列用）；写失败响铃不绊。
-    let fresh = fresh_viewer_ids(&viewer_ids, &bundles, &viewer_cache_dir, knobs.spend_mode);
+    // 花费预算闸：先于扇出决定 fresh 集合与放行/阻断——预估严格大于预算即
+    // 阻断，零 LLM 请求落地。口径与执行同源（complete_cache 短路的补集），
+    // 不再存在「名册上限估计阻断实际零花费 run」的负循环，也无需模式侧门逃生。
+    let fresh = fresh_viewer_ids(&viewer_ids, &bundles, &viewer_cache_dir);
     {
         let check = budget::decide_budget(fresh.len(), true, config.ai.run_budget_cny);
-        let (gate, verdict) = if check.blocked {
-            ("blocked", "阻断")
-        } else {
-            ("proceed", "放行")
-        };
         let budget_text = match check.budget_cny {
             Some(budget) => format!("¥{budget:.2}"),
             None => "不设".to_string(),
         };
-        if let Err(err) = budget::write_budget_file(
-            &root,
-            knobs.spend_mode,
-            check.estimated_cny,
-            check.budget_cny,
-            fresh.len(),
-            viewer_ids.len(),
-            gate,
-            &run_started_at,
-        ) {
-            progress_say(knobs, &format!("[BUDGET] budget.json 落盘失败：{err}"));
-        }
         progress_say(
             knobs,
             &format!(
-                "[BUDGET] 模式={} 名册={} 新鲜={} 预估≈¥{:.2} 预算={} → {verdict}",
-                knobs.spend_mode,
+                "[BUDGET] 名册={} 新鲜={} 预估≈¥{:.2} 预算={} → {}",
                 viewer_ids.len(),
                 fresh.len(),
                 check.estimated_cny,
                 budget_text,
+                if check.blocked { "阻断" } else { "放行" },
             ),
         );
         if check.blocked {
@@ -1522,15 +1534,7 @@ async fn run_pipeline_inner(
                 budget_cny: check.budget_cny.expect("blocked 必携预算"),
                 fresh_viewers: fresh.len(),
                 total_viewers: viewer_ids.len(),
-                spend_mode: knobs.spend_mode,
             });
-        }
-        // 只推简报：单人感知整体跳过，走 audience 段（跳过名单语义写进 progress 一次）。
-        if knobs.spend_mode == SpendMode::BriefingOnly {
-            progress_say(
-                knobs,
-                &format!("[BUDGET] 只推简报：跳过单人感知 {} 人", viewer_ids.len()),
-            );
         }
     }
     stage_say(knobs, STAGE_PER_VIEWER_AI);
@@ -1539,10 +1543,8 @@ async fn run_pipeline_inner(
         config.ai.agent.max_parallel_viewers.max(1) as usize
     ));
     let mut set: tokio::task::JoinSet<(String, ViewerStage)> = tokio::task::JoinSet::new();
-    // 门控 fanout：BriefingOnly 全跳（gate 已放行才到这）；IncrementalOnly
-    // 只扇出「有完整旧结论」（哈希同/变都在新鲜面——变者重判、同者复用，全零新增
-    // 的纯新建者缺席本轮）。缺席走 continue，静默不占 semaphore。
-    let fresh_set: HashSet<&str> = fresh.iter().map(String::as_str).collect();
+    // 扇出 = 名册全员；变化判断由缓存短路（complete_cache）在行内完成——
+    // 未变者零 LLM 复用旧结论，与预算闸 fresh 口径互补成账。
     for uid in &viewer_ids {
         let profile = baseline_profiles
             .iter()
@@ -1554,20 +1556,6 @@ async fn run_pipeline_inner(
             .filter(|n| !n.is_empty())
             .unwrap_or(uid)
             .to_string();
-        match knobs.spend_mode {
-            SpendMode::BriefingOnly => continue,
-            SpendMode::IncrementalOnly
-                if !fresh_set.contains(uid.as_str())
-                    && !has_complete_cache(&viewer_cache_dir, uid) =>
-            {
-                progress_say(
-                    knobs,
-                    &format!("[BUDGET] 增量模式缺席：{name}（{uid}）无旧结论，本轮不新建"),
-                );
-                continue;
-            }
-            _ => {}
-        }
         progress_say(knobs, &format!("[AI] Grounded Perception {name}（{uid}）"));
         let bundle = bundles.remove(uid).expect("bundle per uid");
         let cache_path = viewer_cache_dir.join(format!("{uid}.json"));
@@ -1702,9 +1690,8 @@ async fn run_pipeline_inner(
             }
         }
     }
-    // 栅栏后校验：全量模式空提交 = 全员失败（真故障面——文案维持既有语义）；
-    // 省钱模式空提交是合法省钱态（briefing 全员跳过 / 增量零变化），照常走 audience。
-    if viewer_submissions.is_empty() && knobs.spend_mode == SpendMode::Normal {
+    // 栅栏后校验：空提交 = 全员失败（真故障面——文案维持既有语义）。
+    if viewer_submissions.is_empty() {
         bail!(PipelineError::Message(
             "all viewer Perception or graph applies failed".to_string(),
         ));

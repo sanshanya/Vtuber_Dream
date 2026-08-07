@@ -52,15 +52,13 @@ export interface RunRecordView {
   events: string[];
 }
 
-/** 终局 outcome.budget_block 阻断面——服务端固定六键；前端只做
+/** 终局 outcome.budget_block 阻断面——服务端固定四数；前端只做
  *  presence 判别读取，数字不齐/缺键不臆造（renderer 见 BudgetBlockCard）。 */
 export interface BudgetBlock {
-  spend_mode: string;
   estimated_cny: number;
   budget_cny: number;
   fresh_viewers: number;
   total_viewers: number;
-  hint: string;
 }
 
 /** 从 run outcome 析取预算阻断面；无 budget_block 或四数字任一非有限 → null（不渲染卡）。 */
@@ -89,12 +87,10 @@ export function budgetBlockOf(outcome: unknown): BudgetBlock | null {
     return null;
   }
   return {
-    spend_mode: str(o.spend_mode),
     estimated_cny,
     budget_cny,
     fresh_viewers,
     total_viewers,
-    hint: str(o.hint),
   };
 }
 
@@ -249,34 +245,20 @@ export interface ConfigView {
   writable_keys: string[];
 }
 
-/** GET /api/budget 响应面 = history.jsonl 的月度聚合（UTC 月界）。 */
-export interface BudgetLastRun {
-  run_id: string;
-  ts: string;
-  cost_cny: number;
-  status: string;
-  kind: string;
-  spend_mode: string;
-}
-
-/** 主钮旁预估段（服务端 estimate_run_cost_cny 上限口径 + 常量墙钟带宽）。
- *  全 null = 名册缺/空/未采集——前端落「预估 —」不臆造。 */
+/** 主钮旁预估段（服务端预算闸同源口径：fresh = 输入哈希已变 ∪ 无完整旧结论）。
+ *  全 null = 名册/baseline 缺——前端落「预估 —」不臆造。 */
 export interface BudgetEstimate {
   roster_viewers: number | null;
-  normal_cny: number | null;
-  briefing_cny: number | null;
+  fresh_viewers: number | null;
+  estimated_cny: number | null;
   etd_minutes: [number, number] | null;
 }
 
+/** GET /api/budget 响应面 = 薄预估面（预算闸现值 + estimate；月耗账本已删）。 */
 export interface BudgetInfo {
   /** 单次 run 预算（config ai.run_budget_cny）；null = 不设闸。 */
   budget_cny: number | null;
-  /** "YYYY-MM"（UTC 前缀，账本口径与后端 UTC 月界一致）。 */
-  month: string;
-  month_cost_cny: number;
-  month_runs: number;
-  last_run: BudgetLastRun | null;
-  /** 主钮旁预估（normal_cny/etd_minutes 双空 → 「预估 —」）。 */
+  /** 主钮旁预估（estimated_cny/etd_minutes 双空 → 「预估 —」）。 */
   estimate?: BudgetEstimate | null;
 }
 
@@ -327,12 +309,10 @@ export const api = {
   config: () => request<ConfigView>("GET", "/config"),
   putConfig: (body: unknown) => request<{ status: string; keys?: number }>("PUT", "/config", body),
   run: (id: string) => request<RunRecordView>("GET", `/runs/${encodeURIComponent(id)}`),
-  /** spend_mode 只对带单人感知段的 kind 合法（= /api/runs 校验同源）。 */
   startRun: (body: {
     kind: RunKind;
     force?: boolean;
     viewer_uid?: string;
-    spend_mode?: RunSpendMode;
   }) => request<{ run_id: string }>("POST", "/runs", body),
   budget: () => request<BudgetInfo>("GET", "/budget"),
   /** G2-B 审批缝：状态机单行道 pending_approval → approved（幂等；404 未知 / 422 非法迁移）。 */
@@ -374,9 +354,6 @@ export const RUN_KIND_LABELS = {
 } as const;
 
 export type RunKind = keyof typeof RUN_KIND_LABELS;
-
-/** spend_mode 字面（= registry SpendMode 的 incremental/briefing_only 两发射极）。 */
-export type RunSpendMode = "incremental" | "briefing_only";
 
 /** 服务端 409 错文「已有进行中的 run（{id}），…」的在飞 id 抽取（nil → 纯报错面）。 */
 export function activeRunIdFrom(message: string): string | null {

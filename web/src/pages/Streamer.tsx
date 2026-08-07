@@ -15,10 +15,10 @@ import { RecapCard } from "../components/RecapCard";
 import { StreamerCard } from "../components/StreamerCard";
 import { estimateCostCny, fmtCny, fmtInt, fmtTime, type UsageRow } from "../format";
 
-/** 主钮旁预估行（/api/budget estimate 段渲染）：normal_cny 与 etd 双在场才出
+/** 主钮旁预估行（/api/budget estimate 段渲染）：estimated_cny 与 etd 双在场才出
  *  数字行；任一缺 → 「预估 —」（名册缺/空/未采集 = 服务端全 null 的同义面）。 */
 function RunEstimateLine({ estimate }: { estimate: BudgetEstimate | null | undefined }) {
-  const normal = estimate?.normal_cny ?? null;
+  const normal = estimate?.estimated_cny ?? null;
   const etd = estimate?.etd_minutes ?? null;
   const lo = Array.isArray(etd) && typeof etd[0] === "number" ? etd[0] : null;
   const hi = Array.isArray(etd) && typeof etd[1] === "number" ? etd[1] : null;
@@ -32,7 +32,7 @@ function RunEstimateLine({ estimate }: { estimate: BudgetEstimate | null | undef
   return (
     <span className="run-estimate muted small" data-testid="run-estimate">
       {ok
-        ? `预估 ≈${fmtCny(normal)}（上限口径）· 约 ${lo}~${hi} 分钟`
+        ? `预估 ≈${fmtCny(normal)}（新鲜 ${estimate?.fresh_viewers ?? "?"}/${estimate?.roster_viewers ?? "?"} 人）· 约 ${lo}~${hi} 分钟`
         : "预估 —"}
     </span>
   );

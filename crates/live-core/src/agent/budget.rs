@@ -1,8 +1,10 @@
 //! 「花费预算闸」核心件。证据锚 docs/2026-08-06-r2-roster-budget-evidence.md
 //! （22 舰长全量 ¥34.49、≈¥1.5/人、audience ≈¥1.5、基线 ≤¥3/轮被爆 11 倍）；口径 =
 //! web/src/format.ts estimateCostCny `(input×2+output×8)/1_000_000` CNY。
-
-use std::path::Path;
+//!
+//! 删码刀3 收口：SpendMode/账本落盘全删——预估口径与执行语义同源（fresh = 输入哈希
+//! 已变 ∪ 无完整旧结论，由 pipeline::fresh_viewer_ids 唯一产出），只剩估算公式 +
+//! 硬闸判定两个纯函数。实耗不另设账本：usage 本来就在 ai/state.json。
 
 /// 入/出 token 费率（¥/百万 token；web TOKEN_RATES_CNY_PER_MILLION 同值）。
 pub const TOKEN_RATE_INPUT_CNY_PER_MILLION: f64 = 2.0;
@@ -18,44 +20,6 @@ pub fn cost_cny(input_tokens: i64, output_tokens: i64) -> f64 {
     (input_tokens as f64 * TOKEN_RATE_INPUT_CNY_PER_MILLION
         + output_tokens as f64 * TOKEN_RATE_OUTPUT_CNY_PER_MILLION)
         / 1_000_000.0
-}
-
-/// 省钱模式（三选收窄两选：b「只跑分层」随名册分档冻结缺席）。
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum SpendMode {
-    /// 全量：名册全员扇出（默认，现状一字不动）。
-    #[default]
-    Normal,
-    /// 只更新「有完整旧结论且输入已变」的人——纯新建者本轮缺席。
-    IncrementalOnly,
-    /// 跳过单人感知、只推简报（audience 段照跑）。
-    BriefingOnly,
-}
-
-impl SpendMode {
-    /// 只收字面 `incremental` / `briefing_only`；其余一律报错（Normal 不经此处）。
-    pub fn parse(s: &str) -> Result<Self, String> {
-        match s {
-            "incremental" => Ok(Self::IncrementalOnly),
-            "briefing_only" => Ok(Self::BriefingOnly),
-            _ => Err("spend_mode 只收 incremental / briefing_only".to_string()),
-        }
-    }
-
-    /// 与 parse 相对的字面面（Normal 也回来）——progress/budget.json 用此串。
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Normal => "normal",
-            Self::IncrementalOnly => "incremental",
-            Self::BriefingOnly => "briefing_only",
-        }
-    }
-}
-
-impl std::fmt::Display for SpendMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.as_str())
-    }
 }
 
 /// 预算闸判定结果（预估/预算原值 + 放行·阻断二态）。
@@ -88,42 +52,9 @@ pub fn decide_budget(
     }
 }
 
-/// `{output_dir}/ai/budget.json` 落盘（放行/阻断都写；写失败由调用方响铃不绊管线。新侧文件零 parity 风险）。
-#[allow(clippy::too_many_arguments)]
-pub fn write_budget_file(
-    output_dir: &Path,
-    spend_mode: SpendMode,
-    estimated_cny: f64,
-    budget_cny: Option<f64>,
-    fresh_viewers: usize,
-    total_viewers: usize,
-    gate: &str,
-    at: &str,
-) -> Result<(), String> {
-    crate::storage::write_json(
-        &output_dir.join("ai").join("budget.json"),
-        &serde_json::json!({
-            "spend_mode": spend_mode.as_str(),
-            "estimated_cny": estimated_cny,
-            "budget_cny": budget_cny,
-            "fresh_viewers": fresh_viewers,
-            "total_viewers": total_viewers,
-            "gate": gate,
-            "at": at,
-        }),
-    )
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const AT: &str = "2026-08-06T00:00:00.000000+00:00";
-
-    fn read(d: &Path) -> serde_json::Value {
-        let p = d.join("ai").join("budget.json");
-        serde_json::from_str(&std::fs::read_to_string(p).unwrap()).unwrap()
-    }
 
     #[test]
     fn cost_cny_formula_anchor() {
@@ -146,52 +77,8 @@ mod tests {
     }
 
     #[test]
-    fn briefing_flat_when_no_fresh_viewers() {
+    fn empty_fresh_is_audience_flat_only() {
         assert!((decide_budget(0, true, None).estimated_cny - 1.5).abs() < 1e-9);
         assert_eq!(decide_budget(0, false, None).estimated_cny, 0.0);
-    }
-
-    #[test]
-    fn spend_mode_parse_and_str_roundtrip() {
-        let inc = SpendMode::parse("incremental").unwrap();
-        assert_eq!(inc, SpendMode::IncrementalOnly);
-        let brief = SpendMode::parse("briefing_only").unwrap();
-        assert_eq!(brief, SpendMode::BriefingOnly);
-        for bad in ["normal", "正常", "分层", ""] {
-            let err = SpendMode::parse(bad).unwrap_err();
-            assert!(err.contains("incremental"), "{bad}: {err}");
-            assert!(err.contains("briefing_only"), "{bad}: {err}");
-        }
-        assert_eq!(SpendMode::Normal.as_str(), "normal");
-        assert_eq!(format!("{}", SpendMode::BriefingOnly), "briefing_only");
-        assert_eq!(SpendMode::default(), SpendMode::Normal);
-    }
-
-    #[test]
-    fn budget_file_key_set_and_gate_literal() {
-        let dir = tempfile::tempdir().unwrap();
-        let d = dir.path();
-        write_budget_file(d, SpendMode::Normal, 3.5, Some(3.0), 1, 22, "blocked", AT).unwrap();
-        assert_eq!(
-            read(d),
-            serde_json::json!({
-                "spend_mode": "normal", "estimated_cny": 3.5, "budget_cny": 3.0,
-                "fresh_viewers": 1, "total_viewers": 22, "gate": "blocked", "at": AT,
-            })
-        );
-    }
-
-    #[test]
-    fn budget_file_null_budget_and_proceed_gate() {
-        let dir = tempfile::tempdir().unwrap();
-        let d = dir.path();
-        write_budget_file(d, SpendMode::BriefingOnly, 1.5, None, 0, 22, "proceed", AT).unwrap();
-        assert_eq!(
-            read(d),
-            serde_json::json!({
-                "spend_mode": "briefing_only", "estimated_cny": 1.5, "budget_cny": null,
-                "fresh_viewers": 0, "total_viewers": 22, "gate": "proceed", "at": AT,
-            })
-        );
     }
 }

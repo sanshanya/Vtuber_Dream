@@ -149,21 +149,11 @@ export function Settings() {
               </span>
             ))}
           </div>
-          <h3>月度实耗（history.jsonl 汇总）</h3>
-          {budget.isLoading ? (
-            <div className="state-loading">载入预算面…</div>
-          ) : budget.isError ? (
-            <div className="notice">{errText(budget.error)}</div>
-          ) : budget.data ? (
-            <div className="muted small" data-testid="monthly-budget">
-              本月（{budget.data.month}）AI 实耗 {fmtCny(budget.data.month_cost_cny)}／
-              {budget.data.month_runs} 次运行；单次预算{" "}
-              {budget.data.budget_cny === null ? "未设" : fmtCny(budget.data.budget_cny)}
-              {budget.data.last_run
-                ? ` · 最近一次：${budget.data.last_run.kind}（${budget.data.last_run.status}）≈${fmtCny(budget.data.last_run.cost_cny)}`
-                : " · 暂无历史记录"}
-            </div>
-          ) : null}
+          <p className="muted small" data-testid="budget-note">
+            单次预算{" "}
+            {budget.data?.budget_cny == null ? "未设" : fmtCny(budget.data.budget_cny)}
+            （闸口径 = 与执行同源的 fresh 预估，见 /api/budget estimate 段）。
+          </p>
         </div>
       </div>
     </section>

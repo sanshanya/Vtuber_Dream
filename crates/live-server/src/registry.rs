@@ -9,7 +9,6 @@
 
 use std::sync::{Arc, Mutex};
 
-use live_core::agent::budget::SpendMode;
 use live_core::agent::pipeline::PipelineError;
 use live_core::config::Config;
 use live_core::episodes::{now_iso, now_unix_secs};
@@ -180,7 +179,6 @@ impl Registry {
         kind: &str,
         viewer_uid: Option<String>,
         force: bool,
-        spend_mode: SpendMode,
         bilibili_hosts: Option<(String, String)>,
     ) -> Result<Arc<Mutex<RunRecord>>, String> {
         let events = Arc::new(RunEvents::new());
@@ -218,15 +216,10 @@ impl Registry {
 
         let registry = registry.clone();
         let kind = kind.to_string();
-        // 走账面（件3）需要在 config 被内层闭包整体吞掉前留一份 output_dir 克隆。
-        let output_dir = config.output_dir.clone();
         // catch_unwind 收尾自持三件套——线程体整体 move 走原句柄。
         let panic_registry = registry.clone();
         let panic_run_id = run_id.clone();
         let panic_events = events.clone();
-        // 件3：panic 收尾分支在 body 整体 move 之后还要走账——kind/output_dir 各留一份。
-        let panic_kind = kind.clone();
-        let panic_output_dir = output_dir.clone();
         std::thread::spawn(move || {
             let body = move || {
                 // emit 自持一份 Arc<RunEvents>——后续内层闭包要整体 move `events`，
@@ -367,8 +360,6 @@ impl Registry {
                             stage: Some(&stage_listener),
                             // ai_viewers 在 viewer 阶段写盘后收——不跑 audience。
                             stop_after_viewer_stage: kind_for_outcome == "ai_viewers",
-                            // 省钱模式由 POST 动作面解析落位（Normal=默认全量）。
-                            spend_mode,
                         };
                         match kind_for_outcome.as_str() {
                             "viewer" => {
@@ -396,7 +387,6 @@ impl Registry {
                     Ok(value) => {
                         let partial = value["viewer_failures"].as_i64().unwrap_or(0) > 0;
                         registry.finalize(&run_id, "done", value, partial);
-                        append_history_line(&output_dir, &run_id, &kind, spend_mode, "done", &emit);
                     }
                     Err(error) => match &error {
                         PipelineError::BudgetBlocked {
@@ -404,29 +394,18 @@ impl Registry {
                             budget_cny,
                             fresh_viewers,
                             total_viewers,
-                            spend_mode: blocked_spend_mode,
                         } => {
                             let outcome = json!({
                                 "error": error.to_string(),
                                 "budget_block": {
-                                    "spend_mode": blocked_spend_mode.as_str(),
                                     "estimated_cny": estimated_cny,
                                     "budget_cny": budget_cny,
                                     "fresh_viewers": fresh_viewers,
                                     "total_viewers": total_viewers,
-                                    "hint": "两选重发：spend_mode=incremental 只更新变化者 / briefing_only 只推简报",
                                 },
                             });
                             emit("[BUDGET] 预估超预算，run 阻断（详见 outcome.budget_block）");
                             registry.finalize(&run_id, "failed", outcome, false);
-                            append_history_line(
-                                &output_dir,
-                                &run_id,
-                                &kind,
-                                spend_mode,
-                                "failed",
-                                &emit,
-                            );
                         }
                         _ => {
                             // partial 的数据源是 pipeline 契约键 viewer_stage_status。
@@ -442,14 +421,6 @@ impl Registry {
                                 "failed",
                                 json!({"error": error.to_string()}),
                                 stage_complete,
-                            );
-                            append_history_line(
-                                &output_dir,
-                                &run_id,
-                                &kind,
-                                spend_mode,
-                                "failed",
-                                &emit,
                             );
                         }
                     },
@@ -468,14 +439,6 @@ impl Registry {
                     "failed",
                     json!({"error": format!("内部恐慌：{message}")}),
                     false,
-                );
-                append_history_line(
-                    &panic_output_dir,
-                    &panic_run_id,
-                    &panic_kind,
-                    spend_mode,
-                    "failed",
-                    &|message| panic_events.push(message),
                 );
             }
         });
@@ -672,61 +635,4 @@ pub fn run_to_json(record: &RunRecord) -> Value {
         "outcome": record.outcome,
         "events": record.events.snapshot(),
     })
-}
-
-/// run 到终态（done|failed，含恐慌收尾与预算阻断）即追加一行
-/// `{output_dir}/history.jsonl`（append-only，一行一 JSON）。
-///
-/// 实耗语料 = `{output_dir}/ai/state.json` 的 usage 键（collect_* 无 AI → 全零）；
-/// `cost_cny` 用 live-core 费率公式 `(input×2+output×8)/1_000_000`。state.json 缺失/
-/// 坏 JSON → 实耗照记全零（诚实账本，不冒充成功）。写入失败只响铃 events，
-/// 绝不改 run 终态——账本面永远让位给 run 状态机。
-pub fn append_history_line(
-    output_dir: &std::path::Path,
-    run_id: &str,
-    kind: &str,
-    spend_mode: SpendMode,
-    status: &str,
-    emit: &dyn Fn(&str),
-) {
-    let usage = std::fs::read_to_string(output_dir.join("ai/state.json"))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .and_then(|state| state.get("usage").cloned())
-        .unwrap_or_else(|| json!({}));
-    let key = |name: &str| usage.get(name).and_then(Value::as_i64).unwrap_or(0);
-    let input_tokens = key("input_tokens");
-    let output_tokens = key("output_tokens");
-    let line = json!({
-        "ts": utc_now(),
-        "run_id": run_id,
-        "kind": kind,
-        "spend_mode": spend_mode.as_str(),
-        "status": status,
-        "usage": {
-            "llm_requests": key("llm_requests"),
-            "input_tokens": input_tokens,
-            "output_tokens": output_tokens,
-            "total_tokens": key("total_tokens"),
-        },
-        "cost_cny": live_core::agent::budget::cost_cny(input_tokens, output_tokens),
-    });
-    let append = (|| -> std::io::Result<()> {
-        use std::io::Write;
-        let mut file = std::fs::OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(output_dir.join("history.jsonl"))?;
-        writeln!(
-            file,
-            "{}",
-            serde_json::to_string(&line).expect("history 行恒可 JSON")
-        )?;
-        Ok(())
-    })();
-    if let Err(error) = append {
-        emit(&format!(
-            "[LEDGER] history.jsonl 追加失败（run 终态不受影响）：{error}"
-        ));
-    }
 }

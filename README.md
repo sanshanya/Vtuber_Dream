@@ -24,16 +24,16 @@ live-audience serve [-c config.yaml] [--port 3781]  # 绑定 127.0.0.1（无鉴�
 
 ## HTTP/CLI 面
 
-- 数据端点：`GET /api/rooms`、`/rooms/{uid}/overview|viewers|graph`、`/rooms/{uid}/viewers/{vid}/tree|graph`、`GET/PUT /api/config`（cookie/api_key 只回存在性布尔，永不回显原文；PUT 走白名单 5 键 + 显式字符串类型 + 原子写盘，非法一律 422 原文件不动）、`GET /api/budget`（本月实耗聚合 + 上次 run 回执 + 主钮旁花费/时长预估）、`POST /rooms/{uid}/leads/{lead_id}/approve|reject`（线索审批/拒绝缝，幂等重放）。
-- 触发通道：`POST /api/runs {kind, force?, viewer_uid?, spend_mode?}` → `202 {run_id}`（预算闸：配置 `ai.run_budget_cny` 后，预估花费严格大于预算即 409 阻断，零 LLM 请求落地；`budget.json` 放行/阻断同落账）；轮询 `GET /api/runs/{id}` 看状态机 `queued → collecting → episodes → per_viewer_ai → audience → done | failed(partial, budget_block)` 与最近 50 条 events。
+- 数据端点：`GET /api/rooms`、`/rooms/{uid}/overview|viewers|graph`、`/rooms/{uid}/viewers/{vid}/tree|graph`、`GET/PUT /api/config`（cookie/api_key 只回存在性布尔，永不回显原文；PUT 走白名单 5 键 + 显式字符串类型 + 原子写盘，非法一律 422 原文件不动）、`GET /api/budget`（预算闸现值 + 主钮旁预估：名册/新鲜人数/预估 CNY/ETD——新鲜口径与运行内预算闸同源）、`POST /rooms/{uid}/leads/{lead_id}/approve|reject`（线索审批/拒绝缝，幂等重放）。
+- 触发通道：`POST /api/runs {kind, force?, viewer_uid?}` → `202 {run_id}`（预算闸：配置 `ai.run_budget_cny` 后，预估严格大于预算即阻断——run 落 failed + outcome.budget_block 四数，零 LLM 请求落地）；轮询 `GET /api/runs/{id}` 看状态机 `queued → collecting → episodes → per_viewer_ai → audience → done | failed(partial, budget_block)` 与最近 50 条 events。
   - kind 六值（动作平面）：`full`（采集+AI 连环）、`viewer`（单舰长，须 viewer_uid）、`collect_streamer` / `collect_guards`（事实层采集，跑完采集即终局）、`ai_viewers`（逐舰长 AI，写盘后即终局，不跑整体态势）/ `ai_audience`（整体态势聚合，幂等缓存自动复用已完成舰长感知）。
-  - spend_mode 三值：缺省 `normal`（名册全员上限口径）；`incremental`（只重估已有完整旧结论且输入哈希已变者）；`briefing_only`（跳过舰长扇出，仅整体态势聚合）。
+  - spend_mode 已删除（删码收口）：省钱语义由缓存短路默认正确化——扇出名册全员但行内 `complete_cache(input_hash)` 短路，未变者零 LLM；预估与执行同源（fresh = 输入哈希已变 ∪ 无完整旧结论），不存在「名册上限估计误杀实际零花费 run」的负循环。旧请求面携 spend_mode 键一律 422 讲规则。
   - 校验失败 `422`（kind=viewer 必须有 viewer_uid、与 force 互斥；kind=full 不接受 viewer_uid；四个分层 kind 一律拒绝 viewer_uid 与 force；非布尔 force / 超长 uid 同拒）。
   - 已有未终态 run → `409`，错文携带在飞 run_id（同一时刻只允许一个真实 run）。
   - 请求体超 64KiB 等抽取层拒绝 → 状态码保留 + `{error}` JSON 信封（含 413）。
 - 重采保 AI：`ai/`（认知层缓存）与 `graph/ history/`（长期记忆）三面均永不被采集推倒——采集只重建事实面（viewers/site/shared + 顶层 JSON）；事实面快照仍照旧归档进 `history/snapshots`。旧 AI 结论保留作参考：舰长行带**时效位** `ai_stale`（true=该舰长信源已更新·待重判，哈希翻面即亮、重判即灭；false=时效内；null=无参考旧结论）。失效唯凭 per-舰长 `input_hash`——哈希件刻意摘除观察时刻类过程时间戳（episode `observed_at`、summary 请求数/耗时、`platform_snapshot.captured_at`）：事实相同的两次采集必同哈希，重采 + 重跑 AI 的成本下限 = 零。
 - 面板（`web/`）：hero = 应用品牌 + 主导航（主播介绍/舰长列表/直播数据/线索账本/设置）+ 当前房间 pill（房间=主播，单房间原型）+ 只读 run 状态徽标（含 partial 标记与 events 流）；**动作不落 hero，落页面**（钮随身段——哪个页面消费哪个产物，钮就住哪个页面）：
-  - 主播介绍页（首屏）：制片人复盘卡居首卡（上一场次复盘，只读 fact 层）；主播卡（头像/签名/平台事实徽标）；**制片人简报卡**（AI 推断层）：situation 终局 `front_brief` 句句带出处（refs chip 可点跳归属观众个人树），三态 = 未生成空缺位（含一键重跑）/ 沉默渠（「本轮证据不足以成简报」= AI 宁缺毋滥的有效结论）/ 就绪（带覆盖时段与生成时间戳），任一舰长信源变则亮 stale 徽标；感知动作区 = 「触发全量感知」唯一主钮（敏感谨慎钮：inline 两段确认，直陈花费上界/409 互斥）+ 钮旁 `预估 ≈¥…（上限口径）· 约 N~M 分钟` 行（名册缺/空落「预估 —」）+「分层跑」次级菜单（主播 AI 分析/三种采集面动作的各页引导）。
+  - 主播介绍页（首屏）：制片人复盘卡居首卡（上一场次复盘，只读 fact 层）；主播卡（头像/签名/平台事实徽标）；**制片人简报卡**（AI 推断层）：situation 终局 `front_brief` 句句带出处（refs chip 可点跳归属观众个人树），三态 = 未生成空缺位（含一键重跑）/ 沉默渠（「本轮证据不足以成简报」= AI 宁缺毋滥的有效结论）/ 就绪（带覆盖时段与生成时间戳），任一舰长信源变则亮 stale 徽标；感知动作区 = 「触发全量感知」唯一主钮（敏感谨慎钮：inline 两段确认，直陈花费上界/409 互斥）+ 钮旁 `预估 ≈¥…（新鲜 n/m 人）· 约 N~M 分钟` 行（名册缺/空落「预估 —」）+「分层跑」次级菜单（主播 AI 分析/三种采集面动作的各页引导）。
   - 舰长列表页 = 舰长采集＋舰长 AI 分析（空池另附单查引导——单查不清场：只覆写目标一人，其余舰长事实/site/shared 原样）+「信源已更新·待重判」时效徽标（列表行/舰长态势页头/主播页舰长条三处同源）+ 关系列四微件（第几次来/距上次 N 天/身份一句（AI 徽标）/最新动态——缺件一律落「未知」，不编数字不补文案）。
   - 舰长态势页 = Episode 时间线（每行恒落「发布于（平台行为时刻）/采集于（我们看到这条的时刻）」语义徽标其一）+ mention 定位高亮。
   - 直播数据页 = 主播采集（本页数据源；`shared/live_records.json` 场次档案：最后一场 vs 上周均值对比 + 全场次表，记录空则显式空态）。
@@ -82,7 +82,7 @@ AI 终局提交中的 `leads[]`（经终局校验白名单：search/creator/vide
 - `ai.agent.max_llm_rpm`（默认 0=关闭）：全 run 级 LLM 出队上限（requests/min，预约制漏桶；429/503 依 Retry-After 上浮冷却）。
 - `perception.graph_default_expanded_kinds`（默认 `[Viewer, Entity, InterestState, Situation, Action]`，允许七类全集或单值 `all`）：整体图谱端点默认折叠白名单；查询参数 `?kinds=csv|all` 可覆盖。
 - `perception.graph_row_limit`（默认 5000，≥1）：图读面导出行帽（与 parity 钉 `GRAPH_QUERY_LIMIT=500` 两条独立闸线，勿混）。
-- `ai.run_budget_cny`（默认空 = 不设闸）：单次 run 人民币预算闸——预估（名册上限口径：每舰长 50 万 input + 6.25 万 output token ¥2/¥8 每百万 + audience 同额平段）严格大于闸即 409 阻断，阻断零 LLM 请求；`{output}/ai/budget.json` 与 `{output}/history.jsonl` 实耗账（前端月览 + 主钮预估消费同一账源）。
+- `ai.run_budget_cny`（默认空 = 不设闸）：单次 run 人民币预算闸——预估（每舰长 50 万 input + 6.25 万 output token ¥2/¥8 每百万 + audience 同额平段；人数口径 = fresh 而非名册上限）严格大于闸即阻断（failed + outcome.budget_block 四数），阻断零 LLM 请求。实耗真相唯一源 = `{output}/ai/state.json` 的 `usage` 键；月度对账请用平台计费后台（本地不维护第二账源）。
 
 ## 仓库边界
 

@@ -105,26 +105,13 @@ pub(super) async fn runs_post(
         }
         (_, viewer_uid) => viewer_uid,
     };
-    // spend_mode 是省钱模式的可选键——缺席/空=Normal；只收字面
-    // incremental / briefing_only（其余一律 422，复用 SpendMode::parse 文案），
-    // 且只对带单人感知段的 kind 合法（full/viewer/ai_viewers）。
-    let spend_mode = match object.get("spend_mode") {
-        None | Some(Value::Null) => live_core::agent::budget::SpendMode::Normal,
-        Some(Value::String(raw)) => live_core::agent::budget::SpendMode::parse(raw.trim())
-            .map_err(|message| fail(StatusCode::UNPROCESSABLE_ENTITY, &message))?,
-        Some(_) => {
-            return Err(fail(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "spend_mode 只收 incremental / briefing_only",
-            ));
-        }
-    };
-    if spend_mode != live_core::agent::budget::SpendMode::Normal
-        && !matches!(kind, "full" | "viewer" | "ai_viewers")
-    {
+    // spend_mode 已随删除——省钱模式的正确默认 = 缓存短路（fresh 口径见
+    // pipeline::fresh_viewer_ids），不再需要请求面模式键。旧客户端携 spend_mode
+    // 一律 422 讲规则（静默吞掉会让人以为省到钱而实际没有）。
+    if object.contains_key("spend_mode") {
         return Err(fail(
             StatusCode::UNPROCESSABLE_ENTITY,
-            &format!("kind={kind} 无单人感知段，spend_mode 无消费"),
+            "spend_mode 已删除——缓存短路自动只重估输入已变者；预算闸口径与执行同源",
         ));
     }
     // 已有未终态 run → 409，客户端可从错文中拿到在飞 run_id 自行轮询。
@@ -134,7 +121,6 @@ pub(super) async fn runs_post(
         kind,
         viewer_uid,
         force,
-        spend_mode,
         state.bilibili_hosts.clone(),
     )
     .map_err(|active| {
