@@ -2,7 +2,7 @@
 
 以 B 站公开事实为输入、以 AI Agent 为认知核心、以时序图谱为长期记忆、以主播内容决策为输出的观众态势感知工具。
 
-**现状**：Rust 实现为唯一运行时，全链已通——采集 → Episode/Mention/Entity → 单人 Perception → 整体态势 → 图/报告/serve + React 面板。本仓库仅公开代码与测试样本；设计规格、ADR 与术语表在私有仓库维护，不公开发布。前身 Python 参考实现已冻结归档（仅作黄金样本 fixture 来源，不参与任何运行路径）。
+**现状**：Rust 实现为唯一运行时，全链已通——采集 → Episode/Mention/Entity → 单人 Perception → 整体态势 → 图/报告/serve + React 面板。本仓库仅公开代码与测试样本；设计规格、ADR 与术语表在私有仓库维护，不公开发布。前身 Python 参考实现已冻结归档（仅作黄金样本 fixture 来源，不参与任何运行路径；删码刀8 已退役内部形状 parity 垫片，保留「用户可见语义」钉团即 parity_negative.rs）。
 
 ## 合规边界
 
