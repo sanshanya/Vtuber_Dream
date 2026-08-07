@@ -688,9 +688,28 @@ async fn guard_members_full_pages_of_junk_terminate_on_zero_growth() {
 // 弹幕网关：getDanmuInfo / get_info live_status（场次窗主源连接前置）
 // ---------------------------------------------------------------------------
 
+/// wbi 签名前置件：getDanmuInfo 已并入签名面——客户端先握 nav 取 mixin 钥匙对。
+/// 本助件把 nav 桩挂上 mock server（键名形状即契约；键值内容无关）。
+async fn mount_wbi_nav(server: &MockServer) {
+    Mock::given(method("GET"))
+        .and(path("/x/web-interface/nav"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "code": 0,
+            "data": {
+                "wbi_img": {
+                    "img_url": "https://i0.hdslb.com/bfs/wbi/7cd084941338484aae1ad9425b84077c.png",
+                    "sub_url": "https://i0.hdslb.com/bfs/wbi/4932caff0ff746eab6b0fe3c6d34aa8b.png"
+                }
+            }
+        })))
+        .mount(server)
+        .await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn get_danmu_info_parses_host_port_and_token() {
     let server = MockServer::start().await;
+    mount_wbi_nav(&server).await;
     Mock::given(method("GET"))
         .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
         .and(query_param("id", "983"))
@@ -726,6 +745,7 @@ async fn get_danmu_info_parses_host_port_and_token() {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_danmu_info_standard_port_uses_wss_root() {
     let server = MockServer::start().await;
+    mount_wbi_nav(&server).await;
     Mock::given(method("GET"))
         .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
@@ -751,6 +771,7 @@ async fn get_danmu_info_standard_port_uses_wss_root() {
 async fn get_danmu_info_missing_host_list_errors_without_token_leak() {
     // 负例：data 缺 host_list 时必须上抛；错误串绝不含 token 明文（§11 合规红线）。
     let server = MockServer::start().await;
+    mount_wbi_nav(&server).await;
     Mock::given(method("GET"))
         .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
         .respond_with(
@@ -773,6 +794,7 @@ async fn get_danmu_info_missing_host_list_errors_without_token_leak() {
 #[tokio::test(flavor = "multi_thread")]
 async fn get_danmu_info_missing_token_errors() {
     let server = MockServer::start().await;
+    mount_wbi_nav(&server).await;
     Mock::given(method("GET"))
         .and(path("/xlive/web-room/v1/index/getDanmuInfo"))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({

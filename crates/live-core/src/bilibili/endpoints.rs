@@ -468,13 +468,17 @@ impl BilibiliClient {
     /// 取 `data.host_list[0].{host,port}` 与 `data.token`；任一缺段上抛
     /// `Transport`（细节为固定文案，token/cookie 绝不入错误串——§11 红线）。
     /// 与 Python `bilibili.py` 取 host_list[0] 口径一致。
+    ///
+    /// 签名面（2026-08-07 实证）：该端点已并入 wbi 签名面——裸（无 wts/w_rid）
+    /// 请求一律 -352 风控遮断（cookie/UA/Referer/IP 组合全排列皆然；
+    /// 签名后放行）。鉴据：curl + 本仓 wbi.rs 同表实算复现 0/-352 对拍。
     pub fn get_danmu_info(&mut self, room_id: &str) -> Result<DanmakuInfo, BilibiliError> {
         const ENDPOINT: &str = "/xlive/web-room/v1/index/getDanmuInfo";
         let data = self.request(
             &self.live_base.clone(),
             ENDPOINT,
             &[("id".to_string(), Some(room_id.to_string()))],
-            false,
+            true,
             Some(&format!("https://live.bilibili.com/{room_id}")),
         )?;
         let first = data
