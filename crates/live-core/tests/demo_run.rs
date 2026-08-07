@@ -1,4 +1,4 @@
-//! M4-D demo 集成钉：D-5 产物面、SAME_AS 共享实体、两次跑确定性（并发序 = 单线程同步通道，
+//! M4-D demo 集成钉：产物面、SAME_AS 共享实体、两次跑确定性（并发序 = 单线程同步通道，
 //! 确定性等价于「任何并发编排下产物只依赖合成输入」）。
 //!
 //! 对账基座：tests-fixtures/m4d/python_demo_root（Python `live-audience demo` 实产，剥
@@ -177,7 +177,7 @@ fn sort_mentions(graph: &mut Value) {
 #[test]
 fn demo_artifact_surface_and_no_peers() {
     let (demo_root, result) = run_demo("surface");
-    // D-5 对账集 + state（Python demo.py 落盘面平移）
+    // 对账集 + state（Python demo.py 落盘面平移）
     for rel in [
         "collection.json",
         "streamer.json",
@@ -194,7 +194,7 @@ fn demo_artifact_surface_and_no_peers() {
     ] {
         assert!(demo_root.join(rel).exists(), "缺产物 {rel}");
     }
-    // D-5 排除面
+    // 排除面
     assert!(!demo_root.join("peers").exists(), "peers 链属 D-5 书面裁剪");
     assert!(!demo_root.join("ai").join("peer_streamers.json").exists());
     assert!(!demo_root.join("site").exists(), "HTML 站挂 M5");
@@ -304,7 +304,7 @@ fn demo_matches_python_oracle() {
         "先生成 tests-fixtures/m4d（私仓 target/gen_m4d_golden.py）"
     );
     let (demo_root, _) = run_demo("oracle");
-    // 输入面字节级对账的文件群（D-5 对账集）
+    // 输入面字节级对账的文件群（对账集）
     for rel in [
         "collection.json",
         "streamer.json",

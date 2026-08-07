@@ -1,4 +1,4 @@
-//! 存档页数据面（R2 批6 D11「里程碑日历 + 周健康」，裁决 R2-γ 后接替图谱进主导航）。
+//! 存档页数据面（「里程碑日历 + 周健康」，裁决后接替图谱进主导航）。
 //!
 //! 本任务是纯事实派生面（零 AI）：全部数字来自既存落盘事实文件——
 //! collection.json / streamer.json / ai/recap.json / history 快照 / 图库场次 /
@@ -273,7 +273,7 @@ fn latest_snapshot_viewer_count(root: &Path) -> Option<i64> {
 }
 
 /// history/follower_snapshots.jsonl → 首尾有序的 followers 序列（坏行/缺粉丝字段跳过；
-/// 纪律：文件跟随 collect 逐轮写、等值不追加、缺位不记——见 B-B4 落账口径）。
+/// 纪律：文件跟随 collect 逐轮写、等值不追加、缺位不记——见落账口径）。
 fn read_follower_snapshots(root: &Path) -> Vec<i64> {
     let path = root.join("history").join("follower_snapshots.jsonl");
     let Ok(text) = std::fs::read_to_string(&path) else {
@@ -355,7 +355,7 @@ fn guard_delta_row(root: &Path) -> Value {
     })
 }
 
-/// 涨粉 delta（B-B4 实数化）：末行 − 从末往前第一条异值行；全同值 → delta=0 且
+/// 涨粉 delta（实数化）：末行 − 从末往前第一条异值行；全同值 → delta=0 且
 /// 注明「自建账起未变」。行数 <2 → unknown「快照未就位（刚建账）」。
 fn follower_delta_row(root: &Path) -> Value {
     let followers = read_follower_snapshots(root);

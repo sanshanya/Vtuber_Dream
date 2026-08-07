@@ -1,7 +1,7 @@
-//! 房间语料 Episode 化（迭代细则 v1 §1 P0-1）：`shared/replay_danmaku.json` 与
+//! 房间语料 Episode 化（迭代细则 v1 §1）：`shared/replay_danmaku.json` 与
 //! `shared/room_comments.json` 的行 → 不可变 Episode，走既有 ingest 通道落图。
 //!
-//! 体积备书（轮3）：超 500 线 = 两语料入口 × 行→Episode 投影，共享每行 parity
+//! 体积备书：超 500 线 = 两语料入口 × 行→Episode 投影，共享每行 parity
 //! 选择（shard_index 打标/行序稳定化）的单通道语义；一文件一端口不拆。
 //!
 //! 归属裁决（细则原文）：
@@ -30,7 +30,7 @@ use crate::graph::store::Result;
 
 use super::{Episode, EpisodeField, hash_parts, json_canon, now_iso, py_str};
 
-/// 保留命名空间：房间语料不做观众级归属，全部挂在 `_room` 名下（细则 §1 P0-1）。
+/// 保留命名空间：房间语料不做观众级归属，全部挂在 `_room` 名下（细则 §1）。
 pub const ROOM_VIEWER_ID: &str = "_room";
 /// 弹幕 Episode 的 source（与字段 payload 文件名对齐）。
 pub const SOURCE_LIVE_DANMAKU: &str = "live_danmaku";
@@ -51,7 +51,7 @@ fn unix_to_iso(raw: &Value) -> String {
 /// version_doc → content_version（**与 build.rs 的公式逐字节一致**，键序固定）。
 /// 8 参数全是构建件（身份三元组 + 双时间戳 + fields/facts），私有两调用点，
 /// 压成 struct 只是为 lint 硬凑层（AGENTS.md §4）。
-/// D1 WS 弹幕窗（2B）经 `crate::episodes::room_corpus::finalize_episode` 复用本公式——
+/// WS 弹幕窗经 `crate::episodes::room_corpus::finalize_episode` 复用本公式——
 /// 两条 Episode 生产线同指纹纪律（撞库幂等语义天然共享）。
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn finalize_episode(

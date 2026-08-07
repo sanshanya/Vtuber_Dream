@@ -1,10 +1,10 @@
 /**
- * P0-2 钉团（迭代细则 v1 §1 验收钉②③④在前端的形态）：
+ * 钉团（迭代细则 v1 §1 验收钉②③④在前端的形态）：
  * - ready 态：四数+命名件+未知行恒在；
  * - naming=null：动作位具名「未命名」，不补文案（无伪造语义）；
  * - empty 态：诚实文案（今晚没人来——但你没说错话）而非报错；
  * - null 态：复盘尚未生成；
- * - Streamer 集成（v2 P1-1/D6）：复盘卡为首卡；宏观折叠段已整段退役。
+ * - Streamer 集成（v2）：复盘卡为首卡；宏观折叠段已整段退役。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -132,13 +132,13 @@ describe("Streamer 集成（v2 P1-1 首卡钉 + R2 批5 D6 退役面）", () => 
     await waitFor(() => expect(screen.getByTestId("recap-card")).toBeTruthy());
     // 复盘卡呈现四数
     expect(screen.getByTestId("recap-headline").textContent).toContain("3 人来过");
-    // v2 P1-1（裁决三）：首卡恒为复盘卡——DOM 序领先简报卡。
+    // v2（裁决三）：首卡恒为复盘卡——DOM 序领先简报卡。
     const recapCard = screen.getByTestId("recap-card");
     const briefingCard = screen.getByTestId("briefing-card");
     expect(
       recapCard.compareDocumentPosition(briefingCard) & Node.DOCUMENT_POSITION_FOLLOWING,
     ).toBeTruthy();
-    // R2 批5 D6：宏观段整段退役——旧「整体态势（宏观）…项，点开看」零残留。
+    // 宏观段整段退役——旧「整体态势（宏观）…项，点开看」零残留。
     expect(screen.queryByTestId("macro-details")).toBeNull();
       // 「整体态势」heading 是退役段的签名（动作区 note 里的同名短语是存活文案）。
       expect(screen.queryByRole("heading", { name: "整体态势" })).toBeNull();

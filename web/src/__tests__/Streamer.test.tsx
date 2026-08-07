@@ -1,9 +1,9 @@
 /**
  * Streamer 首页钉团：
- * - 空态判别（ag5-F6：404 status 特判，不再子串匹配 message）；
+ * - 空态判别（404 status 特判，不再子串匹配 message）；
  * - 概述 500 且文案含 "collection" → 不许误吞成空态（原裸子串 bug 复现形）；
- * - Z2：主播卡 profile 透传（名字/粉丝徽标/头像 no-referrer）与 profile 缺档空态；
- * - R2 批5：v2 P1-1 首卡恒为复盘卡（recap 就绪/null 两态 DOM 序）+ D6 退役面
+ * - 主播卡 profile 透传（名字/粉丝徽标/头像 no-referrer）与 profile 缺档空态；
+ * - v2：首卡恒为复盘卡（recap 就绪/null 两态 DOM 序）+ 宏观段退役面
  *   （态势项胶囊/宏观折叠组/executive_summary 直呈/situ-synthetic 徽标随退役段
  *   同葬；synthetic 析取的存活面=页脚徽标，App.test 钉着）。
  */
@@ -45,7 +45,7 @@ function renderStreamer() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });
   render(
     <QueryClientProvider client={queryClient}>
-      {/* Z4c：页面内嵌动作钮（RunButton/KindRunButton）依赖 RunTracker 上下文。 */}
+      {/* 页面内嵌动作钮（RunButton/KindRunButton）依赖 RunTracker 上下文。 */}
       <RunTrackerProvider>
         <Streamer roomId="983" />
       </RunTrackerProvider>
@@ -174,7 +174,7 @@ describe("Streamer 主播卡（Z2）", () => {
     expect(strip.textContent).toContain("998");
     expect(strip.textContent).toContain("1,473");
     expect(strip.textContent).toContain("4,477");
-    // D6 退役实证：胶囊面只剩 5 枚，且「态势项」在指标条零残留。
+    // 退役实证：胶囊面只剩 5 枚，且「态势项」在指标条零残留。
     expect(strip.textContent).not.toContain("态势项");
     expect(strip.querySelectorAll(".card.stat").length).toBe(5);
   });
@@ -215,7 +215,7 @@ describe("Streamer 主播卡（Z2）", () => {
       expect(
         recapCard.compareDocumentPosition(briefingCard) & Node.DOCUMENT_POSITION_FOLLOWING,
       ).toBeTruthy();
-      // 退役面零残留（D6 双区都不复存在）。
+      // 退役面零残留（宏观/态势双区都不复存在）。
       expect(screen.queryByTestId("macro-details")).toBeNull();
       // 「整体态势」heading 是退役段的签名（动作区 note 里的同名短语是存活文案）。
       expect(screen.queryByRole("heading", { name: "整体态势" })).toBeNull();

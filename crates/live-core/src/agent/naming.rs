@@ -1,4 +1,4 @@
-//! 复盘卡 AI 命名（迭代细则 v1 §1 P0-2）：AI 只干一件事——给规则层算出的
+//! 复盘卡 AI 命名（迭代细则 v1 §1）：AI 只干一件事——给规则层算出的
 //! 密度峰与复读句做语义命名，外加一句「明天复用/弃用」和切片切口建议。
 //!
 //! 分工纪律（程序事实 / AI 语义，AGENTS §2.1）：
@@ -91,7 +91,7 @@ fn validate_draft(card: &RecapCard, draft: &RecapNamingDraft) -> Vec<String> {
         NAMING_CUT_MAX_CHARS,
         &mut errors,
     );
-    // S1（R2 批1 顺手件 / v2 P1-3 编锚闸）：cut_advice 必须锚在场内证据上——
+    // cut_advice 必须锚在场内证据上——
     // 白名单=复读句原文 ∪ 峰窗 ±2min 时刻 token；无峰无复读 → null 放行；
     // 编锚未过 → Reject 具名（无源导播锚绝不上卡）。
     if let Some(error) = cut_anchor_error(card, draft.cut_advice.trim()) {
@@ -304,7 +304,7 @@ mod tests {
         }
     }
 
-    /// S1 钉①：锚在峰窗 ±2min 的时刻 token → 放行（含全角冒号形态）。
+    /// 钉①：锚在峰窗 ±2min 的时刻 token → 放行（含全角冒号形态）。
     #[test]
     fn cut_advice_within_peak_window_passes() {
         let card = card_with(Some("2026-08-05T21:14:00+00:00"), None);
@@ -319,14 +319,14 @@ mod tests {
         );
     }
 
-    /// S1 钉②：含复读句原文 → 放行（与峰时刻无关）。
+    /// 钉②：含复读句原文 → 放行（与峰时刻无关）。
     #[test]
     fn cut_advice_quoting_repeated_sentence_passes() {
         let card = card_with(None, Some(("晚安大家", 5)));
         assert!(validate_draft(&card, &draft("沿「晚安大家」那段切")).is_empty());
     }
 
-    /// S1 钉③：编锚Reject具名——时刻出窗、复读句也不沾，必须报得出来因。
+    /// 钉③：编锚Reject具名——时刻出窗、复读句也不沾，必须报得出来因。
     #[test]
     fn cut_advice_fabricated_anchor_is_rejected_by_name() {
         let card = card_with(Some("2026-08-05T21:14:00+00:00"), Some(("晚安大家", 5)));
@@ -337,7 +337,7 @@ mod tests {
         );
     }
 
-    /// S1 钉④：无峰无复读 → 空 cut_advice 放行（null 落卡，不硬要锚）。
+    /// 钉④：无峰无复读 → 空 cut_advice 放行（null 落卡，不硬要锚）。
     #[test]
     fn no_anchor_objects_allows_empty_cut_advice() {
         let card = card_with(None, None);
@@ -347,7 +347,7 @@ mod tests {
         );
     }
 
-    /// S1 钉⑤：有峰有复读但 cut_advice 为空 → 仍判空档（不锚即拒）。
+    /// 钉⑤：有峰有复读但 cut_advice 为空 → 仍判空档（不锚即拒）。
     #[test]
     fn anchors_exist_but_cut_advice_empty_is_rejected() {
         let card = card_with(Some("2026-08-05T21:14:00+00:00"), None);

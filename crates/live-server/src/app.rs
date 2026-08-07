@@ -1,12 +1,12 @@
-//! axum 装配与端点（D1/D3/D9 + B1 切：rooms + config + 静态面）。
+//! axum 装配与端点（装配面切 B1：rooms + config + 静态面）。
 //!
 //! 与安全面相干的所有魔数就地命名（kickoff 完成定义 5）。
 //!
-//! 体积备书已兑现（r8-F2/ag8-F3 拆分条款触发）：头注自书「出现第二房间形态
+//! 体积备书已兑现（拆分条款触发）：头注自书「出现第二房间形态
 //! （多房间真实依赖）时按 rooms/config/runs 拆分」——`/rooms/:uid/*` 全家桶路由
 //! 已落地，本卷拆为五子卷 + 根本卷：根本卷 = 路由表/装配/共享面（状态/错误形态/
 //! 守卫/开库），子卷 = rooms（房间数据面 + leads 审批）、graph_routes（图端点 +
-//! 物化协商）、config_routes（D6 写面）、runs（触发/轮询）、maintenance（图维护）。
+//! 物化协商）、config_routes（白名单写面）、runs（触发/轮询）、maintenance（图维护）。
 //! 公共常量经根 re-export（`pub use`），`app::X` 外部路径零变化。
 
 use std::net::SocketAddr;
@@ -34,34 +34,34 @@ pub use archive::build_archive_payload;
 pub use config_routes::{MAX_PUT_VALUE_CHARS, WRITABLE_CONFIG_KEYS};
 pub use runs::MAX_VIEWER_UID_CHARS;
 
-/// serve/run 共用默认端口（D5：魔数命名）。
+/// serve/run 共用默认端口（魔数命名）。
 pub const DEFAULT_PORT: u16 = 3781;
-/// D9：任何 JSON 请求体的上限（POST runs / PUT config 共用口径）。
+/// 任何 JSON 请求体的上限（POST runs / PUT config 共用口径）。
 pub const MAX_REQUEST_BODY_BYTES: usize = 64 * 1024;
-/// D9：路径参数中观众 vid 的消毒限值（长度顶与 POST 同一口径：64 宽限值上限）。
+/// 路径参数中观众 vid 的消毒限值（长度顶与 POST 同一口径：64 宽限值上限）。
 pub const MAX_VID_PATH_CHARS: usize = 64;
 
 #[derive(Clone)]
 pub struct AppState {
     pub config_path: PathBuf,
-    /// 静态面根（D2：不内嵌；生产 cwd/web/dist、测试可注入）。
+    /// 静态面根（不内嵌；生产 cwd/web/dist、测试可注入）。
     pub web_root: PathBuf,
     pub registry: Registry,
-    /// D5/G3：demo（run --demo）模式——run 通道返回静态快照，不触发真实运行。
+    /// demo（run --demo）模式（G3）——run 通道返回静态快照，不触发真实运行。
     pub demo: bool,
-    /// D5：数据呈现根覆盖 —— run --demo 让它指向 _demo，serve 常态 = None → 从 config 每请求读取。
+    /// 数据呈现根覆盖 —— run --demo 让它指向 _demo，serve 常态 = None → 从 config 每请求读取。
     pub data_root: Option<PathBuf>,
     /// 测试接缝：POST runs → spawn 的 Bilibili 根地址注入（生产 None → 官方端点）。
     pub bilibili_hosts: Option<(String, String)>,
-    /// W1/r2-F3：config 写互斥——并发 PUT 的 read-modify-write 会互相覆盖丢更新。
+    /// config 写互斥——并发 PUT 的 read-modify-write 会互相覆盖丢更新。
     /// write_keys 是同步原子写（tmp+rename），持锁窗口不含 await，std Mutex 足够。
     pub config_write_lock: Arc<Mutex<()>>,
-    /// Z6/P0-6：graph artifact 重建互斥——并发首访同时 miss 时只许一个线程重建
+    /// graph artifact 重建互斥——并发首访同时 miss 时只许一个线程重建
     /// （≈0.6s SQL + 压缩），其余等待者复用其产物。持锁在 spawn_blocking 内。
     pub graph_artifact_lock: Arc<Mutex<()>>,
 }
 
-/// 统一错误包装记类型：状态码 + {"error": 文案}（D3 形态）。
+/// 统一错误包装记类型：状态码 + {"error": 文案}（统一错误形态）。
 ///
 /// 用记号类型而非裸 Response：`Result<Json, Response>` 中 Response 是 axum 的终止型
 /// （boxed body），clippy result_large_err + Handler 约束联合下只能包一层。
@@ -85,7 +85,7 @@ pub(super) fn fail(status: StatusCode, message: &str) -> AppFail {
     AppFail::new(status, message)
 }
 
-/// 500 族同义闸（轮3 样板收口，B5 先例：≥5 处同款样板入公共件）——
+/// 500 族同义闸（样板收口，B5 先例：≥5 处同款样板入公共件）——
 /// app 五子卷共 21 处 `.map_err(|e| fail(500, &e.to_string()))` 同款。
 pub(super) fn internal(error: impl std::fmt::Display) -> AppFail {
     fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string())
@@ -106,8 +106,8 @@ pub(super) fn data_root(state: &AppState) -> AppResult<PathBuf> {
     }
 }
 
-/// D9/ag3-F4：JSON 体信封化——所有 JsonRejection（含 DefaultBodyLimit 触发的 413）
-/// 统一落成 {error} JSON 响应，保持 D3 错误形态；原生 axum 只会吐裸文本。
+/// JSON 体信封化——所有 JsonRejection（含 DefaultBodyLimit 触发的 413）
+/// 统一落成 {error} JSON 响应，保持统一错误形态；原生 axum 只会吐裸文本。
 pub(super) struct JsonBody<T>(pub T);
 
 #[axum::async_trait]
@@ -168,8 +168,8 @@ pub fn build_app(state: AppState) -> Router {
         .with_state(state.clone());
 
     let router = Router::new().nest("/api", api);
-    // D2：ServeDir 指向 web/dist；缺 dist → `/` 显示构建指引页（防静默 404）。
-    // Z4/P0-7：消费 vite 预压缩产物——按 Accept-Encoding 协商 .br/.gz，无则回落原文件。
+    // ServeDir 指向 web/dist；缺 dist → `/` 显示构建指引页（防静默 404）。
+    // 消费 vite 预压缩产物——按 Accept-Encoding 协商 .br/.gz，无则回落原文件。
     if state.web_root.join("index.html").exists() {
         router.fallback_service(
             ServeDir::new(status_root(state))
@@ -185,7 +185,7 @@ fn status_root(state: AppState) -> PathBuf {
     state.web_root
 }
 
-/// 缺 dist 时的构建指引（D2 条款，不静默 404）。
+/// 缺 dist 时的构建指引（不静默 404）。
 async fn build_guide() -> Response {
     (
         StatusCode::OK,
@@ -200,9 +200,9 @@ npm ci\nnpm run build</pre>后重启 serve 即可。</div></body>",
         .into_response()
 }
 
-/// D9/W1：vid/viewer_uid 共用合法字符集——alnum + "_" + "-"。B 站 uid 是数字串，
+/// vid/viewer_uid 共用合法字符集——alnum + "_" + "-"。B 站 uid 是数字串，
 /// demo uid 走「demo-N」形——制表与连字符之外一律视作穿透恶意（%2F 经 axum
-/// 解码后落此；写侧 pane 同集守卫是 r2-F1 的纵深一对）。
+/// 解码后落此；写侧 pane 同集守卫是纵深一对）。
 pub fn uid_charset_legal(id: &str, max_len: usize) -> bool {
     !id.is_empty()
         && id.len() <= max_len
@@ -218,7 +218,7 @@ pub(super) fn vid_guard(vid: &str) -> AppResult<()> {
     Ok(())
 }
 
-/// uid 守卫：D3 路径形承诺——现布局单房间，uid 暂恒等于 config 房号，其他值一律 404。
+/// uid 守卫：路径形承诺——现布局单房间，uid 暂恒等于 config 房号，其他值一律 404。
 pub(super) fn room_guard(config: &live_core::config::Config, uid: &str) -> AppResult<()> {
     if config.bilibili.room_id != uid {
         return Err(fail(
@@ -246,7 +246,7 @@ pub struct StartOptions {
     pub port: u16,
     pub web_root: PathBuf,
     pub demo: bool,
-    /// demo（_demo 根）态数据呈现覆盖（D5）。
+    /// demo（_demo 根）态数据呈现覆盖。
     pub data_root: Option<PathBuf>,
     /// 测试接缝：POST runs → Bilibili 根地址注入（生产 None；见 AppState 同名字段）。
     pub bilibili_hosts: Option<(String, String)>,

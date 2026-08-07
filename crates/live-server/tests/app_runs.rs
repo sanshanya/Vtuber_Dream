@@ -1,4 +1,4 @@
-//! M5-B3b runs 通道钉团：POST 校验 + demo 静态快照幂等 + spawn 生命周期（G3/D3）。
+//! M5-B3b runs 通道钉团：POST 校验 + demo 静态快照幂等 + spawn 生命周期（G3）。
 //!
 //! 全部通路走 `build_app` + tower ServiceExt（不起真端口）。spawn 生命周期用
 //! wiremock 作 Bilibili 根地址注入（AppState.bilibili_hosts seam）——404 即证明
@@ -93,7 +93,7 @@ fn record_json(record: &Arc<Mutex<RunRecord>>) -> Value {
 }
 
 // ---------------------------------------------------------------------------
-// POST /api/runs 校验电池（D3/D9）
+// POST /api/runs 校验电池
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -111,18 +111,18 @@ async fn runs_post_validation_battery_422() {
         json!({"kind": "viewer", "viewer_uid": "123", "force": true}), // viewer+force 互斥
         json!({"kind": "full", "viewer_uid": "123"}),                  // full 不带 uid
         json!({"kind": "viewer", "viewer_uid": "1".repeat(MAX_VIEWER_UID_CHARS + 1)}),
-        // Z4：分层四 kind——不接 uid、不接 force（每种矩阵臂各抽查一个全面代表，
+        // 分层四 kind——不接 uid、不接 force（每种矩阵臂各抽查一个全面代表，
         // 新 kinds 自身合法性由 202 侧钉跑道另行兜底）。
         json!({"kind": "collect_streamer", "viewer_uid": "123"}),
         json!({"kind": "collect_guards", "force": true}),
         json!({"kind": "ai_viewers", "force": true}),
         json!({"kind": "ai_audience", "viewer_uid": "123"}),
-        // Z6 件1：spend_mode 只收字面 incremental / briefing_only——分号以外的
+        // spend_mode 只收字面 incremental / briefing_only——分号以外的
         // 任何值（含 spend_mode=normal、中文、非字符串）都 422。
         json!({"kind": "full", "spend_mode": "normal"}),
         json!({"kind": "full", "spend_mode": "分层"}),
         json!({"kind": "full", "spend_mode": 1}),
-        // Z6 件1：spend_mode 只对带单人感知段的 kind（full/viewer/ai_viewers）合法，
+        // spend_mode 只对带单人感知段的 kind（full/viewer/ai_viewers）合法，
         // 四分层无单人感知 → 携该键一律 422。
         json!({"kind": "collect_streamer", "spend_mode": "incremental"}),
         json!({"kind": "collect_guards", "spend_mode": "briefing_only"}),
@@ -136,11 +136,11 @@ async fn runs_post_validation_battery_422() {
             "{body}"
         );
     }
-    // W3/r6 对账：副作用断言必须是「零登记」对账，不是选一个不存在的键自嗨。
+    // 对账：副作用断言必须是「零登记」对账，不是选一个不存在的键自嗨。
     assert_eq!(fx.registry.record_count(), 0, "校验电池不得登记任何 run");
 }
 
-/// Z6 件1 双钉：spend_mode 非字面 → 422 且错文指向白名单；合法字面落在
+/// spend_mode 双钉：非字面 → 422 且错文指向白名单；合法字面落在
 /// 无单人感知段 kind 上 → 422 且错文指向 kind 语义。两钉合起来证明 parse
 /// 复用 + kind 语义门都在生效。
 #[tokio::test(flavor = "multi_thread")]
@@ -182,11 +182,11 @@ async fn runs_post_spend_mode_bad_literal_and_kind_mismatch_both_422() {
         "spend_mode 422 不得登记任何 run"
     );
 }
-// Z4：分层四 kind 的「合法体面」（202/409 区别、行为面）由 app_runs_e2e 三钉兜底——
+// 分层四 kind 的「合法体面」（202/409 区别、行为面）由 app_runs_e2e 三钉兜底——
 // 本文件的 fixture 指向真实 B 站端点（SESSDATA=test 布景），合法分面会直接产真实网络，
 // 不在这里钉。
 
-/// W1/r2-F1：viewer_uid 穿透必须短路在 422 且绝不落盘——
+/// viewer_uid 穿透必须短路在 422 且绝不落盘——
 /// 字符集白名单 [A-Za-z0-9_-]，dot-dot/内嵌斜杠/非 ASCII 一律拒（r6 「不落盘」是证据主位）。
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_post_rejects_malicious_viewer_uid_without_side_effects() {
@@ -289,7 +289,7 @@ async fn spawn_run_full_lifecycle_collect_failure_marks_failed() {
     let received = mock.received_requests().await.unwrap_or_default();
     assert!(!received.is_empty(), "bilibili_hosts seam 未接住任何请求");
 
-    // GET /api/runs/{id} 回放同一终态（D3 轮询载体同形）。
+    // GET /api/runs/{id} 回放同一终态（轮询载体同形）。
     let (status, via_http) = oneshot(&fx.app, "GET", &format!("/api/runs/{run_id}"), None).await;
     assert_eq!(status, 200, "{via_http}");
     assert_eq!(via_http["status"], "failed");
@@ -298,10 +298,10 @@ async fn spawn_run_full_lifecycle_collect_failure_marks_failed() {
 }
 
 // ---------------------------------------------------------------------------
-// X1 修复批钉团（8-agent 盲评裁定）
+// 修复批钉团（8-agent 盲评裁定）
 // ---------------------------------------------------------------------------
 
-/// ag3-F3：已有未终态 run → 409，错文携带在飞 run_id。
+/// 已有未终态 run → 409，错文携带在飞 run_id。
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_post_rejects_second_active_run_409() {
     let fx = fixture(false, None);
@@ -327,7 +327,7 @@ async fn runs_post_rejects_second_active_run_409() {
     assert_eq!(snapshot["status"], "collecting");
 }
 
-/// ag3-F4：超上限 body → axum 原生 413 纯文本被信封化为 JSON {error}。
+/// 超上限 body → axum 原生 413 纯文本被信封化为 JSON {error}。
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_post_oversized_body_is_413_json_envelope() {
     let fx = fixture(false, None);
@@ -358,7 +358,7 @@ async fn runs_post_oversized_body_is_413_json_envelope() {
     assert!(body["error"].is_string(), "{body}");
 }
 
-/// ag3-F1/X1-d：partial 契约键 viewer_stage_status 的单元钉——
+/// partial 契约键 viewer_stage_status 的单元钉——
 /// 双向复现老死键之错：老读法 `status=="viewer_complete"` 在真实失败姿势下假阴性，
 /// 在幻觉姿势下假阳性。
 #[test]
@@ -394,7 +394,7 @@ fn viewer_stage_complete_reads_contract_key() {
     );
 }
 
-/// W1/r2-F5 时间闸钉：viewer_stage_status=complete 但 updated_at 早于本轮
+/// 时间闸钉：viewer_stage_status=complete 但 updated_at 早于本轮
 /// started_at 的是旧轮次底票——不算本轮数据面；缺 updated_at 同按旧票处理（保守）。
 #[test]
 fn viewer_stage_complete_since_rejects_stale_ticket() {
@@ -420,7 +420,7 @@ fn viewer_stage_complete_since_rejects_stale_ticket() {
     );
 }
 
-/// W1/r3-F2：登记簿 GC——终态记录从旧到新剔除至 RUN_RECORDS_CAP；在飞记录永不剔。
+/// 登记簿 GC——终态记录从旧到新剔除至 RUN_RECORDS_CAP；在飞记录永不剔。
 #[test]
 fn registry_gc_evicts_oldest_terminal_records_to_cap() {
     let registry = Registry::new();
@@ -461,7 +461,7 @@ fn registry_gc_evicts_oldest_terminal_records_to_cap() {
     );
 }
 
-/// W1/r2-F4：demo 快照查/栽必须同锁——8 线程同时按门，落点唯一、登记一帧。
+/// demo 快照查/栽必须同锁——8 线程同时按门，落点唯一、登记一帧。
 #[test]
 fn demo_snapshot_collapses_concurrent_callers_to_one_record() {
     let registry = Registry::new();
@@ -482,9 +482,9 @@ fn demo_snapshot_collapses_concurrent_callers_to_one_record() {
     assert_eq!(registry.record_count(), 1);
 }
 
-/// collect 期失败时 partial 必须为 false（X1-d 的集成姿势语义钉）。
-/// Z5 后旧的 ai/state.json 不再被 reset 推倒（重采保 AI）——文件原地留存，
-/// partial=false 由 W1/r2-F5 时间闸兜底：栽的 state 无 updated_at → 按旧票拒收，
+/// collect 期失败时 partial 必须为 false（集成姿势语义钉）。
+/// 重采（reset）后旧的 ai/state.json 不再被推倒——文件原地留存，
+/// partial=false 由时间闸兜底：栽的 state 无 updated_at → 按旧票拒收，
 /// 不传「旧轮次」进本轮数据面。同钉顺手钉住保护面本身：终态后 state.json 必须还在。
 #[tokio::test(flavor = "multi_thread")]
 async fn collect_failure_keeps_prior_ai_state_and_reports_partial_false() {
@@ -521,7 +521,7 @@ async fn collect_failure_keeps_prior_ai_state_and_reports_partial_false() {
         Value::Bool(false),
         "collect 期失败：旧 state 原地留存但无 updated_at 旧票拒收 → partial=false：{terminal}"
     );
-    // Z5 保护钉：重采（含失败路径）不得推倒认知层——旧 state.json 原地留存。
+    // 保护钉：重采（含失败路径）不得推倒认知层——旧 state.json 原地留存。
     assert!(
         state_dir.join("state.json").exists(),
         "Z5 重采保 AI：collect 失败路径同样不得碾平 ai/state.json"

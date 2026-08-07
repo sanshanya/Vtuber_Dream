@@ -1,7 +1,7 @@
-//! 图端点：viewer graph + 整体图谱（Z6/P0-6 物化折叠视图 + ETag/304 协商）。
+//! 图端点：viewer graph + 整体图谱（物化折叠视图 + ETag/304 协商）。
 //!
-//! 自 `app.rs` 按头注 rooms/config/runs 条款拆出（r8-F2 兑现）；sync DB/SQL 重活
-//! 收 spawn_blocking 的原姿态不动（轮2-R1-B2），路径零变化。
+//! 自 `app.rs` 按头注 rooms/config/runs 条款拆出；sync DB/SQL 重活
+//! 收 spawn_blocking 的原姿态不动，路径零变化。
 
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -33,7 +33,7 @@ fn project_for_viewer(
             include_episodes: false,
             include_interest_states: true,
             include_situation_actions: false,
-            // 面板展示取全史：闸门左半（FIND-5）恒真。
+            // 面板展示取全史：闸门左半恒真。
             current_run_id: None,
             ..live_core::graph::project::ProjectOptions::default()
         },
@@ -50,7 +50,7 @@ pub(super) async fn viewer_graph(
     room_guard(&config, &uid)?;
     vid_guard(&vid)?;
     let root = data_root(&state)?;
-    // 轮2-R1-B2：project() 同步 rusqlite（s0 全量 ≈0.6s）——spawn_blocking，
+    // project() 同步 rusqlite（s0 全量 ≈0.6s）——spawn_blocking，
     // 与 compute_graph_bytes 同款姿态；守卫留在 async 面（微秒级）。
     let elements = tokio::task::spawn_blocking(move || -> AppResult<Value> {
         let (_store, value) = project_for_viewer(&root)?;
@@ -62,7 +62,7 @@ pub(super) async fn viewer_graph(
 }
 
 // ---------------------------------------------------------------------------
-// Z6/P0-6：整体图谱端点——默认折叠视图走外置物化（trio + ETag/304）；
+// 整体图谱端点——默认折叠视图走外置物化（trio + ETag/304）；
 // `?kinds=all` 全量逃生门与 `?kinds=A,B` 自定义折叠走现算直通。
 // ---------------------------------------------------------------------------
 
@@ -179,7 +179,7 @@ async fn ensure_graph_artifact(
                 include_episodes: false,
                 include_interest_states: true,
                 include_situation_actions: false,
-                // 面板展示取全史：闸门左半（FIND-5）恒真。
+                // 面板展示取全史：闸门左半恒真。
                 current_run_id: None,
                 ..live_core::graph::project::ProjectOptions::default()
             },
@@ -240,7 +240,7 @@ pub(super) async fn room_graph(
         params.kinds.as_deref(),
         &config.perception.graph_default_expanded_kinds,
     )?;
-    // 全谱直通（?kinds=all）：保持 Z6 前的原始面（全量 Json，无物化）。
+    // 全谱直通（?kinds=all）：保持未折叠的原始面（全量 Json，无物化）。
     let Some(expanded) = kinds else {
         let bytes = compute_graph_bytes(root, None).await?;
         return Ok(graph_body_response("unversioned-all", None, bytes));

@@ -111,7 +111,7 @@ async fn reasoning_replay_and_terminal_tool_call() {
     assert!(replayed_reasoning("先取得起始数字")(&last));
     assert!(replayed_reasoning("继续乘法")(&last));
 
-    // R5 trace：每个事件必带 time/event；tool_start/tool_end 必带工具名+tool_call_id；
+    // trace：每个事件必带 time/event；tool_start/tool_end 必带工具名+tool_call_id；
     // llm_end/tool_end 必带显式 elapsed_ms（S0 漏埋教训钉死）；禁写 reasoning 内容。
     let trace_text = std::fs::read_to_string(&trace_path).expect("trace file");
     let events: Vec<Value> = trace_text
@@ -334,7 +334,7 @@ async fn max_turns_exceeded_fails_attempt() {
 }
 
 // ---------------------------------------------------------------------------
-// r1-F1：单 agent token 预算熔断——触顶即时终止，走既有 Fatal/失败通道
+// 单 agent token 预算熔断——触顶即时终止，走既有 Fatal/失败通道
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -634,10 +634,10 @@ async fn http_502_cold_start_storm_recovers_within_inner_retry() {
     assert_eq!(trace.stats.llm_calls, 1, "瞬时压制不烧 turn");
 }
 
-/// r1-M4：429 + 裸文本 body → 错误解析为 JSONDeserialize 形态 → 非瞬时 → 单次即败。
+/// 429 + 裸文本 body → 错误解析为 JSONDeserialize 形态 → 非瞬时 → 单次即败。
 /// 钉的是**现行**语义：状态码驱动的内层恢复只在 body 是 OpenAI 错误 JSON 时成立
 /// （对照 `http_429_then_200_recovers_within_inner_retry`）。与 Python httpx 状态码
-/// 驱动相左是已登记的偏差单（r1-M4，非 M4 引入），本钉防静默漂移。
+/// 驱动相左是已登记的偏差单，本钉防静默漂移。
 #[tokio::test(flavor = "multi_thread")]
 async fn http_429_bare_text_body_is_not_retried() {
     let server = MockServer::start().await;
@@ -665,10 +665,10 @@ async fn http_429_bare_text_body_is_not_retried() {
 }
 
 // ---------------------------------------------------------------------------
-// Z3/P0-4：三维闸门（限速漏桶 + Retry-After 尊重 + 指数退避确定性缝）
+// 三维闸门（限速漏桶 + Retry-After 尊重 + 指数退避确定性缝）
 // ---------------------------------------------------------------------------
 
-/// Z3/P0-4：Retry-After 信标被尊重——429 body message 携带 "Retry-After: 1" 时，
+/// Retry-After 信标被尊重——429 body message 携带 "Retry-After: 1" 时，
 /// 重试前实睡 ≥ 该秒数（抖动经 VTD_LIVE_CORE_TEST_JITTER_SEED 钉 0 消噪）。
 /// 局限（书面）：async-openai 的 ApiError 不透传响应头，信标只好从 redact 保留的
 /// message 段截取；真实网关若仅走 header，本机制降级为纯指数退避。
@@ -722,7 +722,7 @@ async fn http_429_retry_after_hint_is_honored() {
     );
 }
 
-/// Z3/P0-4 实验门核心钉：run 级漏桶 cap=2 req/min（30s/许可）下，3 个并发 agent
+/// 实验门核心钉：run 级漏桶 cap=2 req/min（30s/许可）下，3 个并发 agent
 /// 的第 3 张许可必落在 ~60s 处——即同一 60 秒滑窗内出队请求数 ≤ 2+1。
 /// makespan ∈ [59s, 70s] 同时钉「闸门生效」（≥59s）与「压缩不失真」（≤70s：
 /// 若每个等待者各自完整串行睡眠则 ≥120s）。许可即请求（单轮终局 ⇒ 每 agent 恰 1 请求）。
@@ -787,7 +787,7 @@ async fn throttle_caps_requests_in_sliding_minute_window() {
     );
 }
 
-/// Z3/P0-4 对照臂：Throttle::disabled（config 默认 max_llm_rpm=0）完全不减速。
+/// 对照臂：Throttle::disabled（config 默认 max_llm_rpm=0）完全不减速。
 #[tokio::test(flavor = "multi_thread")]
 async fn throttle_disabled_never_waits() {
     let server = MockServer::start().await;
@@ -1008,7 +1008,7 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
     assert_eq!(trace.stats.llm_calls, 1, "transport 错不烧 turn");
 }
 
-/// W2-C1（M6-C② 实战炸点）：工具 handler 中执行真实 blocking HTTP 必须
+/// （M6-C② 实战炸点）：工具 handler 中执行真实 blocking HTTP 必须
 /// 不炸「Cannot drop a runtime…」——reqwest::blocking 的 debug 构建 shell
 /// runtime 自查在 async ctx 下必 panic；修法 = 调度点卸到 scoped std::thread
 /// （无 tokio ctx 的干净线程）。此钉在修复前的执行形态 = task panic。
@@ -1084,7 +1084,7 @@ async fn tool_handler_with_blocking_http_survives_async_context() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────
-// P2-γ：reasoning 回放窗口化 + 阈值折叠中间轮
+// reasoning 回放窗口化 + 阈值折叠中间轮
 // ─────────────────────────────────────────────────────────────────────────
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1305,7 +1305,7 @@ async fn fold_history_inactive_below_threshold() {
     assert!(!trace_text.contains("fold_history"), "未达阈值不得折叠");
 }
 
-/// 轮2-R1 修复钉：keep_tail_turns=0 以前会越界 panic——
+/// 修复钉：keep_tail_turns=0 以前会越界 panic——
 /// `turn_starts[total_turns - 0]` 对长度 total_turns 的向量下标越界。
 /// 修后契约：keep=0 = 「全折到只剩头」：头（system+首条 user）保留，
 /// 全部 assistant/tool 中间轮进摘要，末区为空。绝不 panic。

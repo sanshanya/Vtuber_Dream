@@ -670,7 +670,7 @@ fn valid_audience_submission_passes() {
 }
 
 // ---------------------------------------------------------------------------
-// Z5/C1 front_brief 校验钉：结构规则 + 沉默可呈现（空 sentences 恒合法）。
+// front_brief 校验钉：结构规则 + 沉默可呈现（空 sentences 恒合法）。
 // 存在性闭包钉在 pipeline_run.rs 集成层（specs 终局闭包走 graph references）。
 // ---------------------------------------------------------------------------
 
@@ -959,7 +959,7 @@ fn audience_leads_validation() {
 }
 
 // ---------------------------------------------------------------------------
-// R5：上限硬拒 / 占位词实质 / Some("")arity / audience 循环黑盲补钉
+// 上限硬拒 / 占位词实质 / Some("")arity / audience 循环黑盲补钉
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1109,7 +1109,7 @@ fn audience_situations_highlights_calendar_unknowns() {
     ));
 }
 
-/// 轮2-R1-A⑦：只有内容偏好/近期变化/深挖目标的实质提交不得被误判空——
+/// 只有内容偏好/近期变化/深挖目标的实质提交不得被误判空——
 /// 修前守卫只认 entities+interest_states+hypotheses+cautions 四件套；
 /// content_preferences/recent_changes/enrichment_targets 三键的合法内容零计起得到空拒。
 #[test]

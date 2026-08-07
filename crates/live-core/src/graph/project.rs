@@ -7,7 +7,7 @@
 //!
 //! 复刻前提：输入边的 (source,target) 在「活跃 INTERESTED_IN」上唯一（应用层 upsert 幂等
 //! 保证；networkx `add_edge` 覆盖语义）。层内不做去重——出现重复活跃边时本实现累加权重、
-//! Python 取最后一条，属登记在案的病态分叉（r5-FIND-1，parity_negative 有记录测试）。
+//! Python 取最后一条，属登记在案的病态分叉（parity_negative 有记录测试）。
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -124,10 +124,10 @@ pub fn detect_communities(nodes: &[Value], edges: &[Value], minimum_size: i64) -
     if pairs.is_empty() {
         return Vec::new();
     }
-    // r5-FIND-1（已知病态分叉，登记不修复）：pairs 可含同 (u,v) 多条活跃边，本实现
+    // 已知病态分叉，登记不修复：pairs 可含同 (u,v) 多条活跃边，本实现
     // m/a/weight_pairs 全部累加；networkx `G.add_edge` 覆盖权重。正常路径不可达
     // （应用层 upsert 幂等），仅手迁 SQL 可造——parity_negative 有记录测试。
-    // r5-FIND-2（已知病态分叉）：m=0（需负 confidence 列，应用层检查挡在 0.7+）
+    // 已知病态分叉：m=0（需负 confidence 列，应用层检查挡在 0.7+）
     // 时 Python `1/m` 抛 ZeroDivisionError，本实现 q0=inf 继续产出。
     let m: f64 = pairs.iter().map(|(_, _, w)| w).sum();
     let q0 = 1.0 / m;

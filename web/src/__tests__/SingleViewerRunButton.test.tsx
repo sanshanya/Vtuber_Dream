@@ -1,9 +1,9 @@
 /**
- * SingleViewerRunButton（viewer 单查触发钮，ViewerTree 空轴引导位）的单飞互斥契约钉（R3-F1）：
+ * SingleViewerRunButton（viewer 单查触发钮，ViewerTree 空轴引导位）的单飞互斥契约钉：
  * - 成功：submit 登记进全局 RunTracker（与 Viewers 单查同源）；
  * - 409：错文里的在飞 run_id 提取后转为跟随，入口翻成跟随态（同 KindRunButton 契约），
  *   不就地裸报错。
- * R3#4：submitted 不是永久锁——tracker 见到 tracked run 终态后释放，入口恢复可再发。
+ * submitted 不是永久锁——tracker 见到 tracked run 终态后释放，入口恢复可再发。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";

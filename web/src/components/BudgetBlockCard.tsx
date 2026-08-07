@@ -4,12 +4,12 @@ import { budgetBlockOf, type RunKind, type RunRecordView } from "../api";
 import { fmtCny } from "../format";
 import { useStartRun, type StartRunBody } from "../hooks/useStartRun";
 
-/** Z6 件5：spend_mode 重发只对带单人感知段的 kind 合法（= /api/runs 校验同源）；
+/** spend_mode 重发只对带单人感知段的 kind 合法（= /api/runs 校验同源）；
  *  ai_audience 的阻断是平段超支，两发射极对它是 422，不摆钮只摆链路。 */
 export const SPEND_MODE_KINDS: ReadonlyArray<RunKind> = ["full", "viewer", "ai_viewers"];
 
 /**
- * Z6 件2 阻断卡（件5 前端行动面）：run 终局 outcome.budget_block 时渲染——
+ * 阻断卡（spend_mode 前端行动面）：run 终局 outcome.budget_block 时渲染——
  * 直陈预估/预算/新鲜熟客比；两选重发（只跑增量 / 只推简报，spend_mode 随行、
  * 保留原 kind/viewer_uid）；或链接去设置页改预算。hint 文案服务端 verbatim 透传。
  */

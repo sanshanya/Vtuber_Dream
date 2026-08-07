@@ -172,7 +172,7 @@ fn viewer_input_bundle_matches_python() {
         expected["episode_count"].as_u64().unwrap() as usize
     );
     assert_eq!(bundle.input_payload, expected["input_payload"]);
-    // Z5：hash 对账走 Rust 语义口径（episodes.observed_at 不参与哈希——fixture
+    // hash 对账走 Rust 语义口径（episodes.observed_at 不参与哈希——fixture
     // 的 _note_input_hash 留了 Python 含观察时刻的旧值态）。
     assert_eq!(bundle.input_hash, expected["input_hash"].as_str().unwrap());
 }
@@ -335,7 +335,7 @@ fn compact_interest_state_drop_table_matches_python() {
 }
 
 // ---------------------------------------------------------------------------
-// Z1/P0-1 golden oracle：哈希身份稳定面（事实不变 → 哈希不变 → AI 零成本复用）。
+// golden oracle：哈希身份稳定面（事实不变 → 哈希不变 → AI 零成本复用）。
 // 与 *_matches_python parity 钉互补：那些钉「跨语言逐字节一致」，这里钉
 // 「观察时刻类过程值漂移永不翻面哈希、真实事实漂移必须翻面」的语义收口。
 // ---------------------------------------------------------------------------
@@ -447,7 +447,7 @@ fn oracle_audience_hash_strips_process_metrics() {
 
 #[test]
 fn oracle_oai_usage_cache_fields_round_trip() {
-    // Z1/P0-2 观测盒数据源：DeepSeek wire 字段必须反序列化进 OaiUsage，
+    // 观测盒数据源：DeepSeek wire 字段必须反序列化进 OaiUsage，
     // 非 DeepSeek/无计数字段（旧供应商、demo）缺省归零——不炸旧面。
     let usage: OaiUsage = serde_json::from_str(
         r#"{"prompt_tokens":100,"completion_tokens":10,"total_tokens":110,
@@ -470,7 +470,7 @@ fn oracle_oai_usage_cache_fields_round_trip() {
 }
 
 // ---------------------------------------------------------------------------
-// Z2/P0-3：壳（shell_hash + episode_set_hash）双轨身份面。
+// 壳（shell_hash + episode_set_hash）双轨身份面。
 // design-Δ：Python 冻结面无此概念——input_hash 维持与 m4a golden 逐字对账；
 // 两新键的期望真值由本 Rust 公式首批产出，登记注记 fixture（G2-A 白名单先例）。
 // ---------------------------------------------------------------------------
@@ -534,7 +534,7 @@ fn oracle_hash_scopes_track_changes() {
     );
     // 同一 viewer 事实变更→ 壳不动，集/整包双翻面。
     // mutation 点 = baseline evidence_catalog（上游采集工程化裁剪后的事实面，
-    // bundle 消费此口径——改 raw viewer.sources 不会传导，见 Z2 后记）。
+    // bundle 消费此口径——改 raw viewer.sources 不会传导，见后记）。
     let expected = load("bundle_expected.json");
     let baseline = load("baseline_expected.json");
     let profile = baseline["viewer_profiles"]

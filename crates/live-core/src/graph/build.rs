@@ -1,6 +1,6 @@
 //! 图的受控写入（移植 Python `graph.py` 下半部：ingest / apply_*）。
 //!
-//! 体积备书（轮3）：超 500 线 = 三写族共享 savepoint/confidence/区间幂等语义，
+//! 体积备书：超 500 线 = 三写族共享 savepoint/confidence/区间幂等语义，
 //! 是 Python graph.py 下半镜像。缝 = 按 apply_* 对象分卷；parity 对照面未破前不动。
 //!
 //! 与 Python 的行为差异**仅限设计文档 v6 明示的升级**：

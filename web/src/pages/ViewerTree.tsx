@@ -7,7 +7,7 @@ import { MentionText } from "../components/MentionText";
 import { SingleViewerRunButton } from "../components/SingleViewerRunButton";
 import { fmtTime } from "../format";
 
-/** 个人树（D3）：viewer 卡 + ai 缓存卡 + Episode 时间线（mention 高亮）。
+/** 个人树：viewer 卡 + ai 缓存卡 + Episode 时间线（mention 高亮）。
  * 行型 EpisodeRow/MentionRow 的家在 api.ts（F3 收口：本文件只对真型消费，不再断言 any[]）。 */
 export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
   const tree = useQuery({
@@ -46,7 +46,7 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
       </div>
 
       <div className="card viewer-head">
-        {/* R2#7：卡头头像同走统一面（58px 默认档；旧实现裸 <img> 无 no-referrer + 空 div 占位）。 */}
+        {/* 卡头头像同走统一面（58px 默认档；旧实现裸 <img> 无 no-referrer + 空 div 占位）。 */}
         <Avatar face={viewer.profile?.face ?? null} name={viewerName} />
         <div>
           <div className="badges">
@@ -55,7 +55,7 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
             <span className={`badge ${ai?.status === "complete" ? "state" : ""}`}>
               Perception {ai?.status ?? "未运行"}
             </span>
-            {/* Z5c 时效位：旧 AI 结论保留作参考但信源已翻 → 感知区块亮标不重删。 */}
+            {/* 时效位：旧 AI 结论保留作参考但信源已翻 → 感知区块亮标不重删。 */}
             {aiStale === true && <AiStaleBadge testId="ai-stale-badge-tree" />}
           </div>
           {ai?.analysis?.profile_summary ? <p>{String(ai.analysis.profile_summary)}</p> : null}
@@ -65,7 +65,7 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
       <div className="section card">
         <h3>Episode 时间线（{episodes.length}）</h3>
         {episodes.length === 0 && (
-          // ag5-F7：空轴不再 dead-end——附单查引导按钮。
+          // 空轴不再 dead-end——附单查引导按钮。
           <div className="empty">
             尚无 Episode ——
             <SingleViewerRunButton vid={vid} />
@@ -77,7 +77,7 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
               <div className="badges">
                 <span className="badge fact">{episode.source ?? "?"}</span>
                 <span className="badge">{episode.event_type ?? "?"}</span>
-                {/* D7 时间戳语义徽标：平台给了 published_at 就用行为时刻（发布于）；
+                {/* 时间戳语义徽标：平台给了 published_at 就用行为时刻（发布于）；
                     缺/空回落到 observed_at（采集于=我们看到这条的时刻），恒落其一不猜。 */}
                 {episode.published_at && episode.published_at.trim() !== "" ? (
                   <span

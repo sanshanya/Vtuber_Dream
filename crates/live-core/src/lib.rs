@@ -3,7 +3,7 @@
 //! 模块随里程碑挂入（对照 docs/2026-08-03-rust-rewrite-design.md §4）：
 //! - M1：config / episodes / models / graph（schema v6 + INTERESTED_IN 幂等）。
 //! - M2：bilibili（HTTP 适配 + WBI）/ collector（normalize + 编排）/ storage（文件面）。
-//! - R2 批 2 第一段：live_ws（D1 WS 弹幕窗的协议 codec 层，纯字节/JSON，零网络）。
+//! - live_ws（WS 弹幕窗的协议 codec 层，纯字节/JSON，零网络）。
 
 pub const PROTOCOL_NOTE: &str =
     "事实、推断、状态、行动必须分层；普通 assistant 文本不是程序输出（AGENTS.md 哲学核心）";

@@ -1,5 +1,5 @@
 /**
- * Z5/C1 BriefingCard 三态钉（终裁 P0-5：结论先行 + 句句带出处 + 沉默可呈现）：
+ * BriefingCard 三态钉（终裁：结论先行 + 句句带出处 + 沉默可呈现）：
  * 1. 未生成 → 空缺位 + 「主播 AI 分析」一键触发（缺席必可见，占位不过界）；
  * 2. 沉默渠（front_brief 缺席/空/形状漂移）→ 显式「证据不足」位（静默与无数据是两态）；
  * 3. 就绪 → 句句带出处、refs 经 episode_index 解析后可点跳个人树、未解析退化为不可点 chip。
@@ -18,7 +18,7 @@ import { RunTrackerProvider } from "../components/RunTracker";
 
 const NAME_OF: ReadonlyMap<string, string> = new Map([["u1", "观众甲"]]);
 
-// 轮2-R1-B2：props 下沉后 mount 无需 fetch stub——episodeIndex 直接随 props 传入；
+// props 下沉后 mount 无需 fetch stub——episodeIndex 直接随 props 传入；
 // QueryClientProvider 仅为 RunTrackerProvider（KindRunButton 触发轨）保留。
 function mount(props: Parameters<typeof BriefingCard>[0]) {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });

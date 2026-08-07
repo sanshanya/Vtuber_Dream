@@ -20,11 +20,11 @@ use super::tools::{
 };
 use super::validators::{validate_audience_submission, validate_viewer_submission};
 
-/// 工具规格版本串（R1-4）：工具 name/description/参数 schema 变更时同步递增，
+/// 工具规格版本串：工具 name/description/参数 schema 变更时同步递增，
 /// 与 prompts::PROMPTS_VERSION 一同写入 trace 的 run_start（协议红线：变更可审计）。
 /// G2-A1：viewer 装配入 verify_videos（白名单增量，见 tools.rs 装配注与 golden
 /// 注记 fixture agent_tool_list_note.json）→ .v1 → .v2。
-/// Z5/C1：audience 终局 schema 增 front_brief（P0-5 制片人简报）→ 2026-08-05.v1。
+/// audience 终局 schema 增 front_brief（制片人简报）→ 2026-08-05.v1。
 pub const TOOL_SPECS_VERSION: &str = "2026-08-05.v1";
 
 // ---------------------------------------------------------------------------
@@ -45,7 +45,7 @@ pub fn viewer_terminal_tool() -> AgentTool<ViewerAgentCtx> {
                     .and_then(|viewer| viewer.get("id")),
             );
             let search_ids: HashSet<String> = known_search_result_ids(&ctx.research);
-            // R4：实体存在性查询是基础设施面——预探测，DB 故障走 Fatal
+            // 实体存在性查询是基础设施面——预探测，DB 故障走 Fatal
             // （不再 unwrap_or(false) 白标为"entity 不存在"的校验拒收）。
             let mut probe_ids = BTreeSet::new();
             for entity in &submission.entities {
@@ -163,7 +163,7 @@ pub fn audience_terminal_tool() -> AgentTool<AudienceAgentCtx> {
             {
                 mention_refs.extend(mentions.iter().cloned());
             }
-            // R4：references 失败 = 基础设施故障 → Fatal（不白标为模型可修正的校验拒收）。
+            // references 失败 = 基础设施故障 → Fatal（不白标为模型可修正的校验拒收）。
             let references = match query::references(&ctx.store, &entity_refs, &[], &mention_refs) {
                 Ok(references) => references,
                 Err(err) => {
@@ -189,7 +189,7 @@ pub fn audience_terminal_tool() -> AgentTool<AudienceAgentCtx> {
                 &to_hashset("mentions"),
                 &search_ids,
             );
-            // Z5/C1：简报句句带出处——episode_refs 过 episodes 桶存在性闭包
+            // 简报句句带出处——episode_refs 过 episodes 桶存在性闭包
             // （references 通道同型；图谱 append-only，restore 面免复验）。
             if !submission.front_brief.sentences.is_empty() {
                 let episode_refs: Vec<String> = submission

@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 
 mod check;
 
-// 轮3 收窄：cookie_names/issues×2 仓库外零消费（grep 实证）→ 降 pub(crate)，不爬公面；
+// 收窄：cookie_names/issues×2 仓库外零消费（grep 实证）→ 降 pub(crate)，不爬公面；
 // normalized_json 的具名消费者 = fixture parity 钉（example.normalized.json 子集相等，
 // M1 裁决：config 字段=外部承诺面+fixture 钉住）→ 留公面。
 pub use check::{normalized_json, validate_for_ai, validate_for_collection};
@@ -53,12 +53,12 @@ pub struct CollectionConfig {
     /// M4.x：单轮 collect 的 leads 消费尝试预算（attempt 计次；0=休眠=默认人工
     /// 审批文化，薄切条款；Rust-only 能力，无 Python 对照键）。
     pub lead_fetch_budget_per_run: i64,
-    /// G2-B：线索自治位 0|1。0=纯人工审批（默认，现状一字不动）；1=L1 自治——
+    /// 线索自治位 0|1。0=纯人工审批（默认，现状一字不动）；1=L1 自治——
     /// collect 尾段在预算消费前先把 creator/search 且目标 uid 不在本房间既有
     /// 名单的 pending 线索自动迁 approved（账本记「L1 自动批准」），再照常按
     /// 预算消费。域外值拒装（Rust-only，无 Python 对照键）。
     pub leads_autonomy: i64,
-    /// R2 批 2 D1：WS 弹幕窗开关 0|1。0=关（默认，现状一字不动）；1=collect
+    /// WS 弹幕窗开关 0|1。0=关（默认，现状一字不动）；1=collect
     /// 尾段探测到房间在播时进入新增 `recording` 相挂入 WS 会话，窗收拢后统一
     /// 走既有 episodes 相。域外值拒装（Rust-only，无 Python 对照键）。
     pub live_ws_record: i64,
@@ -78,11 +78,11 @@ pub struct PerceptionConfig {
     pub preserve_raw_snapshots: bool,
     pub platform_hot_search_limit: i64,
     pub minimum_community_size: i64,
-    /// Z6/P0-6：整体图谱默认展开节点类白名单——Episode/Mention 细节层默认折叠，
+    /// 整体图谱默认展开节点类白名单——Episode/Mention 细节层默认折叠，
     /// 前端整体图首载只看 Viewer/Entity/状态-行动层。查询参数 `?kinds=all` 可逃回全量。
     /// 配置值必须属于 [`GRAPH_KIND_ALLOWLIST`]；特殊单值 "all" 展开为全部类。
     pub graph_default_expanded_kinds: Vec<String>,
-    /// Z6/P0-6：graph 读面各臂（nodes/edges/mentions/episodes）单行帽
+    /// graph 读面各臂（nodes/edges/mentions/episodes）单行帽
     /// （Python graph.AUDIENCE_GRAPH_LIMIT 归配）；>=1。与 GRAPH_QUERY_LIMIT=500
     /// （Python 查询口径钳制，parity 钉）是两条独立闸线，本键只治理「面板导出行帽」。
     pub graph_row_limit: i64,
@@ -99,7 +99,7 @@ pub const GRAPH_KIND_ALLOWLIST: [&str; 7] = [
     "Situation",
     "Action",
 ];
-/// Z6/P0-6 默认展开白名单（细节层 Episode/Mention 折叠：实测 s0 元素数 −75%、字节 −79%）。
+/// 默认展开白名单（细节层 Episode/Mention 折叠：实测 s0 元素数 −75%、字节 −79%）。
 pub const GRAPH_DEFAULT_EXPANDED_KINDS: [&str; 5] =
     ["Viewer", "Entity", "InterestState", "Situation", "Action"];
 /// 面板导出行帽默认值（Python graph.AUDIENCE_GRAPH_LIMIT 的同语义迁移锚）。
@@ -112,7 +112,7 @@ pub struct ReasoningConfig {
     pub enabled: bool,
     pub effort: String,
     pub replay_content: bool,
-    /// P2-γ-1：reasoning 回放窗口。None=不限窗（现行逐字回放）；Some(k)=仅末 k 条带 tool_calls
+    /// reasoning 回放窗口。None=不限窗（现行逐字回放）；Some(k)=仅末 k 条带 tool_calls
     /// 的 assistant 保留原文，更老轮保留字段但置空串（dsv4 「字段必现」安全形状）。
     /// 仅当 replay_content=true 时有效（false 时历史已被剥成 None，无物可窗）。
     pub replay_window: Option<u32>,
@@ -125,21 +125,21 @@ pub struct AgentRuntimeConfig {
     pub local_trace: bool,
     pub run_retries: i64,
     pub retry_backoff_seconds: f64,
-    /// r1-F1 单观众 token 预算熔断：默认 200_000（u32 域，非负），该 viewer agent
+    /// 单观众 token 预算熔断：默认 200_000（u32 域，非负），该 viewer agent
     /// 每轮 LLM 请求后核对累计 total_tokens，超限即触顶终止并记 viewer_failure。
     pub viewer_token_budget: u32,
-    /// Z3/P0-4 闸门一：并行 viewer agent 上限（Semaphore 许可数）。默认 4
+    /// 闸门一：并行 viewer agent 上限（Semaphore 许可数）。默认 4
     /// （Python asyncio.Semaphore(4)，ADR-0004 同构；INVESTIGATE_CONCURRENCY 为其锚）。
     pub max_parallel_viewers: i64,
-    /// Z3/P0-4 闸门二：全 run 级 LLM 出队请求上限（requests/min，漏桶）。
+    /// 闸门二：全 run 级 LLM 出队请求上限（requests/min，漏桶）。
     /// 0 = 关闭（默认，S0 实测零 429 故默认既不限速也不改变既有行为）；>0 时
     /// 每个 LLM 请求前 acquire 一个许可，许可即请求 1:1。
     pub max_llm_rpm: i64,
-    /// P2-γ-2：中间轮折叠阈值（估算 tokens，字节秤/4）。0=关闭（默认）。
+    /// 中间轮折叠阈值（估算 tokens，字节秤/4）。0=关闭（默认）。
     pub fold_trigger_tokens: u32,
-    /// P2-γ-2：折叠后保留末尾完整轮数。默认 2。
+    /// 折叠后保留末尾完整轮数。默认 2。
     pub fold_keep_tail_turns: usize,
-    /// P2-γ-2：折叠摘要单轮条目字符预算。默认 480。
+    /// 折叠摘要单轮条目字符预算。默认 480。
     pub fold_entry_chars: usize,
 }
 
@@ -172,7 +172,7 @@ pub struct AiConfig {
     pub agent: AgentRuntimeConfig,
     pub search_results_per_query: i64,
     pub rules: Vec<String>,
-    /// R2 批4 D3 白名单第 5 键：每轮 run 花费预算（¥）。None=不设闸（现状一字不动）；
+    /// 白名单第 5 键：每轮 run 花费预算（¥）。None=不设闸（现状一字不动）；
     /// Some 时 per-viewer 全量预估严格超此额即阻断并提供省钱模式。字符串语义（金额文案，
     /// 与 YAML 数字型形义区分），同现有 4 键白名单规格、非法即 422 同族。
     pub run_budget_cny: Option<f64>,
@@ -263,7 +263,7 @@ fn boolean(mapping: &Value, key: &str, default: bool) -> Result<bool, ConfigErro
     }
 }
 
-/// 可选整型：缺键→None；存在但无法解析→错误；用于 P2-γ 的 reasoning.replay_window。
+/// 可选整型：缺键→None；存在但无法解析→错误；用于 reasoning.replay_window。
 fn optional_integer(mapping: &Value, key: &str) -> Result<Option<i64>, ConfigError> {
     match mapping.get(key) {
         None => Ok(None),
@@ -283,7 +283,7 @@ fn string(mapping: &Value, key: &str, default: &str) -> String {
     }
 }
 
-/// R2 批4 D3：`run_budget_cny` 只收**字符串**金额（白名单第 5 键字符串语义，与 YAML
+/// `run_budget_cny` 只收**字符串**金额（白名单第 5 键字符串语义，与 YAML
 /// 数字型形义区分——金额文案应写作 "3.50" 而非 3.50）。缺键/空串→None（不设闸）；
 /// 解析失败、NaN/inf、负值、超上限一律拒装（同现有白名单键 422 规格）。
 fn optional_money_string(mapping: &Value, key: &str) -> Result<Option<f64>, ConfigError> {
@@ -311,7 +311,7 @@ fn optional_money_string(mapping: &Value, key: &str) -> Result<Option<f64>, Conf
     }
 }
 
-/// 轮2-R1-B：i64 配置值钳入 u32/usize 的公共件（原五处就地 clamp+as 同款样板）。
+/// i64 配置值钳入 u32/usize 的公共件（原五处就地 clamp+as 同款样板）。
 fn clamped_u32(value: i64, lo: u32, hi: u32) -> u32 {
     value.clamp(lo as i64, hi as i64) as u32
 }
@@ -654,7 +654,7 @@ mod tests {
         );
     }
 
-    /// MXA-11（r8/r4）：M4.x budget 键拒负（r4 G-1：与其他 collection 键同族校验，补钉）。
+    /// M4.x budget 键拒负（与其他 collection 键同族校验，补钉）。
     #[test]
     fn lead_fetch_budget_per_run_rejects_negative() {
         let bad = EXAMPLE_YAML.replace(
@@ -672,7 +672,7 @@ mod tests {
         assert_eq!(ok.collection.lead_fetch_budget_per_run, 0);
     }
 
-    /// G2-B（工作项 3）：leads_autonomy 自治位——默认 0=现状纯人工；合法 1=L1 自治；
+    /// leads_autonomy 自治位——默认 0=现状纯人工；合法 1=L1 自治；
     /// 域外值（2/-1/布尔）一律拒装。
     #[test]
     fn leads_autonomy_default_and_domain_rejects() {
@@ -704,7 +704,7 @@ mod tests {
         }
     }
 
-    /// R2 批 2 D1：live_ws_record 开关——默认 0=关（现状一字不动）；合法 1=attach
+    /// live_ws_record 开关——默认 0=关（现状一字不动）；合法 1=attach
     /// 挂接（collect 尾段在播即入 recording 相）；域外值（2/-1/布尔）一律拒装。
     #[test]
     fn live_ws_record_default_and_domain_rejects() {
@@ -736,7 +736,7 @@ mod tests {
         }
     }
 
-    /// r1-F1：`ai.agent.viewer_token_budget` 默认 200_000；可用键覆写；拒绝负值。
+    /// `ai.agent.viewer_token_budget` 默认 200_000；可用键覆写；拒绝负值。
     #[test]
     fn viewer_token_budget_default_override_and_reject_negative() {
         let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
@@ -768,7 +768,7 @@ mod tests {
         assert!(err.to_string().contains("ai.api"), "{err}");
     }
 
-    /// Z6/P0-6：graph_default_expanded_kinds 默认五类白名单；"all" 展开七类全谱；
+    /// graph_default_expanded_kinds 默认五类白名单；"all" 展开七类全谱；
     /// 未知类/空列表/非列表一律拒装。graph_row_limit 默认 5000、可覆盖、拒 0。
     #[test]
     fn graph_fold_and_row_limit_default_override_and_reject() {
@@ -816,7 +816,7 @@ mod tests {
         }
     }
 
-    /// Z3/P0-4：`ai.agent.max_parallel_viewers` 默认 4（最低 1）；
+    /// `ai.agent.max_parallel_viewers` 默认 4（最低 1）；
     /// `max_llm_rpm` 默认 0（关闭），负值拒绝。
     #[test]
     fn elevator_gates_default_override_and_reject() {
@@ -842,7 +842,7 @@ mod tests {
         }
     }
 
-    /// R2 批4 D3：`ai.run_budget_cny` 白名单第 5 键——缺省 None（不设闸，现状一字不动）；
+    /// `ai.run_budget_cny` 白名单第 5 键——缺省 None（不设闸，现状一字不动）；
     /// 字符串金额回显 Some；空串→None；非字符串（数字型 YAML）/非法/负值/非有限一律拒装。
     #[test]
     fn run_budget_cny_default_string_and_domain_rejects() {

@@ -1,6 +1,6 @@
 //! 传输层（chat 通道）：BYO wire 类型 + HTTP 瞬时错回环。
 //!
-//! 自 `runtime.rs` 按 r8-F2 头注自书缝拆出（「出 850 再议」已破：996 行）——
+//! 自 `runtime.rs` 按头注自书缝拆出（「出 850 再议」已破：996 行）——
 //! wire 形状对齐 Python agents SDK 实际出网 JSON；瞬时错判定/退避/抖动脉络
 //! 与 chat() 的调用语义见 runtime.rs 头注，本卷只承载通道件，不承合约语义。
 
@@ -123,7 +123,7 @@ pub struct OaiUsage {
     pub completion_tokens: i64,
     #[serde(default)]
     pub total_tokens: i64,
-    /// Z1/P0-2:DeepSeek prompt-caching 命中/未中计量。缺省=0（非 DeepSeek 或无计数）。
+    /// DeepSeek prompt-caching 命中/未中计量。缺省=0（非 DeepSeek 或无计数）。
     #[serde(default)]
     pub prompt_cache_hit_tokens: i64,
     #[serde(default)]
@@ -156,7 +156,7 @@ pub struct OaiChatResponse {
 /// 活不过去——加宽到 4，最坏叠加退避 ≈1+2+4+8s（封顶 30s）×抖动，
 /// 单次 chat 的最差吸收窗 ≈15s+请求往返×5，足以活过冷加载分钟级窗口。
 pub(super) const HTTP_EXTRA_ATTEMPTS: usize = 4;
-/// Z3/P0-4：HTTP 内层重试基础退避（秒）。attempt n 的退避为 base * 2^(n-1) + jitter，
+/// HTTP 内层重试基础退避（秒）。attempt n 的退避为 base * 2^(n-1) + jitter，
 /// 封顶 BACKOFF_CAP_SECONDS；Retry-After 头（经 redact 消息信标回传）优先并向下取 max。
 const HTTP_BACKOFF_BASE_SECONDS: f64 = 1.0;
 const HTTP_BACKOFF_CAP_SECONDS: f64 = 30.0;
@@ -176,7 +176,7 @@ pub(super) fn is_transient(err: &async_openai::error::OpenAIError) -> bool {
     }
 }
 
-/// Z3/P0-4：内层重试退避 = 指数（base·2^(attempt-1)，封顶 30s）× 全区间抖动。
+/// 内层重试退避 = 指数（base·2^(attempt-1)，封顶 30s）× 全区间抖动。
 /// Retry-After 提供时与指数退避取大者。抖动由 attempt 索引确定的轻量哈希产生——
 /// 无 RNG 依赖、单进程内可复现；测试可用 VTD_LIVE_CORE_TEST_JITTER_SEED 固定为 0 抖动。
 pub(super) fn http_backoff(attempt: usize, retry_after: Option<f64>) -> Duration {
@@ -208,7 +208,7 @@ fn jitter_fraction(attempt: usize) -> f64 {
     (mixed >> 11) as f64 / (1u64 << 53) as f64
 }
 
-/// Z3/P0-4：从 429/503 错误提取 Retry-After 秒数。
+/// 从 429/503 错误提取 Retry-After 秒数。
 /// async-openai 的 ApiError 不暴露响应头，退而求其次：redact 已在消息中保留
 /// "Retry-After: <秒>" 片段时解析之；仅 429/503 状态尝试（其他状态无该语义）。
 pub(super) fn retry_after_seconds(err: &async_openai::error::OpenAIError) -> Option<f64> {

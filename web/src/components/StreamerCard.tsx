@@ -1,5 +1,5 @@
 /**
- * 主播卡（Z2 主页签名件）：头像 + 名字 + 签名 + 平台事实徽标（Lv/粉丝/关注/UP认证）+
+ * 主播卡（主页签名件）：头像 + 名字 + 签名 + 平台事实徽标（Lv/粉丝/关注/UP认证）+
  * B站空间/直播间外链。参照 laplace.live「明前奶绿」卡的信息层级——产品的第一屏
  * 必须是「人」，不是 tokens。
  *
@@ -49,7 +49,7 @@ export function StreamerCard({
         // 非 Avatar 三档家谱）。alt 直陈是谁的头像（主播名即意义本体，非陪衬装饰）。
         <NoReferrerImg src={face} alt={`${name} 头像`} className="streamer-face" />
       ) : (
-        // FE-F2/R3#9：aria-label 挂在通用 div 上须补 role（img=图片语义），否则读屏丢弃标签。
+        // aria-label 挂在通用 div 上须补 role（img=图片语义），否则读屏丢弃标签。
         <div className="streamer-face streamer-face-fallback" role="img" aria-label="无头像">
           {name.slice(0, 1) || "?"}
         </div>

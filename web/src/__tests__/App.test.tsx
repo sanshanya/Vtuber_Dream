@@ -1,8 +1,8 @@
 /**
- * App 壳层钉团（F3 批）：
- * - RUN_KIND_LABELS 六字面键集钉死（R3#5：与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源冻结，
+ * App 壳层钉团：
+ * - RUN_KIND_LABELS 六字面键集钉死（与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源冻结，
  *   加 kind 或改文案必须先过此钉）；
- * - footer synthetic 徽标 = isSyntheticRun 析取口径（R3#6：collection/ai/situation 任一
+ * - footer synthetic 徽标 = isSyntheticRun 析取口径（collection/ai/situation 任一
  *   synthetic_demo=true → 亮；三分段全缺席/全 false → 不亮，合成标示宁可缺席、不许臆造）——
  *   纯函数钉 + footer 渲染钉两面。
  */

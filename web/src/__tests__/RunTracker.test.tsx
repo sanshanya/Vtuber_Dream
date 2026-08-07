@@ -1,5 +1,5 @@
 /**
- * RunTracker 共享层钉（ag4-F1/ag4-F3/ag4-F4/ag5-F1/F2/F3 裁定兑现面）：
+ * RunTracker 共享层钉（run 追踪裁定兑现面）：
  * - track 任何来源（单查/全量）→ 同一全局位可见轮询记录；
  * - 终态当拍 invalidateQueries（且排除 ["run"] 键族）；
  * - 轮询 404 → 「run 记录已丢失（服务重启？）」显式提示，不再静默；
@@ -166,12 +166,12 @@ describe("RunTracker 共享追踪", () => {
     expect(partialTitle({ ...record, partial: false })).not.toContain("观众级失败");
   });
 
-  // W3/r1-F2：终态集合是跨语双真源（server RUN_STATES 末两位 ↔ web）——字面钉防漂移。
+  // 终态集合是跨语双真源（server RUN_STATES 末两位 ↔ web）——字面钉防漂移。
   it("TERMINAL_STATES 与 server registry::RUN_STATES 末两位字面同源", () => {
     expect(TERMINAL_STATES).toEqual(["done", "failed"]);
   });
 
-  // W3/r5-F8：track 清空旧帧——新 run 未回首轮轮询前，上段终态帧不得顶进渲染。
+  // track 清空旧帧——新 run 未回首轮轮询前，上段终态帧不得顶进渲染。
   it("track 新 run 前回报一拍内不得闪显旧 run 的终态徽标", async () => {
     stubFetchPlan({
       "/api/runs/r-1": [{ status: 200, body: JSON.stringify(makeRecord({ status: "done" })) }],
@@ -186,7 +186,7 @@ describe("RunTracker 共享追踪", () => {
     expect(screen.queryByText("collecting")).toBeNull();
   });
 
-  // W3/r5-F2：丢失后 active 必须为 false——lastRecord 在飞帧不得把主钮顶成永久「运行中…」。
+  // 丢失后 active 必须为 false——lastRecord 在飞帧不得把主钮顶成永久「运行中…」。
   it("轮询 404 丢失后主钮恢复可点（active=false，lastRecord 不顶账）", async () => {
     stubFetchPlan({
       "/api/runs/r-1": [
@@ -207,7 +207,7 @@ describe("RunTracker 共享追踪", () => {
     expect(screen.getByText(/run 记录已丢失.*×/)).toBeTruthy();
   });
 
-  // W3/r1-F3：demo 快照徽标必须明示合成——与真实 done 同形即「合成诡装真实」。
+  // demo 快照徽标必须明示合成——与真实 done 同形即「合成诡装真实」。
   it("kind===demo 的终态徽标带合成字样", async () => {
     stubFetchPlan({
       "/api/runs/r-1": [

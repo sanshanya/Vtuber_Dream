@@ -1,5 +1,5 @@
 //! M5 G4：run_pair_delta 钉（相邻 complete as-of 差分 + guards 窗口 + 基线态）。
-//! 布景 = 手工 SQL 塞表（r5-FIND-1 同法）；时间戳全用 ISO 字面，as-of 切窗可复读。
+//! 布景 = 手工 SQL 塞表（同法）；时间戳全用 ISO 字面，as-of 切窗可复读。
 
 use serde_json::{Value, json};
 
@@ -267,7 +267,7 @@ fn run_pair_delta_baseline_when_fewer_than_two_complete_runs() {
     assert_eq!(delta["to_run_id"], Value::Null);
 }
 
-/// P0-4（复盘解耦）：recap-refresh 类 run（collect 尾的四个数刷新）虽照常
+/// 复盘解耦：recap-refresh 类 run（collect 尾的四个数刷新）虽照常
 /// complete，但绝不进「相邻 complete」对照窗——夹心两条 refresh 后配对必须
 /// 仍是 (run-1, run-2)，「vs 上轮感知」不被「每日只收」稀释成无变化。
 #[test]

@@ -45,7 +45,7 @@ const ENRICH_SOURCE_PRIORITY: [(&str, i64); 3] = [("favorite", 0), ("dynamic", 1
 /// Python priority.get(source, 9) 的默认哨兵（未知来源永远排最后）。
 const ENRICH_PRIORITY_FALLBACK: i64 = 9;
 
-/// R2-F2：SingleViewer 模式的收面参数。`target_uid` 为 Some 时只处理与该 uid
+/// SingleViewer 模式的收面参数。`target_uid` 为 Some 时只处理与该 uid
 /// 相符的 viewer 文件（候选 bvid 与回写全收窄到目标单点），None = 全量照旧。
 pub fn enrich_video_metadata(
     client: &mut BilibiliClient,
@@ -54,11 +54,11 @@ pub fn enrich_video_metadata(
     target_uid: Option<&str>,
     emit: &mut dyn FnMut(&str),
 ) -> Result<Value, CollectError> {
-    // R2-F2：单查只吸收目标 uid 的 viewer 文件进 enrich——其余舰长（带 sources 的
+    // 单查只吸收目标 uid 的 viewer 文件进 enrich——其余舰长（带 sources 的
     // 旧壳）不参与候选、更不参与回写；否则每次单查都会给一堆旧舰长补 tags/
-    // platform_category → input_hash 全翻 → 大批 AI 重跑（Z5「重保 AI」语义破）。
+    // platform_category → input_hash 全翻 → 大批 AI 重跑（「重保 AI」语义破）。
     // 房间级 shared（platform_snapshot/streamer/room_comments/live_records/
-    // replay_danmaku）仍照常刷新——Z5 已把 captured_at 摘出 audience hash 件，
+    // replay_danmaku）仍照常刷新——已把 captured_at 摘出 audience hash 件，
     // 同内容重采不翻脸；且单查→audience 链需要 baseline 原料（本轮 collection
     // complete 门禁 + shared 语料），这些刷新属供给而非翻脸。
     let mut viewers = storage::load_viewers(root).map_err(CollectError::Storage)?;
@@ -150,7 +150,7 @@ pub fn enrich_video_metadata(
             .map_err(CollectError::Storage)?;
     }
 
-    // 回写 viewers（R2-F2：viewers 已在上方按 target_uid 收窄；Python：逐文件、变了才写）
+    // 回写 viewers（viewers 已在上方按 target_uid 收窄；Python：逐文件、变了才写）
     for viewer in &mut viewers {
         let mut changed = false;
         if let Some(sources) = viewer.get_mut("sources").and_then(Value::as_object_mut) {

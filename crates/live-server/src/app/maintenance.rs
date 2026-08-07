@@ -1,7 +1,7 @@
 //! 图维护缝（G1 / design §8.6 行 224-229）：
 //! POST /api/rooms/:uid/maintenance/entity_split|entity_merge。
 //!
-//! 自 `app.rs` 按头注 rooms/config/runs 条款拆出（r8-F2 兑现），路径零变化。
+//! 自 `app.rs` 按头注 rooms/config/runs 条款拆出，路径零变化。
 
 use axum::Json;
 use axum::extract::{Path, State};
@@ -24,7 +24,7 @@ fn maintenance_store(root: &std::path::Path) -> AppResult<GraphStore> {
     })
 }
 
-/// MaintenanceError → D3 错误形态：未知实体/mention=404，参数/归属语义=422，落库=500。
+/// MaintenanceError → 统一错误形态：未知实体/mention=404，参数/归属语义=422，落库=500。
 fn maintenance_fail(error: MaintenanceError) -> AppFail {
     match error {
         MaintenanceError::NotFound(message) => fail(StatusCode::NOT_FOUND, &message),

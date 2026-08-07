@@ -1,8 +1,8 @@
 /**
- * 个人树面（/tree）的 Z5c 时效位钉团——与 Viewers.test.tsx 同形三钉：
+ * 个人树面（/tree）的时效位钉团——与 Viewers.test.tsx 同形三钉：
  * - ai_stale=true → 感知/AI 区块亮「信源已更新·待重判」徽标（ai-stale-badge-tree）；
  * - ai_stale=false / null → 不亮（绿灯与无参考旧结论两面无差别安静）。
- * 断言一律 getByTestId 锚点（Z5 教训：文案与 note 可能同语撞车，不用文本全文匹配）。
+ * 断言一律 getByTestId 锚点（教训：文案与 note 可能同语撞车，不用文本全文匹配）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -102,7 +102,7 @@ describe("ViewerTree Episode 时间戳语义徽标（R2 批6 D7）", () => {
     expect(published.textContent).not.toContain("采集于");
     expect(collected.textContent).toContain("采集于");
     expect(collected.textContent).not.toContain("发布于");
-    // tooltip 文案钉（D7 验收原文）。
+    // tooltip 文案钉（时间戳徽标验收原文）。
     expect(published.getAttribute("title")).toBe("发布于=平台显示的行为时刻");
     expect(collected.getAttribute("title")).toBe("采集于=我们看到这条的时刻（非行为时刻）");
   });

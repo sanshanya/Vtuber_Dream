@@ -3,24 +3,24 @@
 //! ——失败行下轮重试）；deferred 不烧预算。消费产物落袋是 G2 账目消费器的管辖，
 //! 本通道只记数与状态。
 //!
-//! 体积备书（轮3）：超 500 线主因 = 六种线索例行的逐种落袋体 + 测试加深 60%+；
+//! 体积备书：超 500 线主因 = 六种线索例行的逐种落袋体 + 测试加深 60%+；
 //! 不拆线索消费器，和 JSONL 时态的单口记账语义保持一卷。
 //!
 //! 写回纪律（JSONL rewrite 的表同构物）：每行 UPDATE 即刻落库并即时响铃记数
-//! ——不虚报 leads_consumed（MXA-4 的表形态：写不回的行不计成功）。
+//! ——不虚报 leads_consumed（表形态：写不回的行不计成功）。
 
 use crate::bilibili::BilibiliClient;
 use crate::graph::store::Store;
 use crate::leads::{LeadStatus, LedgerRow};
 
-/// 单行为产抓取时每一种类型的条目快照上限（kickoff D5：search/creator 各自 8）。
+/// 单行为产抓取时每一种类型的条目快照上限（search/creator 各自 8）。
 pub const LEAD_RESULT_LIMIT: i64 = 8;
 /// search 型消费的排序口径（与 ResearchService 默认一致：综合排序）。
 pub const LEAD_SEARCH_ORDER: &str = "totalrank";
 
-/// 真实抓取映射（kickoff D5）。room/未知类型天生缺席 → 上层归 deferred。
+/// 真实抓取映射。room/未知类型天生缺席 → 上层归 deferred。
 ///
-/// MXA-3（r7）：本地图是账本被人工编辑后的第一站——入口做 locator 卫生
+/// 本地图是账本被人工编辑后的第一站——入口做 locator 卫生
 /// （trim + 空白拒），否则全空格 search 会被下游 trim 成空返回、假证 consumed
 /// （禁倒退终态永可不再入），尾空格行每轮烧预算重试至死。
 pub fn fetch_lead_yield(client: &mut BilibiliClient, row: &LedgerRow) -> Result<i64, String> {
@@ -59,7 +59,7 @@ pub const L1_AUTO_NOTE: &str = "L1 自动批准（collection.leads_autonomy=1）
 ///   无目标 uid，名册闸天然不适用。
 ///
 /// autonomy ≤ 0 → 秒返 0（L0 现状纯人工，一字不动，库不读不写）。
-/// MXA-4 同族：读库失败响铃返回 0；写回失败响铃（已翻行按实计数）。
+/// 同族：读库失败响铃返回 0；写回失败响铃（已翻行按实计数）。
 pub fn auto_approve_pending_leads(
     store: &Store,
     roster: &std::collections::BTreeSet<String>,
@@ -111,7 +111,7 @@ pub fn auto_approve_pending_leads(
 /// 按预算消费账本：只碰 `approved` 行；返回消费成功行数。
 /// fetch 失败 → 行保持 approved 并记 `resolution_note`（下轮重试）；预算 0 → 秒返。
 ///
-/// MXA-4：账本读写失败响铃（emit），绝不静默；写不回的行不计成功
+/// 账本读写失败响铃（emit），绝不静默；写不回的行不计成功
 /// （不虚报 leads_consumed）。
 pub fn consume_approved_leads(
     store: &Store,
@@ -263,7 +263,7 @@ mod tests {
         );
     }
 
-    /// Z7 补钉（R5-F2）：失败的尝试同样烧预算槽——两行 approved + 预算 1 + 恒 Err
+    /// 补钉：失败的尝试同样烧预算槽——两行 approved + 预算 1 + 恒 Err
     /// → fetch 恰被调用 1 次；k1 留痕、k2 未触碰；预算槽不可被「失败免烧」洞穿。
     #[test]
     fn failing_attempt_burns_budget_slot() {
@@ -349,7 +349,7 @@ mod tests {
         );
     }
 
-    /// MXA-4（r4-G-4）的表形态：写回失败 → 响铃 + 该行不计成功
+    /// 表形态：写回失败 → 响铃 + 该行不计成功
     /// （不谎报 leads_consumed）。确定性触发：预删目标行 → UPDATE 零命中即 Err。
     #[test]
     fn rewrite_failure_rings_and_does_not_count() {
@@ -377,7 +377,7 @@ mod tests {
         );
     }
 
-    /// MXA-3（r7）：空白 locator 在任何网络请求前被拒（不会假证 consumed）。
+    /// 空白 locator 在任何网络请求前被拒（不会假证 consumed）。
     #[test]
     fn blank_locator_rejected_before_any_request() {
         let mut client = BilibiliClient::with_origin(

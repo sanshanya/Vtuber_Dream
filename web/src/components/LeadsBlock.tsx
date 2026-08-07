@@ -1,10 +1,10 @@
 /**
- * leads 区块（M4.x 公示面 + G2-B 审批缝 + D9/R2-批6 拒绝面）。
+ * leads 区块（M4.x 公示面 + G2-B 审批缝 + 拒绝面）。
  * 五态计数徽标 + pending 明细直出；待审行带「批准/拒绝」钮（一击即飞；
  * data-testid=lead-approve-{dedupe_key} / lead-reject-{dedupe_key}）——
  * 动作本身由宿主页（Leads）经 POST 审批/拒绝缝承担，本块只做呈现与击发。
  *
- * D9: pending 按持有人（viewer_id）分组、组默认折叠（<details> 闭合态其内容仍
+ * pending 按持有人（viewer_id）分组、组默认折叠（<details> 闭合态其内容仍
  * 在 DOM 中——查询与一击操作不依赖视觉展开）；组头带「全批/全拒」组级钮
  * （前端逐行 fan-out，不造批量服务端面）。拒因面 = 行内可展开区（chip 白名单
  * = overview `leads.reject_chip_reasons` 直出——服务端唯一真源，前端不落第二份
@@ -13,7 +13,7 @@
  * rejected 明细直出（leads.rejected）：徽标即 <details>，展开逐行回看记录
  * 的 chip/note——只读事实面，绝不代行裁决。
  *
- * FE-F2：leads.summary 的 [lead_ledger] 裸文本不再上墙；空账显式空态一句；
+ * leads.summary 的 [lead_ledger] 裸文本不再上墙；空账显式空态一句；
  * 待审行 key = dedupe_key（非索引）；在飞期间钮禁且 onClick 自身再做 busy 护栏。
  */
 import { useState } from "react";
@@ -26,7 +26,7 @@ export interface LeadRow {
   viewer_id?: string;
   motivation?: string;
   priority?: string;
-  /** D9：拒绝留档面（rejected 明细直出；pending 行恒空）。 */
+  /** 拒绝留档面（rejected 明细直出；pending 行恒空）。 */
   reject_chips?: string[];
   reject_note?: string;
 }
@@ -43,9 +43,9 @@ export interface LeadsView {
   autonomy?: number;
   /** 账本直出行。 */
   pending?: LeadRow[];
-  /** D9：rejected 明细面（服务端 overview 直出；拒因留档可回看）。 */
+  /** rejected 明细面（服务端 overview 直出；拒因留档可回看）。 */
   rejected?: LeadRow[];
-  /** D9：拒因 chip 白名单（服务端 overview 直出 = live-core REJECT_CHIP_REASONS；
+  /** 拒因 chip 白名单（服务端 overview 直出 = live-core REJECT_CHIP_REASONS；
    *  唯一真源——缺席旧端回落空面，不在前端落第二份字面）。 */
   reject_chip_reasons?: string[];
 }
@@ -83,9 +83,9 @@ export function LeadsBlock({
   // 行内拒因编辑态：key = dedupe_key；手里选了 chip 但还没击「拒绝」不算动作。
   const [reasonChips, setReasonChips] = useState<Record<string, string[]>>({});
   const [reasonNote, setReasonNote] = useState<Record<string, string>>({});
-  // FE-F2/R1#1：空账 = 五态全零（summary 裸账本行不再上墙，人话面只留五态徽标）。
+  // 空账 = 五态全零（summary 裸账本行不再上墙，人话面只留五态徽标）。
   const ledgerEmpty = TOTAL_LABELS.every(([key]) => (totals[key] ?? 0) === 0);
-  // D9：pending 按持有人（viewer_id）分组；无主行收进「待归主」组——插入序保序。
+  // pending 按持有人（viewer_id）分组；无主行收进「待归主」组——插入序保序。
   const groups = pending.reduce<Map<string, LeadRow[]>>((acc, row) => {
     const holder = row.viewer_id ?? "待归主";
     const bucket = acc.get(holder) ?? [];
@@ -110,7 +110,7 @@ export function LeadsBlock({
         {TOTAL_LABELS.map(([key, label]) => {
           const value = totals[key] ?? 0;
           if (key === "rejected" && rejected.length > 0) {
-            // D9：badge 即 <details>——展开逐行回看记录拒因（只读事实面）。
+            // badge 即 <details>——展开逐行回看记录拒因（只读事实面）。
             return (
               <details key={key} className="badge" data-testid="leads-rejected">
                 <summary>
@@ -195,12 +195,12 @@ export function LeadsBlock({
                 </summary>
                 <ul className="delta-list">
                   {rows.map((row, i) => {
-                    // ag4-F6：leads 系工具产物快照——入 JSX 的键一律 String() 护栏。
+                    // leads 系工具产物快照——入 JSX 的键一律 String() 护栏。
                     const leadId = row.dedupe_key == null ? null : String(row.dedupe_key);
                     const chips = leadId ? (reasonChips[leadId] ?? []) : [];
                     const note = leadId ? (reasonNote[leadId] ?? "") : "";
                     return (
-                      // FE-F2/R3#7：列表 key = dedupe_key（身份随数据，不随索引漂移）。
+                      // 列表 key = dedupe_key（身份随数据，不随索引漂移）。
                       <li key={leadId ?? `no-key-${i}`}>
                         <span className="badge fact">{String(row.type ?? "?")}</span>{" "}
                         {String(row.locator ?? "?")}

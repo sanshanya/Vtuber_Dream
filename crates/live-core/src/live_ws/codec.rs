@@ -1,7 +1,7 @@
 //! 字节层：16 字节大端头切包/组装，版本 2/3 解压后的多包串联流展开。
 //!
-//! 协议真理源：bilibili-API-collect `docs/live/message_stream.md`（R2 执行单
-//! 2026-08-06 批 2 已核对）。合成字节流 fixture 即规格：本层全部验收钉在
+//! 协议真理源：bilibili-API-collect `docs/live/message_stream.md`（执行单
+//! 2026-08-06 已核对）。合成字节流 fixture 即规格：本层全部验收钉在
 //! `crates/live-core/tests/live_ws_codec.rs`，模块内不另设重复夹具。
 //!
 //! 线格式（全大端）：

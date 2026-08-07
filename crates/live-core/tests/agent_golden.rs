@@ -268,7 +268,7 @@ async fn golden_viewer_reject_then_accept() {
         "{trace_text}"
     );
     assert!(trace_text.contains("elapsed_ms"), "{trace_text}");
-    // reasoning 内容永不入 trace（红线 R5）
+    // reasoning 内容永不入 trace（红线）
     assert!(!trace_text.contains("先查实体候选"), "{trace_text}");
     assert!(!trace_text.contains("整理后提交初稿"), "{trace_text}");
 }
@@ -314,7 +314,7 @@ async fn golden_audience_happy_path() {
             "submit_audience_situation",
             json!({"submission": {
                 "executive_summary": "观众围绕塞尔达形成单一高粘社区，近期对新作内容需求上升。",
-                // Z5/C1：简报带真实入库 episode 引用（ep-a1 已于本 fixture upsert）。
+                // 简报带真实入库 episode 引用（ep-a1 已于本 fixture upsert）。
                 "front_brief": {"sentences": [{
                     "text": "舰长甲近期围绕《塞尔达》开荒实况持续活跃，新作需求升温。",
                     "episode_refs": ["ep-a1"],
@@ -419,7 +419,7 @@ async fn golden_audience_happy_path() {
     assert_eq!(outcome.submission.interest_graph.len(), 1);
     let accepted = slot_value.expect("终局接受必落槽");
     assert_eq!(accepted["interest_graph"][0]["entity_id"], json!("ent1"));
-    // Z5/C1：带有效 episode 引用的简报全链落槽（终局闭包过 episodes 桶闭包校验）。
+    // 带有效 episode 引用的简报全链落槽（终局闭包过 episodes 桶闭包校验）。
     assert_eq!(
         accepted["front_brief"]["sentences"][0]["episode_refs"][0],
         json!("ep-a1"),
@@ -568,7 +568,7 @@ async fn spawn_drop<T: Send + 'static>(value: T) {
         .expect("drop task");
 }
 
-/// R4：基础设施失败走 Fatal 通道——不白标为模型可修正的校验拒收，
+/// 基础设施失败走 Fatal 通道——不白标为模型可修正的校验拒收，
 /// 且槽位（submission/validation_errors）不被污染（Python SDK tool-error 通道镜像）。
 #[test]
 fn terminal_fatal_channel_on_store_failure() {

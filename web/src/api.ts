@@ -1,6 +1,6 @@
 /**
- * /api 客户端薄层（D3 端点表逐行兑现）。
- * run 记录与 config 面按真实响应收窄成接口；F3 批再把 overview/tree 两面收口成
+ * /api 客户端薄层（端点表逐行兑现）。
+ * run 记录与 config 面按真实响应收窄成接口；overview/tree 两面收口成
  * 分段接口（已知键给字面量，index signature 慎用）——分段与服务端 app.rs 的
  * json! 键一一对应；graph 体量大仍保持 loose，转发即渲染。
  */
@@ -13,7 +13,7 @@ import type { UsageRow } from "./format";
 const API_BASE = "/api";
 
 /**
- * 结构化错误：HTTP status + 用户可读文案（ag5-F4/F6）。
+ * 结构化错误：HTTP status + 用户可读文案。
  * Streamer 首页空态等分支用 status 判别，绝不再子串匹配 message。
  */
 export class ApiError extends Error {
@@ -52,7 +52,7 @@ export interface RunRecordView {
   events: string[];
 }
 
-/** Z6 件2：终局 outcome.budget_block 阻断面——服务端固定六键；前端只做
+/** 终局 outcome.budget_block 阻断面——服务端固定六键；前端只做
  *  presence 判别读取，数字不齐/缺键不臆造（renderer 见 BudgetBlockCard）。 */
 export interface BudgetBlock {
   spend_mode: string;
@@ -101,7 +101,7 @@ export function budgetBlockOf(outcome: unknown): BudgetBlock | null {
 export interface ViewerRow {
   uid: string;
   name: string | null;
-  /** Z3d：大航海身份面（face 为空串 → null 由服务端 as_str 直接漏空，前端须判空）。 */
+  /** 大航海身份面（face 为空串 → null 由服务端 as_str 直接漏空，前端须判空）。 */
   face: string | null;
   /** 大航海等级：3=舰长 / 2=提督 / 1=总督。 */
   guard_level: number | null;
@@ -109,9 +109,9 @@ export interface ViewerRow {
   collected_at: string | null;
   ai_status: string | null;
   ai_completed: boolean;
-  /** Z5c 时效位：true=旧 AI 结论的信源已更新（哈希翻），false=时效内绿灯，null=无参考旧结论。 */
+  /** 时效位：true=旧 AI 结论的信源已更新（哈希翻），false=时效内绿灯，null=无参考旧结论。 */
   ai_stale: boolean | null;
-  /** R2 批6 D10 四微件（缺件=null，前端落「未知」微行，绝不补文案/编数字）：
+  /** 四微件（缺件=null，前端落「未知」微行，绝不补文案/编数字）：
    *  第几次来（WS 场次窗到访计数；无记录=null 而非 0，没有在播窗数据≠没来过）。 */
   visit_count?: number | null;
   /** 距上次 N 天（末次 WS 到场整日数）。 */
@@ -123,7 +123,7 @@ export interface ViewerRow {
 }
 
 /**
- * /rooms/{uid}/overview 响应面（F3 收口：原 request<any> 收窄；R2#2/#3）。
+ * /rooms/{uid}/overview 响应面（F3 收口：原 request<any> 收窄）。
  * 分段与服务端 app.rs room_overview 的 json! 键一一对应；工件原样透传段
  * （streamer profile / live.records 行 / situation.analysis）保持窄形状，
  * 消费侧沿用 presence 判别，不补齐不存在的数字。
@@ -140,7 +140,7 @@ export interface OverviewView {
     count?: number;
     records?: Array<Record<string, unknown>>;
   } | null;
-  /** 图存量指标面（Z3 指标条）；无图态 → null（前端显「—」，不臆造数字）。 */
+  /** 图存量指标面（指标条）；无图态 → null（前端显「—」，不臆造数字）。 */
   graph_stats?: Record<string, number> | null;
   /** collection.json 透传（M4.x-T1 schema 冻结读取侧）。 */
   collection?: CollectionView;
@@ -148,9 +148,9 @@ export interface OverviewView {
   ai?: AiJobView;
   /** ai/situation.json 透传（audience 段产物）。 */
   situation?: SituationView;
-  /** P0-2（迭代细则 v1 §1）：ai/recap.json 透传；缺文件 → null（前端「复盘尚未生成」）。 */
+  /** 迭代细则 v1 §1 验收钉：ai/recap.json 透传；缺文件 → null（前端「复盘尚未生成」）。 */
   recap?: import("./components/RecapCard").RecapPayload | null;
-  /** Z5/C1：BriefingCard refs 归属解析面 episode_id → 归属观众+标题；无图态 → {}。 */
+  /** BriefingCard refs 归属解析面 episode_id → 归属观众+标题；无图态 → {}。 */
   episode_index?: Record<string, { viewer_id?: string; title?: string | null }>;
   /** G2 表形态读面唯一源（discovery_leads 表）；型单源在 LeadsBlock。 */
   leads?: LeadsView;
@@ -163,7 +163,7 @@ export interface CollectionView {
   started_at?: string | null;
   finished_at?: string | null;
   viewer_count?: number;
-  /** W2/r5-F3 合成标示写位（三处分段随工件周期漂移，前端析取不绑定单一来源位）。 */
+  /** 合成标示写位（三处分段随工件周期漂移，前端析取不绑定单一来源位）。 */
   synthetic_demo?: boolean;
   leads_consumed?: number;
 }
@@ -172,14 +172,14 @@ export interface AiJobView {
   status?: string | null;
   completed_at?: string | null;
   synthetic_demo?: boolean;
-  /** state.json.usage 原始五键（金额换算只在 format.ts，URL: D8 单屏单口径）。 */
+  /** state.json.usage 原始五键（金额换算只在 format.ts，URL: 单屏单口径）。 */
   usage?: UsageRow | null;
 }
 
 export interface SituationView {
   status?: string;
-  /** LLM 产物形状漂移（ag4-F6 无 schema 校验）——消费侧护栏取值。
-   *  R2 批5 D6 deprecated：前台直呈已退役； surviving 唯一消费=BriefingCard 的 front_brief。 */
+  /** LLM 产物形状漂移（无 schema 校验）——消费侧护栏取值。
+   *  deprecated：前台直呈已退役； surviving 唯一消费=BriefingCard 的 front_brief。 */
   analysis?: Record<string, unknown> | null;
   synthetic_demo?: boolean;
 }
@@ -220,7 +220,7 @@ export interface MentionRow extends MentionSpanLike {
 }
 
 /** 个人树面（/tree）：F3 收口——viewer/ai 按服务端组装形状给段，episodes/mentions
- * 行型安在本文件（消费面 ViewerTree.tsx import）。ai_stale 是 Z5c 时效位的确定性面。 */
+ * 行型安在本文件（消费面 ViewerTree.tsx import）。ai_stale 是时效位的确定性面。 */
 export interface ViewerTreeView {
   uid: string;
   viewer: ViewerPayload;
@@ -245,14 +245,14 @@ export interface ConfigView {
     base_url: string;
     model: string;
     api_key_present: boolean;
-    /** Z6 件5：第 5 白名单键回显；null = 未设闸（输入框留空 = 保持）。 */
+    /** 第 5 白名单键回显；null = 未设闸（输入框留空 = 保持）。 */
     run_budget_cny: number | null;
     [key: string]: unknown;
   };
   writable_keys: string[];
 }
 
-/** Z6 件3：GET /api/budget 响应面 = history.jsonl 的月度聚合（UTC 月界）。 */
+/** GET /api/budget 响应面 = history.jsonl 的月度聚合（UTC 月界）。 */
 export interface BudgetLastRun {
   run_id: string;
   ts: string;
@@ -262,7 +262,7 @@ export interface BudgetLastRun {
   spend_mode: string;
 }
 
-/** D8：主钮旁 D3 预估段（服务端 estimate_run_cost_cny 上限口径 + 常量墙钟带宽）。
+/** 主钮旁预估段（服务端 estimate_run_cost_cny 上限口径 + 常量墙钟带宽）。
  *  全 null = 名册缺/空/未采集——前端落「预估 —」不臆造。 */
 export interface BudgetEstimate {
   roster_viewers: number | null;
@@ -279,7 +279,7 @@ export interface BudgetInfo {
   month_cost_cny: number;
   month_runs: number;
   last_run: BudgetLastRun | null;
-  /** D8：主钮旁预估（normal_cny/etd_minutes 双空 → 「预估 —」）。 */
+  /** 主钮旁预估（normal_cny/etd_minutes 双空 → 「预估 —」）。 */
   estimate?: BudgetEstimate | null;
 }
 
@@ -290,7 +290,7 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
-  // ag5-F4：HTML 错误页/半截代理体曾直接崩 JSON.parse 成裸 SyntaxError 糊脸。
+  // HTML 错误页/半截代理体曾直接崩 JSON.parse 成裸 SyntaxError 糊脸。
   let payload: unknown = null;
   if (text.length > 0) {
     try {
@@ -330,7 +330,7 @@ export const api = {
   config: () => request<ConfigView>("GET", "/config"),
   putConfig: (body: unknown) => request<{ status: string; keys?: number }>("PUT", "/config", body),
   run: (id: string) => request<RunRecordView>("GET", `/runs/${encodeURIComponent(id)}`),
-  /** Z6 件5：spend_mode 只对带单人感知段的 kind 合法（= /api/runs 校验同源）。 */
+  /** spend_mode 只对带单人感知段的 kind 合法（= /api/runs 校验同源）。 */
   startRun: (body: {
     kind: RunKind;
     force?: boolean;
@@ -344,7 +344,7 @@ export const api = {
       "POST",
       `/rooms/${encodeURIComponent(roomId)}/leads/${encodeURIComponent(leadId)}/approve`,
     ),
-  /** D9/R2-批6 拒绝缝：状态机单行道 pending_approval → rejected；拒因体可选——
+  /** 拒绝缝：状态机单行道 pending_approval → rejected；拒因体可选——
    *  chips 白名单唯一真源在 live-core REJECT_CHIP_REASONS（前端 chip 面 = overview
    *  leads.reject_chip_reasons 下发，不落第二份字面）、note ≤80 字；
    *  全空拒因合法（服务端 NULL/NULL 留档）。幂等重放语义同 approve。 */
@@ -364,11 +364,11 @@ export const api = {
       `/rooms/${encodeURIComponent(roomId)}/leads/${encodeURIComponent(leadId)}/reject`,
       reasons,
     ),
-  /** R2 批6 D11：存档页（存活 + 周健康 + 里程碑日历——纯事实派生面，零 AI）。 */
+  /** 存档页（存活 + 周健康 + 里程碑日历——纯事实派生面，零 AI）。 */
   archive: () => request<ArchiveView>("GET", "/archive"),
 };
 
-/** Z4 动作平面：六 kind 字面冻结（与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源）。 */
+/** 动作平面：六 kind 字面冻结（与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源）。 */
 export const RUN_KIND_LABELS = {
   full: "全量感知",
   viewer: "单舰长感知",
@@ -380,7 +380,7 @@ export const RUN_KIND_LABELS = {
 
 export type RunKind = keyof typeof RUN_KIND_LABELS;
 
-/** Z6 件5：spend_mode 字面（= registry SpendMode 的 incremental/briefing_only 两发射极）。 */
+/** spend_mode 字面（= registry SpendMode 的 incremental/briefing_only 两发射极）。 */
 export type RunSpendMode = "incremental" | "briefing_only";
 
 /** 服务端 409 错文「已有进行中的 run（{id}），…」的在飞 id 抽取（nil → 纯报错面）。 */
@@ -390,7 +390,7 @@ export function activeRunIdFrom(message: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// 存档页（R2 批6 D11）：GET /api/archive 面——里程碑日历规则全在服务端
+// 存档页：GET /api/archive 面——里程碑日历规则全在服务端
 // (crates/live-server/src/app/archive.rs) 计算成文，前端纯渲染，仅 presence 判别。
 // ---------------------------------------------------------------------------
 

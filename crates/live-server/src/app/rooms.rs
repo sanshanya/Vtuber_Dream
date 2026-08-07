@@ -1,6 +1,6 @@
 //! 房间数据面：overview / viewers / tree + leads 审批缝（B2/G2-B）。
 //!
-//! 自 `app.rs` 按头注 rooms/config/runs 条款拆出（r8-F2 兑现）——共享面
+//! 自 `app.rs` 按头注 rooms/config/runs 条款拆出——共享面
 //! （fail/AppResult/load_config/data_root/守卫/open_graph）留根卷，路径零变化。
 
 use std::path::PathBuf;
@@ -15,7 +15,7 @@ use super::{
     room_guard, uid_charset_legal, vid_guard,
 };
 
-/// 读面统一走 live_core::storage（轮2-R1-B3）：文件缺席 = None（合法空态）；
+/// 读面统一走 live_core::storage：文件缺席 = None（合法空态）；
 /// 文件在但 JSON 损坏 = 响亮 eprintln 后仍按 None 空态处理——九个调用点全是
 /// 「读到就用、读不到就空态」语义，静默吞损坏违反 AGENTS.md，故在收窄点报响。
 fn read_json(path: &std::path::Path) -> Option<Value> {
@@ -30,7 +30,7 @@ fn read_json(path: &std::path::Path) -> Option<Value> {
 
 pub(super) async fn rooms_list(State(state): State<AppState>) -> AppResult<Json<Value>> {
     let config = load_config(&state)?;
-    // D3：现布局单房间——uid 暂恒等于 config 房号（路径形是设计承诺，非多房间实现）。
+    // 现布局单房间——uid 暂恒等于 config 房号（路径形是设计承诺，非多房间实现）。
     Ok(Json(json!([{
         "id": config.bilibili.room_id,
         "project_name": config.project_name,
@@ -50,7 +50,7 @@ pub(super) async fn room_overview(
     State(state): State<AppState>,
     Path(uid): Path<String>,
 ) -> AppResult<Json<Value>> {
-    // 轮2-R1-B2：本体全同步（config/文件读 + rusqlite 三路 + 投影）——
+    // 本体全同步（config/文件读 + rusqlite 三路 + 投影）——
     // 收进 spawn_blocking，与 compute_graph_bytes/ensure_graph_artifact 同款姿态，
     // 不再卡 tokio executor。
     tokio::task::spawn_blocking(move || room_overview_blocking(&state, &uid))
@@ -89,15 +89,15 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
         Some(store) => live_core::graph::query::run_pair_delta(store).map_err(internal)?,
         None => serde_json::from_str(BASELINE_DELTA).expect("literal parses"),
     };
-    // Z3 首页指标条：无图态 → null 空态（前端呈现「—」而非臆造数字）。
+    // 首页指标条：无图态 → null 空态（前端呈现「—」而非臆造数字）。
     let graph_stats = match &store {
         Some(store) => Some(live_core::graph::query::graph_stats(store).map_err(internal)?),
         None => None,
     };
-    // Z5/C1：BriefingCard refs 可点的归属解析面——episode_id → {viewer_id, title, source}。
+    // BriefingCard refs 可点的归属解析面——episode_id → {viewer_id, title, source}。
     // 轻量投影（GRAPH_QUERY_LIMIT=500 帽，超出部分 ref 落未解析态、chip 不可点），
     // 不抄整行（fields/platform_facts 大键留在 tree/graph 端点）。
-    // R2 批5 D5：source 同行透出——芯片副文本 = Episode 类型词（动态/投稿/弹幕…），
+    // source 同行透出——芯片副文本 = Episode 类型词（动态/投稿/弹幕…），
     // 不再拿标题当持有人。
     let episode_index: Value = match &store {
         Some(store) => {
@@ -121,28 +121,28 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
         "room_id": config.bilibili.room_id,
         "streamer_uid": config.bilibili.streamer_uid,
         "project_name": config.project_name,
-        // 主播卡数据面（Z2 主页签名）：streamer.json 的 profile 段原样透传——
+        // 主播卡数据面（主页签名）：streamer.json 的 profile 段原样透传——
         // sources.videos 属事实层原料且体大，不上 overview 面；缺文件 → null 空态。
         "streamer": read_json(&root.join("streamer.json"))
             .and_then(|v| v.get("profile").cloned()),
         // 直播数据页档案面：shared/live_records.json 整场记录原样透传
         //（status/count/records[]；空态 status="empty" 由前端解说）。
         "live": read_json(&root.join("shared").join("live_records.json")),
-        // Z3：图存量指标面（旧版报告顶部数字条）。
+        // 图存量指标面（旧版报告顶部数字条）。
         "graph_stats": graph_stats,
-        // P0-2（迭代细则 v1 §1）：下播复盘卡——pipeline 落盘的 ai/recap.json
+        //（迭代细则 v1 §1）下播复盘卡——pipeline 落盘的 ai/recap.json
         // 原样透传（四纯规则数 + AI 命名件 + 未知行）。缺文件 → null：前端呈现
-        // 「复盘尚未生成」而非臆造（与 Z3-4 没有任何猜测）。
+        // 「复盘尚未生成」而非臆造（同一零猜测纪律）。
         "recap": read_json(&root.join("ai").join("recap.json")),
-        // Z5/C1：BriefingCard ref → 归属观众树页的解析索引（无图态 → {} 空态）。
+        // BriefingCard ref → 归属观众树页的解析索引（无图态 → {} 空态）。
         "episode_index": episode_index,
         "collection": collection,
         "ai": read_json(&root.join("ai").join("state.json")),
-        // R2 批5 D6（deprecated）：situation 保留 = BriefingCard 的 front_brief 数据源
+        // situation 保留（deprecated）= BriefingCard 的 front_brief 数据源
         // （API 兼容）；「态势项」胶囊/宏观折叠组等前台直呈已整段退役——勿新挂直呈消费。
         "situation": read_json(&root.join("ai").join("situation.json")),
         "leads": {
-            // R3-F2：summary 键零消费者（FE 不渲、真消费者是 pipeline annex）——砍。
+            // summary 键零消费者（FE 不渲、真消费者是 pipeline annex）——砍。
             "totals": {
                 "pending_approval": count(live_core::leads::LeadStatus::PendingApproval),
                 "approved": count(live_core::leads::LeadStatus::Approved),
@@ -155,12 +155,12 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
             "pending": rows.iter()
                 .filter(|r| r.status == live_core::leads::LeadStatus::PendingApproval)
                 .collect::<Vec<_>>(),
-            // D9：rejected 明细直出（含拒因留档；前端 rejected 徽标展开可回看
+            // rejected 明细直出（含拒因留档；前端 rejected 徽标展开可回看
             // 记录的 chip/note——只读事实面，绝不代行裁决）。
             "rejected": rows.iter()
                 .filter(|r| r.status == live_core::leads::LeadStatus::Rejected)
                 .collect::<Vec<_>>(),
-            // D9：拒因 chip 白名单下发——前端 chip 面与 reject 端点校验唯一同源
+            // 拒因 chip 白名单下发——前端 chip 面与 reject 端点校验唯一同源
             // （live-core REJECT_CHIP_REASONS），不落第二份字面。
             "reject_chip_reasons": live_core::leads::REJECT_CHIP_REASONS,
             // G2-B：自治位读取面（Leads 页标题行 L1 状态徽标）
@@ -177,7 +177,7 @@ pub(super) async fn room_viewers(
     let config = load_config(&state)?;
     room_guard(&config, &uid)?;
     let root = data_root(&state)?;
-    // R2 批6 D10（舰长卡→关系卡）：四微件的数据口（graph 在才开库的只读面）。
+    //「舰长卡→关系卡」四微件的数据口（graph 在才开库的只读面）。
     let store = open_graph(&root);
     let today_secs = live_core::episodes::now_unix_secs();
     let viewers_dir = root.join("viewers");
@@ -205,7 +205,7 @@ pub(super) async fn room_viewers(
                 .join("viewers")
                 .join(format!("{uid}.json")),
         );
-        // R2 批6 D10：出勤面每行一查（COUNT DISTINCT + MAX 双聚合一路返回）。
+        // 出勤面每行一查（COUNT DISTINCT + MAX 双聚合一路返回）。
         let presence = store
             .as_ref()
             .and_then(|s| live_core::graph::query::room_presence(s, &uid).ok());
@@ -213,7 +213,7 @@ pub(super) async fn room_viewers(
             "uid": uid,
             "name": viewer["viewer"]["name"].as_str()
                 .or_else(|| viewer["profile"]["name"].as_str()),
-            // Z3：大航海 API 一发即带的身份面（旧版站的舰长签名：头像+舰长等级+勋章）——
+            // 大航海 API 一发即带的身份面（旧版站的舰长签名：头像+舰长等级+勋章）——
             // face 是 hdslb 图床 URL，呈现侧须 referrerPolicy="no-referrer"。
             "face": viewer["viewer"]["face"].as_str()
                 .or_else(|| viewer["profile"]["face"].as_str()),
@@ -223,12 +223,12 @@ pub(super) async fn room_viewers(
             "ai_status": cached.as_ref().map(|c| c["status"].clone()),
             // 空池引导位约定：front-end 按 completed=false + viewer 数=0 渲染引导。
             "ai_completed": cached.as_ref().is_some_and(|c| c["status"] == "complete"),
-            // Z5c 时效位：旧 AI 结论保留但信源已变 → 行面亮「信源已更新·待重判」。
+            // 时效位：旧 AI 结论保留但信源已变 → 行面亮「信源已更新·待重判」。
             // null（无参考旧结论 / 非 complete）与 false（绿灯时效内）区分。
             "ai_stale": cached
                 .as_ref()
                 .and_then(|c| live_core::agent::pipeline::viewer_perception_stale(&config, &viewer, c)),
-            // R2 批6 D10 四微件（缺件 = null，前端落「未知」微行，绝不补文案/编数字）：
+            // 四微件（缺件 = null，前端落「未知」微行，绝不补文案/编数字）：
             // ① 第几次来 = WS 场次窗到访计数（无库/无记录 → null ≠ 0 次）；
             "visit_count": presence
                 .and_then(|(visits, _)| (visits > 0).then_some(visits)),
@@ -284,7 +284,7 @@ pub(super) async fn viewer_tree(
             .join("viewers")
             .join(format!("{vid}.json")),
     );
-    // Z5c 时效位：与 room_viewers 行完全同源——cached 存在且 complete 才判哈希；
+    // 时效位：与 room_viewers 行完全同源——cached 存在且 complete 才判哈希；
     // true=信源已更新待重判 / false=时效内绿灯 / null=无参考旧结论。
     let ai_stale = cached
         .as_ref()
@@ -311,9 +311,9 @@ pub(super) async fn viewer_tree(
 /// 唯一裁决点）：
 /// - 正常翻转：读行 → 改状态 → `update_lead_row` 受控落库；
 /// - 幂等重放：已 approved → 200 相同终态，表行不动；
-/// - 不存在（lead_id 未知 / 房间错 / 穿透形 id）→ 404（D3 错误形态）；
+/// - 不存在（lead_id 未知 / 房间错 / 穿透形 id）→ 404（统一错误形态）；
 /// - 非法迁移（consumed/rejected/deferred 源态）→ 422，错文讲规则 + 当前状态；
-/// - MXA-1 延伸：账本迁移守卫失败（旧 JSONL 含坏行）→ 500 响铃，绝不带病写。
+/// - 账本迁移守卫失败（旧 JSONL 含坏行）→ 500 响铃，绝不带病写。
 pub(super) async fn lead_approve(
     State(state): State<AppState>,
     Path((uid, lead_id)): Path<(String, String)>,
@@ -353,7 +353,7 @@ pub(super) async fn lead_approve(
 }
 
 // ---------------------------------------------------------------------------
-// leads 拒绝缝（D9/R2-批6）：POST /api/rooms/:uid/leads/:lead_id/reject
+// leads 拒绝缝：POST /api/rooms/:uid/leads/:lead_id/reject
 // ---------------------------------------------------------------------------
 
 /// `lead_id` = 账本行 `dedupe_key`（与 approve 同身份口径）。
@@ -365,14 +365,14 @@ pub(super) async fn lead_approve(
 ///   reject_chips_json / reject_note 两列受控落库（全空 = NULL/NULL 合法空态）；
 /// - 幂等重放：已 rejected 且同参（或空参）→ 200 相同终态，表行不动；
 ///   已 rejected 但带相异非空参 → 422（终态留档不可改写，错文讲规则）；
-/// - 不存在（lead_id 未知 / 房间错 / 穿透形 id）→ 404（D3 错误形态）；
+/// - 不存在（lead_id 未知 / 房间错 / 穿透形 id）→ 404（统一错误形态）；
 /// - 非法迁移（consumed/approved/deferred 源态）→ 422，错文讲规则 + 当前状态；
 /// - chips 出白名单 / 超 REJECT_CHIP_CAP / note 超 REJECT_NOTE_CAP → 422；
-/// - MXA-1 延伸：账本迁移守卫失败（旧 JSONL 含坏行）→ 500 响铃，绝不带病写。
+/// - 账本迁移守卫失败（旧 JSONL 含坏行）→ 500 响铃，绝不带病写。
 pub(super) async fn lead_reject(
     State(state): State<AppState>,
     Path((uid, lead_id)): Path<(String, String)>,
-    // D9：体可选——None / 空体 = 全空拒因（合法）。不套 Option<JsonBody<T>>：
+    // 体可选——None / 空体 = 全空拒因（合法）。不套 Option<JsonBody<T>>：
     // 它会把坏 JSON 吞成 None（静默放过坏参）；这里拿原始字节自行判别——
     // 空体空参放行，坏 JSON 显式 422（规格外自裁）。
     body: Option<axum::body::Bytes>,
@@ -407,7 +407,7 @@ pub(super) async fn lead_reject(
         store.update_lead_row(&row).map_err(internal)?;
     } else {
         // 已 rejected 终态：空参（无新信息）或与现档同参 → 幂等重放不写表；
-        // 相异非空参意味改写留档 → 422 讲规则（D9 规格「拒因不可覆盖」）。
+        // 相异非空参意味改写留档 → 422 讲规则（规格「拒因不可覆盖」）。
         if !(chips.is_empty() && note.is_empty())
             && (chips != row.reject_chips || note != row.reject_note)
         {
@@ -426,7 +426,7 @@ pub(super) async fn lead_reject(
     })))
 }
 
-/// D9：reject 体解析与拒因规范化——体缺省/空体 → 全空拒因；坏 JSON/非对象
+/// reject 体解析与拒因规范化——体缺省/空体 → 全空拒因；坏 JSON/非对象
 /// → 422；chips 逐项 trim 后必须命中白名单（任一脱靶 → 422，附当前脱靶项）、
 /// 数量 > REJECT_CHIP_CAP → 422；note trim 后 > REJECT_NOTE_CAP 字 → 422。
 /// 返回 (chips, note)：全空 = (Vec::new(), String::new())——写面落 NULL/NULL。

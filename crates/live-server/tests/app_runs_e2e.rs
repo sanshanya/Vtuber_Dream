@@ -212,7 +212,7 @@ impl Respond for DynamicSubmit {
             .as_array()
             .and_then(|m| m.get(1))
             .and_then(|m| m["content"].as_str());
-        // R2 尾门归并面：识别后立即回空计划（不占 cell），算一次请求即可终局。
+        // 尾门归并面：识别后立即回空计划（不占 cell），算一次请求即可终局。
         if let Some(c) = content
             && c.starts_with("当前长期实体注册表共")
         {
@@ -359,8 +359,8 @@ fn read(path: &Path) -> Value {
 /// 从 collect 落定后的 out_dir 惰性推导 viewer/audience 双终局提交体
 /// （episode/mention/entity id 与 live-core mint 公式同一算法）。
 /// 返回 (viewer_submission, audience_submission)。
-/// SingleViewer("1003") scoped 直采公共件（删码专项 ID-4：原三处逐字同形）。
-/// W2-C1 纪律载体：blocking client 绝不能在 async ctx 直调——scoped 线程卸出去。
+/// SingleViewer("1003") scoped 直采公共件（原三处逐字同形）。
+/// 纪律载体：blocking client 绝不能在 async ctx 直调——scoped 线程卸出去。
 fn collect_single_viewer_once(host: &str, config: &live_core::config::Config) {
     let host = host.to_string();
     std::thread::scope(|scope| {
@@ -605,7 +605,7 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
         "events 次序错乱：{events:?}"
     );
 
-    // wiremock 双侧请求证真：viewer + audience + R2 尾门归并（本轮铸了新实体）。
+    // wiremock 双侧请求证真：viewer + audience + 尾门归并（本轮铸了新实体）。
     let llm_requests = llm.received_requests().await.expect("llm requests");
     assert_eq!(
         llm_requests.len(),
@@ -653,7 +653,7 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
 }
 
 // ---------------------------------------------------------------------------
-// Z4 动作平面 e2e：collect_streamer 事实层终局 / ai_viewers 停点 / ai_audience 续跑
+// 动作平面 e2e：collect_streamer 事实层终局 / ai_viewers 停点 / ai_audience 续跑
 // ---------------------------------------------------------------------------
 
 fn build_zip_fixture(
@@ -702,7 +702,7 @@ fn run_terminal(run_id: &str, registry: &Registry, timeout: Duration) -> Value {
     snapshot
 }
 
-/// Z4a：collect_streamer = 事实层终局——主播产物在位、观众面不生、AI 面未涉、无需 LLM。
+/// collect_streamer = 事实层终局——主播产物在位、观众面不生、AI 面未涉、无需 LLM。
 #[tokio::test(flavor = "multi_thread")]
 async fn staged_collect_streamer_is_facts_only_terminal() {
     let bilibili = MockServer::start().await;
@@ -744,7 +744,7 @@ async fn staged_collect_streamer_is_facts_only_terminal() {
         "collect_streamer 不得涉 AI 状态面"
     );
 
-    // P0-4（复盘解耦）：事实层终局即 T0 出卡——四个数是语料纯规则，零 AI；
+    // 复盘解耦：事实层终局即 T0 出卡——四个数是语料纯规则，零 AI；
     // 命名仍属认知层（缺位 null），出卡足迹进 events。
     let recap = read(&out_dir.join("ai").join("recap.json"));
     assert!(
@@ -765,7 +765,7 @@ async fn staged_collect_streamer_is_facts_only_terminal() {
     );
 }
 
-/// Z4b/c：同一份采集面先 ai_viewers（收口到 viewer 阶段停点、态势不动），
+/// 同一份采集面先 ai_viewers（收口到 viewer 阶段停点、态势不动），
 /// 再 ai_audience（观众哈希命中短路过，平稳入 audience 落定态势）。
 #[tokio::test(flavor = "multi_thread")]
 async fn staged_ai_viewers_stops_then_ai_audience_completes_situation() {
@@ -789,7 +789,7 @@ async fn staged_ai_viewers_stops_then_ai_audience_completes_situation() {
 
     // 布景：不经服务端，直接同模式落一次采集面（SingleViewer=1003——本布景 yaml 无
     // additional_viewer_ids，Guards 空名单会拒采；单查种子自带 1003 即够生成采集面）。
-    // 纪律（W2-C1 同刃）：blocking client 绝不能在 async ctx 直调——scoped 线程卸出去。
+    // 纪律：blocking client 绝不能在 async ctx 直调——scoped 线程卸出去。
     let config = live_core::config::load_config(&config_path).expect("config loads");
     collect_single_viewer_once(&bilibili.uri(), &config);
     assert!(
@@ -846,10 +846,10 @@ async fn staged_ai_viewers_stops_then_ai_audience_completes_situation() {
 }
 
 // ---------------------------------------------------------------------------
-// Z5 重采保 AI 全链钉
+// 重采保 AI 全链钉
 // ---------------------------------------------------------------------------
 
-/// Z5 前置真因钉（引擎层、零 LLM）：同一 mock 两轮同模式采集 → per-viewer
+/// 前置真因钉（引擎层、零 LLM）：同一 mock 两轮同模式采集 → per-viewer
 /// input_hash 必须逐字节稳定（complete_cache 跨采集复用的物理前提）。
 /// 不稳 → 直接打印 input_payload 顶键 diff，当场出真凶。
 #[tokio::test(flavor = "multi_thread")]
@@ -953,7 +953,7 @@ async fn staged_recollect_keeps_ai_cache_and_second_ai_run_reuses_zero_llm() {
         "首轮 ai_viewers 应恰好 1 次 viewer 提交"
     );
 
-    // ── 同数据重采（Z5 主钉）：ai/ 现场实体零碾平 ──
+    // ── 同数据重采（主钉）：ai/ 现场实体零碾平 ──
     collect_single_viewer_once(&bilibili_host, &config);
     assert!(
         out_dir.join("ai/state.json").exists(),
@@ -1036,7 +1036,7 @@ async fn staged_recollect_keeps_ai_cache_and_second_ai_run_reuses_zero_llm() {
 // ---------------------------------------------------------------------------
 
 /// viewer 阶段完整走完 + audience 终局 500 → finalize(failed, partial=true)，
-/// 且 ai/state.json 契约键 viewer_stage_status=complete 现场可查（ag3-F1 的端到端面）。
+/// 且 ai/state.json 契约键 viewer_stage_status=complete 现场可查（partial 契约键的端到端面）。
 #[tokio::test(flavor = "multi_thread")]
 async fn single_viewer_run_audience_failure_marks_partial_true() {
     let bilibili = MockServer::start().await;
@@ -1151,7 +1151,7 @@ async fn single_viewer_run_audience_failure_marks_partial_true() {
 /// 尾段按预算消费该 creator lead，wiremock /x/space/wbi/arc/search 以 mid=3001
 /// 命中并返还 1 条投稿 → 行转 consumed、yield_count>0、collection.json
 /// complete + leads_consumed=1、viewers/1003.json 重建；同时 ai/ 缓存与账本
-/// 跨轮存续（Z5：reset_output 白名单外，屠刀不碰），LLM 面零新增（事实未变→
+/// 跨轮存续（reset_output 白名单外，屠刀不碰），LLM 面零新增（事实未变→
 /// 哈希命中、缓存全复用）。
 #[tokio::test(flavor = "multi_thread")]
 async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
@@ -1278,7 +1278,7 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
         "审批缝翻转已落账本"
     );
 
-    // Z5 前置快照：ai/ 缓存字节（重采后必须逐字节不变）。
+    // 前置快照：ai/ 缓存字节（重采后必须逐字节不变）。
     let ai_state_before = std::fs::read(out_dir.join("ai/state.json")).unwrap();
     let ai_situation_before = std::fs::read(out_dir.join("ai/situation.json")).unwrap();
 
@@ -1332,7 +1332,7 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
         "轮二采集应重建 viewers/1003.json"
     );
 
-    // Z5：重采保 AI——ai/ 缓存字节级原样（reset_output 白名单外）。
+    // 重采保 AI——ai/ 缓存字节级原样（reset_output 白名单外）。
     assert_eq!(
         std::fs::read(out_dir.join("ai/state.json")).unwrap(),
         ai_state_before,
@@ -1363,7 +1363,7 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
             .join("\n")
     );
 
-    // LLM 面零新增：全程恰 1 次 viewer + 1 次 audience 终局提交 + R2 尾门归并 1 次。
+    // LLM 面零新增：全程恰 1 次 viewer + 1 次 audience 终局提交 + 尾门归并 1 次。
     // （轮二 collect_guards 不涉 AI 层 LLM；reconcile 属 viewer 轮内的尾门行为。）
     assert_eq!(
         llm.received_requests().await.expect("llm requests").len(),
@@ -1383,10 +1383,10 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
 }
 
 // ---------------------------------------------------------------------------
-// Z6 件4 e2e：预算闸阻断卡（wiremock 双面 + oneshot）三相位
+// 预算闸阻断卡 e2e（wiremock 双面 + oneshot）三相位
 // ---------------------------------------------------------------------------
 
-/// R2 批4 D3 预算闸端到端：kind=full 单观众 1003（additional_viewer_ids 种子；
+/// 预算闸端到端：kind=full 单观众 1003（additional_viewer_ids 种子；
 /// fresh=1/total=1 → 预估 = 1×¥1.5 人均 + ¥1.5 audience 平段 = ¥3.0）——
 /// 相位一：budget=0.01 → 阻断 failed，outcome.budget_block 数字面齐备，AI 面零请求；
 /// 相位二：同预算 + briefing_only → 仍阻断（block.spend_mode=briefing_only 随行记账）；
@@ -1490,7 +1490,7 @@ async fn budget_gate_blocks_then_briefing_only_passes_to_done() {
     // 栏目——audience_structure 是自由字符串列表，天然零引用，够格充当该栏目；
     // executive_summary 满足 min-len。填格必须在 POST 前——本 run 的 Guards 采集
     // 会 reset_output 清 viewers/，POST 后再 derive 会读到空目录；且零实体引用
-    // 无从触发 R2 归并面第二次 LLM。
+    // 无从触发尾门归并面第二次 LLM。
     fill(
         &cell,
         "audience",

@@ -172,7 +172,7 @@ async fn put_with_only_blank_values_is_unchanged_noop() {
     assert_eq!(std::fs::read_to_string(&fx.config_path).unwrap(), original);
 }
 
-/// 轮2-R1-A③ 钉：拼错键+空串不得静默绕过白名单闸——
+/// 拼错键+空串不得静默绕过白名单闸——
 /// 修前 `(_, true) => {}` 对任意键吞空串；「空串=保持现值」只对白名单键有语义。
 #[tokio::test(flavor = "multi_thread")]
 async fn put_with_unknown_key_and_blank_value_is_422_not_noop() {
@@ -269,13 +269,13 @@ async fn existing_dist_serves_index() {
 }
 
 // ---------------------------------------------------------------------------
-// R5-yellow：demo→HTML 一体化（site 挂 M5 之后，run --demo 的数据面↔页面骨架同端）
+// demo→HTML 一体化（site 挂 M5 之后，run --demo 的数据面↔页面骨架同端）
 // ---------------------------------------------------------------------------
 
-/// R5-yellow 钉 demo：run --demo 的数据面（data_root = build_demo 产物）与页面骨架
+/// 钉 demo：run --demo 的数据面（data_root = build_demo 产物）与页面骨架
 /// （web_root = dist）必须同在一个 app 实例、同一端口两面可达——demo 是「历史数据
 /// 一体呈现」的完整形态，不是只有 API 的数据桩。不钉出什么：dist 路由改名 / 产物
-/// 注入失效会在这里静默回归（页面 200 但内容不再是 index，D5 有先例）。
+/// 注入失效会在这里静默回归（页面 200 但内容不再是 index，demo 面有先例）。
 #[tokio::test(flavor = "multi_thread")]
 async fn demo_serve_closes_page_skeleton_and_data_surface() {
     let tmp = tempfile::tempdir().unwrap();
@@ -369,10 +369,10 @@ async fn overview_without_collection_is_404() {
 }
 
 // ---------------------------------------------------------------------------
-// X1 修复批钉团（8-agent 盲评裁定）
+// 修复批钉团（8-agent 盲评裁定）
 // ---------------------------------------------------------------------------
 
-/// ag2-F2/X1-b：非字符串值（数字/布尔/null）一律 422——曾被
+/// 非字符串值（数字/布尔/null）一律 422——曾被
 /// `as_str().unwrap_or_default()` 沉默成「空串 = 保持」。
 #[tokio::test(flavor = "multi_thread")]
 async fn config_put_rejects_non_string_values_422_and_untouched() {
@@ -396,7 +396,7 @@ async fn config_put_rejects_non_string_values_422_and_untouched() {
     }
 }
 
-/// ag2-F3/X1-c：多行值拒绝——行级重写只承载单行 scalar（块标量会撕裂布局），且原文件不动。
+/// 多行值拒绝——行级重写只承载单行 scalar（块标量会撕裂布局），且原文件不动。
 #[tokio::test(flavor = "multi_thread")]
 async fn config_put_rejects_multiline_values_422_and_untouched() {
     let fx = fixture(None);
@@ -418,7 +418,7 @@ async fn config_put_rejects_multiline_values_422_and_untouched() {
     );
 }
 
-/// ag2-F3/X1-c：原子写成功路径不留 tmp 残渣，失败路径同样清洁。
+/// 原子写成功路径不留 tmp 残渣，失败路径同样清洁。
 #[tokio::test(flavor = "multi_thread")]
 async fn config_put_atomic_write_leaves_no_tmp_residue() {
     let fx = fixture(None);
@@ -447,7 +447,7 @@ async fn config_put_atomic_write_leaves_no_tmp_residue() {
     assert!(residue.is_empty(), "tmp 残渣：{residue:?}");
 }
 
-/// ag6-F1/X3：D9 魔数与状态机字面的持久钉——盲评裁定「命名魔数必须有测试」，
+/// 魔数与状态机字面的持久钉——盲评裁定「命名魔数必须有测试」，
 /// 本钉把数值/字面锁到现形；有意调整需先改钉并说明。
 #[test]
 fn named_security_knobs_and_state_machine_litera_pin() {
@@ -487,7 +487,7 @@ fn named_security_knobs_and_state_machine_litera_pin() {
 }
 
 // ---------------------------------------------------------------------------
-// Z6 件3：history.jsonl 实耗账 + GET /api/budget
+// history.jsonl 实耗账 + GET /api/budget
 // ---------------------------------------------------------------------------
 
 /// ts 前 7 字符 = "YYYY-MM"（UTC 月界，代码里 `&now_iso()[..7]` 即此口径）。
@@ -502,7 +502,7 @@ fn previous_month(now: &str) -> String {
     }
 }
 
-/// Z6 件3 钉（a）：读到坏行跳过、只按 UTC 月界聚合 cost，last_run 取最后有效行。
+/// 钉（a）：读到坏行跳过、只按 UTC 月界聚合 cost，last_run 取最后有效行。
 #[tokio::test(flavor = "multi_thread")]
 async fn budget_get_monthly_sum_tolerates_bad_lines_and_crosses_months() {
     let fx = fixture(None);
@@ -546,7 +546,7 @@ async fn budget_get_monthly_sum_tolerates_bad_lines_and_crosses_months() {
     assert_eq!(last["spend_mode"], "incremental");
 }
 
-/// Z6 件3 钉（b）：无 budget 行 → null；有 budget 行 → Some（前端「未设预算」分支）。
+/// 钉（b）：无 budget 行 → null；有 budget 行 → Some（前端「未设预算」分支）。
 #[tokio::test(flavor = "multi_thread")]
 async fn budget_get_exposes_null_then_some_budget_cny() {
     let fx = fixture(None);
@@ -591,7 +591,7 @@ async fn budget_get_exposes_null_then_some_budget_cny() {
     assert_eq!(body["budget_cny"], 2.0, "{body}");
 }
 
-/// Z6 件3 钉（c）：collect_* 无 ai/state.json → usage 四零 + cost 0——
+/// 钉（c）：collect_* 无 ai/state.json → usage 四零 + cost 0——
 /// 账本诚实记账的最朴素姿势（不臆造任何 AI 消耗）。
 #[test]
 fn append_history_line_for_collect_kind_records_zero_usage() {
@@ -625,7 +625,7 @@ fn append_history_line_for_collect_kind_records_zero_usage() {
     );
 }
 
-/// Z6 件3 钉（c-2）：有 ai/state.json 的 run 按 usage 记 cost_cny（成本公式复算），
+/// 钉（c-2）：有 ai/state.json 的 run 按 usage 记 cost_cny（成本公式复算），
 /// 且 usage 只取契约五键（丢弃 tool_calls）。
 #[test]
 fn append_history_line_reads_state_usage_and_drops_tool_calls() {
@@ -671,7 +671,7 @@ fn append_history_line_reads_state_usage_and_drops_tool_calls() {
     );
 }
 
-/// Z6 件3 记账失败面：history.jsonl 写失败只响铃不改终态。
+/// 记账失败面：history.jsonl 写失败只响铃不改终态。
 /// append_history_line 用只读目录模拟写失败（OpenOptions append 必然 Err）。
 #[test]
 fn append_history_line_write_failure_only_rings() {
@@ -700,10 +700,10 @@ fn append_history_line_write_failure_only_rings() {
     assert!(rung[0].contains("[LEDGER]"), "响铃须带账本前缀：{rung:?}");
 }
 
-// D8：主钮旁预估段（GET /api/budget 的 estimate）——名册口径钉团。
+// 主钮旁预估段（GET /api/budget 的 estimate）——名册口径钉团。
 // ---------------------------------------------------------------------------
 
-/// D8 钉（a）：collection.json 缺件 → estimate 四字段全 null（前端「预估 —」）。
+/// 钉（a）：collection.json 缺件 → estimate 四字段全 null（前端「预估 —」）。
 #[tokio::test(flavor = "multi_thread")]
 async fn budget_get_estimate_all_null_when_collection_missing() {
     let fx = fixture(None);
@@ -717,7 +717,7 @@ async fn budget_get_estimate_all_null_when_collection_missing() {
     );
 }
 
-/// D8 钉（b）：viewer_count=22 → normal_cny≈34.5（闸同公式上限口径）、
+/// 钉（b）：viewer_count=22 → normal_cny≈34.5（闸同公式上限口径）、
 /// briefing_cny=1.5（恰 audience 平段）、etd 区间 = 常量带宽上取整到分钟。
 #[tokio::test(flavor = "multi_thread")]
 async fn budget_get_estimate_pins_22_viewer_roster() {
@@ -753,7 +753,7 @@ async fn budget_get_estimate_pins_22_viewer_roster() {
     assert!(lo <= hi, "{estimate}");
 }
 
-/// D8 钉（c）：viewer_count=0（名册空）与缺 viewer_count 键 → 都是全 null（不臆造
+/// 钉（c）：viewer_count=0（名册空）与缺 viewer_count 键 → 都是全 null（不臆造
 /// 空名册的「全量」预估；前端「预估 —」字面即此面）。
 #[tokio::test(flavor = "multi_thread")]
 async fn budget_get_estimate_all_null_when_roster_empty_or_key_missing() {

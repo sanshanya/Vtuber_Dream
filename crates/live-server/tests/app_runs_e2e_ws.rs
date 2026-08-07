@@ -1,4 +1,4 @@
-//! 轮2-R2-2B（D1「WS 弹幕窗」挂接）e2e：collect_streamer 尾段的
+//!（WS 弹幕窗）挂接 e2e：collect_streamer 尾段的
 //! `live_ws_record` 弹幕窗采录全链路验收。
 //!
 //! 四钉：
@@ -42,7 +42,7 @@ use live_server::registry::Registry;
 mod common;
 
 // ---------------------------------------------------------------------------
-// wiremock 布景：采集基线 + D1 两个新端点（get_info / getDanmuInfo）
+// wiremock 布景：采集基线 + 两个新端点（get_info / getDanmuInfo）
 // ---------------------------------------------------------------------------
 
 fn json_ok(data: Value) -> ResponseTemplate {
@@ -205,7 +205,7 @@ async fn mount_bilibili_baseline(server: &MockServer) {
     .await;
 }
 
-/// D1 新端点：房间在播状态（get_info）。
+/// 房间在播状态端点（get_info）。
 async fn mount_room_live_status(server: &MockServer, live_status: i64) {
     mount_bilibili(
         server,
@@ -215,7 +215,7 @@ async fn mount_room_live_status(server: &MockServer, live_status: i64) {
     .await;
 }
 
-/// D1 新端点：弹幕网关凭据（getDanmuInfo 的 host_list[0] + token）。
+/// 弹幕网关凭据端点（getDanmuInfo 的 host_list[0] + token）。
 /// `ws_port` 必须是已绑定的本机 listener 端口（`DanmakuInfo::url()` 走 ws://）。
 async fn mount_danmu_info(server: &MockServer, ws_port: u16) {
     mount_bilibili(

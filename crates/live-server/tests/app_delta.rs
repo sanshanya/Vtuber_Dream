@@ -1,4 +1,4 @@
-//! M5-D2 delta 两轮布景钉（D4 口径的 HTTP 面）+ 面板走查导出（env-gated）。
+//! M5-D2 delta 两轮布景钉（HTTP 面）+ 面板走查导出（env-gated）。
 //!
 //! 布景法：build_demo → 手工 SQL 在 demo 图内栽「第二个完整 run + 一条新生
 //! INTERESTED_IN + 一条新 GUARD_OF」；as-of 窗口切窗与 graph_delta.rs 同法
@@ -18,7 +18,7 @@ mod common;
 
 use live_server::app::{AppState, build_app};
 
-/// 时间戳从测试运行时时钟派生（ag6 日历炸弹修复：硬编码 2027-01 曾使任何
+/// 时间戳从测试运行时时钟派生（日历炸弹修复：硬编码 2027-01 曾使任何
 /// 更晚的构建日让 demo 自己的 complete 行顶替「相邻」位而必红）。
 /// 形状与 live_core::episodes::now_iso 同齿（秒 + +00:00）。
 struct Clock {

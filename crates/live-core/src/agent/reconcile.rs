@@ -1,4 +1,4 @@
-//! R2 批1「实体 AI 归并」（用户裁决：合并不靠规则表——AI 看图裁决，程序出纳）：
+//! 「实体 AI 归并」（用户裁决：合并不靠规则表——AI 看图裁决，程序出纳）：
 //! 只在观看证据入库后，让 AI 用只读调查工具（list_entities / search_entities）
 //! 看清当前实体表，再通过唯一终局 Tool Call 提交一份「合并 / 删除」计划。
 //! 程序负责事实面：
@@ -387,7 +387,7 @@ pub async fn run_entity_reconcile(
     let draft = outcome.submission;
 
     // 空计划不记账：无动作的 maintenance run 会照常进 run_pair_delta 的
-    // 「相邻 complete」对照窗，把「vs 上轮感知」稀释成无变化（P0-4 同类坑
+    // 「相邻 complete」对照窗，把「vs 上轮感知」稀释成无变化（同类坑
     // 已用 kind 排除 recap-refresh 钉过一次）——没消费者就不出生。
     if draft.merges.is_empty() && draft.drops.is_empty() {
         return Ok(EntityReconcileReport {

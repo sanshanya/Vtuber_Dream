@@ -4,7 +4,7 @@ import { RUN_KIND_LABELS, type RunKind } from "../api";
 import { useStartRun } from "../hooks/useStartRun";
 import { useRunTracker } from "./RunTracker";
 
-/** Z4 动作平面：四个分层 kind（full 走谨慎 RunButton；viewer 走舰长表单）。 */
+/** 动作平面：四个分层 kind（full 走谨慎 RunButton；viewer 走舰长表单）。 */
 type StagedKind = Exclude<RunKind, "full" | "viewer">;
 
 interface RunMessage {
@@ -13,7 +13,7 @@ interface RunMessage {
 }
 
 /**
- * Z4 动作平面分层钮：采集（事实层）/AI（认知层）分 kind，一击即飞、就地摆位——
+ * 动作平面分层钮：采集（事实层）/AI（认知层）分 kind，一击即飞、就地摆位——
  * 哪个页面的数据由哪个动作产出，钮就住在哪个页面。
  * - 成功：登记 RunTracker（页头徽标接管进度回报，终态全失效自动刷新本页）；
  * - 409：错文里的在飞 run_id 提取后改为跟随（与后端单飞互斥契约同构）；
@@ -31,7 +31,7 @@ export function KindRunButton({ kind, note }: { kind: StagedKind; note?: string 
     if (runId !== null) setSubmitted(runId);
   }
 
-  // 消息面三分（Z4 文案不变）：跟随 > 首发 > 就地拒单错。
+  // 消息面三分（文案不变）：跟随 > 首发 > 就地拒单错。
   const message: RunMessage | null = followedId
     ? { tone: "muted", text: "已有进行中的 run——页头徽标转为跟随其进度" }
     : submitted

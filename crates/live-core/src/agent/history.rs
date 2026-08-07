@@ -1,4 +1,4 @@
-//! 历史管理（P2-γ）：回放窗口化 + 中间轮折叠 + token 估算。
+//! 历史管理：回放窗口化 + 中间轮折叠 + token 估算。
 //!
 //! 职责：只动 LLM 工作记忆，不动任何事实/证据层（AGENTS.md §7——事实入 Episode/图存）。
 //! 与 runtime 的分工：runtime 管协议契约（终局/重试/trace），本模块管「历史多长就算多、
@@ -8,7 +8,7 @@ use serde_json::json;
 
 use super::runtime::{CHARS_PER_TOKEN, OaiMessage, Trace, truncate_chars};
 
-/// P2-γ-2：中间轮折叠参数。所有阈值有命名+默认+测试（AGENTS.md §4）：
+/// 中间轮折叠参数。所有阈值有命名+默认+测试（AGENTS.md §4）：
 /// - trigger_tokens：估算 prompt tokens（字节秤/4）超线触发；典型 200_000（≈dsv4 500K 窗的 40%）；
 /// - keep_tail_turns：折叠后保留末尾完整轮数；
 /// - entry_chars：折叠摘要单轮条目的字符预算。
@@ -19,7 +19,7 @@ pub struct FoldConfig {
     pub entry_chars: usize,
 }
 
-/// P2-γ-1：reasoning 回放窗口化——只压 LLM 工作记忆。
+/// reasoning 回放窗口化——只压 LLM 工作记忆。
 ///
 /// 语义：末 k 条「带 tool_calls 的 assistant」保留原文；更早的同样消息保留
 /// reasoning_content 字段但内容置空串（不剥字段——空串在 dsv4 执法矩阵下
@@ -50,7 +50,7 @@ pub fn apply_replay_window(
     messages
 }
 
-/// P2-γ-2：历史 token 粗估 = 字节秤 / CHARS_PER_TOKEN。中文须知在 DeepSeek
+/// 历史 token 粗估 = 字节秤 / CHARS_PER_TOKEN。中文须知在 DeepSeek
 /// 上是每字多 byte——本估算只负责「量级触发」，不用作计费/预算账本
 /// （预算已有 viewer_token_budget 按 server usage 实记）。
 pub fn estimate_tokens(messages: &[OaiMessage]) -> u64 {
@@ -74,7 +74,7 @@ pub fn estimate_tokens(messages: &[OaiMessage]) -> u64 {
     bytes.div_ceil(CHARS_PER_TOKEN) as u64
 }
 
-/// P2-γ-2：折叠。
+/// 折叠。
 /// - 触发：估 tokens > trigger；不动事实层：被折叠的全部是 assistant/tool 工作记忆，
 ///   证据在 Episode/图存（AGENTS.md §7）。
 /// - 结构：保持「assistant 与 tool 对」的整体搬迁——折叠产生邻接保持的不变量；

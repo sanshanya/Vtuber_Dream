@@ -312,7 +312,7 @@ pub struct ContentCalendarItem {
     pub validation_signal: String,
 }
 
-/// Z5/C1：制片人简报单句——结论句 + 证据 episode 引用 + 覆盖时段（可空）。
+/// 制片人简报单句——结论句 + 证据 episode 引用 + 覆盖时段（可空）。
 #[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
 pub struct BriefSentence {
@@ -327,7 +327,7 @@ pub struct BriefSentence {
     pub coverage_time_range: Option<[String; 2]>,
 }
 
-/// Z5/C1（终裁 P0-5）：front_brief = 制片人简报。结论先行，句句带出处，
+/// 终裁：front_brief = 制片人简报。结论先行，句句带出处，
 /// 沉默可呈现——sentences 空数组合法（前端 BriefingCard 为此呈「空缺位」）。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
@@ -343,7 +343,7 @@ pub struct AudienceSituationSubmission {
     /// Python Text100000：schema 形状对齐（运行时硬拒在 validators 层 SUMMARY_MAX_CHARS）
     #[schemars(length(max = 100_000))]
     pub executive_summary: String,
-    /// Z5/C1：简报位于 schema 前列——终局参数序即模型阅读序（结论先行语义进 wire）。
+    /// 简报位于 schema 前列——终局参数序即模型阅读序（结论先行语义进 wire）。
     #[serde(default)]
     pub front_brief: FrontBrief,
     #[serde(default)]

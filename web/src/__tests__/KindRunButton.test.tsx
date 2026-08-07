@@ -1,5 +1,5 @@
 /**
- * Z4 动作平面钉团：
+ * 动作平面钉团：
  * - 全量感知钮：一击不飞（先展开确认段），二击「确认触发」才 POST kind=full。
  * - KindRunButton：一击提交对应 kind；409 错文提取在飞 run_id 转为跟随；422 就地报错。
  * - hero 去钮后：RunStatusBadge 独立挂载负责状态回报。
@@ -90,7 +90,7 @@ describe("RunButton 谨慎双段确认（Z4 全量感知敏感钮）", () => {
     await waitFor(() => expect(screen.getByTestId("run-id").textContent).toBe("abc12345"));
   });
 
-  // R3#2：全量钮与分层钮同契约——409 错文提取在飞 run_id 转跟随，不裸报错。
+  // 全量钮与分层钮同契约——409 错文提取在飞 run_id 转跟随，不裸报错。
   it("409（错文含在飞 run_id）→ 转为跟随在飞 run，不就地报错", async () => {
     stubFetchPlan({
       "/api/runs": [

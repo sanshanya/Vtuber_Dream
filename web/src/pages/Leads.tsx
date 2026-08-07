@@ -1,6 +1,6 @@
 /**
- * 线索账本页（Z3 定稿导航末位）：自旧 Dashboard 拆出，LeadsBlock 承接呈现。
- * G2-B 审批缝 + D9/R2-批6 拒绝缝宿主：待审行「批准/拒绝」钮（一击即飞）→
+ * 线索账本页（定稿导航末位）：自旧 Dashboard 拆出，LeadsBlock 承接呈现。
+ * G2-B 审批缝 + 拒绝缝宿主：待审行「批准/拒绝」钮（一击即飞）→
  * POST 审批/拒绝缝；404/422 就地 danger；成功后 overview 查询失效重取。
  * 拒绝携带拒因（chips + note）单行直通；组级「全批/全拒」由 LeadsBlock
  * 前端逐行 fan-out 到本页两个 mutation。标题行 L1 自治位徽标读 overview
@@ -30,7 +30,7 @@ export function Leads({ roomId }: { roomId: string }) {
       setBusyLeadId(leadId);
     },
     onError: (error) => {
-      // F1 errText 单家（R3-F3 归一：不再手抄同形表达式）。
+      // errText 单家（收敛：不再手抄同形表达式）。
       setApproveError(errText(error));
       setBusyLeadId(null);
     },
@@ -40,7 +40,7 @@ export function Leads({ roomId }: { roomId: string }) {
       void queryClient.invalidateQueries({ queryKey: ["overview", roomId] });
     },
   });
-  // D9：拒绝缝宿主——拒因行内已选（全空合法 = 服务端 NULL/NULL 留档）。
+  // 拒绝缝宿主——拒因行内已选（全空合法 = 服务端 NULL/NULL 留档）。
   const reject = useMutation({
     mutationFn: ({ leadId, chips, note }: { leadId: string; chips: string[]; note: string }) =>
       api.rejectLead(roomId, leadId, { chips, note }),

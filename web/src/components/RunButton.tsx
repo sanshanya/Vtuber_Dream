@@ -15,7 +15,7 @@ function outcomeErrorOf(outcome: unknown): string | null {
   return null;
 }
 
-/** ag5-F8：partial 徽标的解释走 title（服务端不重复造词，前端一次性说清语义）。 */
+/** partial 徽标的解释走 title（服务端不重复造词，前端一次性说清语义）。 */
 export function partialTitle(record: RunRecordView): string {
   const base = `触发于 ${fmtTime(record.started_at)}`;
   return record.partial
@@ -24,7 +24,7 @@ export function partialTitle(record: RunRecordView): string {
 }
 
 /**
- * Z4c：run 状态面从触发钮拆出——hero 页头挂只读徽标，各页面各自摆触发钮。
+ * run 状态面从触发钮拆出——hero 页头挂只读徽标，各页面各自摆触发钮。
  * 数据源仍是 RunTracker 共享层：任何页面触发的 run 都在此处反映（单槽与后端
  * 409 互斥同构，任何时刻至多一条在飞）。
  */
@@ -42,12 +42,12 @@ export function RunStatusBadge() {
         <span className={`badge run-status-${data.status}`} title={partialTitle(data)}>
           {data.status}
           {data.partial ? "(partial)" : ""}
-          {/* W2/r1-F3：demo 快照与真实 done 逐像素同形是合成诡装真实——明示合成。 */}
+          {/* demo 快照与真实 done 逐像素同形是合成诡装真实——明示合成。 */}
           {data.kind === "demo" ? "（synthetic_demo 合成演示）" : ""}
         </span>
       )}
       {tracker.lost && (
-        // W2/r5-F2：dismiss 不能靠悬停 tooltip 藏——可见 × 是丢链的唯一显式出路。
+        // dismiss 不能靠悬停 tooltip 藏——可见 × 是丢链的唯一显式出路。
         <button
           className="badge danger"
           title="点击消除提示"
@@ -57,21 +57,21 @@ export function RunStatusBadge() {
         </button>
       )}
       {outcomeError && <span className="badge danger">{outcomeError}</span>}
-      {/* ag5-F2：events 不再只在 active 时渲染——终态恰是最需要排查的时刻。 */}
+      {/* events 不再只在 active 时渲染——终态恰是最需要排查的时刻。 */}
       {data && events.length > 0 && (
         <details className="run-events">
           <summary>events ({events.length})</summary>
           <pre>{events.join("\n")}</pre>
         </details>
       )}
-      {/* Z6 件2/件5：outcome.budget_block 阻断卡（两选重发 + 去设置页改预算）。 */}
+      {/* outcome.budget_block 阻断卡（两选重发 + 去设置页改预算）。 */}
       {data && <BudgetBlockCard record={data} />}
     </span>
   );
 }
 
 /**
- * Z4：全量感知 = 「敏感而谨慎」的钮（用户定调）——不在 hero 页头常驻，落在主播
+ * 全量感知 = 「敏感而谨慎」的钮（用户定调）——不在 hero 页头常驻，落在主播
  * 介绍页动作栏，一击不飞：先展开成本/时长确认段，再击「确认触发」才提交。
  * 其余四个分层动作（采集/AI × 主播/舰长）走 KindRunButton。
  */

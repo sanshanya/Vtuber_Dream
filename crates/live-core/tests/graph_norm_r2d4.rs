@@ -1,4 +1,4 @@
-//! R2 批1「实体 AI 归并」的 store 面钉团：entity_drop（整货删除）与
+//! 「实体 AI 归并」的 store 面钉团：entity_drop（整货删除）与
 //! list_entities（分页读）——程序事实/身份/事务层，AI 只提交裁决。
 //!
 //! 钉面：
@@ -376,7 +376,7 @@ fn list_entities_paginates_stably_and_clamps_bounds() {
 }
 
 // ---------------------------------------------------------------------------
-// D10 出勤面钉：room_presence 按 WS 场次窗计到访 + latest_published_at 取最新
+// 出勤面钉：room_presence 按 WS 场次窗计到访 + latest_published_at 取最新
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -387,7 +387,7 @@ fn room_presence_counts_sessions_and_last_ts() {
 
     let store = mem_store();
     // 两个场次窗（rid 由窗起点定义）：u-7 两窗都说话；u-9 只在第一窗。
-    // ts 用平台 ts（info[9] 形态）——跨窗同一行撞库不重复计（同窗内去重见 D1-2B 钉团）。
+    // ts 用平台 ts（info[9] 形态）——跨窗同一行撞库不重复计（同窗内去重见身份面钉团）。
     let mk_window = |attach: i64, lines: &[(&str, &str, i64)]| {
         let mut rec = WsRecorder::attach(77, attach, 1).unwrap();
         for (uid, text, ts) in lines {

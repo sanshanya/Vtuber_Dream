@@ -1,7 +1,7 @@
 /**
- * FE-F2：GraphPage 钉团
+ * GraphPage 钉团
  * - 节点详情结构化（已知 kind 渲语义键值行；未知 kind / 键全缺席 → <details> JSON 兜底）；
- * - a11y（R3#9 图谱部分）：canvas 外叠 hidden-but-focusable 节点清单，
+ * - a11y（图谱部分）：canvas 外叠 hidden-but-focusable 节点清单，
  *   li 可聚焦、Enter 选中节点 → 详情面联动；
  * - 详情 kind 徽标底色引用 styles.css 层色变量 var(--layer-*)（画布不能消费 var()，
  *   DOM 面必须走变量引用，不再各写各的色号）。

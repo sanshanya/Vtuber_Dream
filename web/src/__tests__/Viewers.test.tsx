@@ -1,5 +1,5 @@
 /**
- * Z5c 时效位钉团：
+ * 时效位钉团：
  * - ai_stale=true → 行亮「信源已更新·待重判」徽标（badge.action，title 直陈熄灭路径）；
  * - ai_stale=false / null → 不亮（绿灯与无参考旧结论两面无差别安静）。
  * - 行面其余字段透视不受时效位影响。
@@ -156,7 +156,7 @@ describe("Viewers 单查入口的单飞互斥契约（R3-F1）：409 → 转入�
       ],
     });
     renderViewers();
-    // 空池布景（D3 冷启动引导位）——只有名单为空才出现单查入口。
+    // 空池布景（冷启动引导位）——只有名单为空才出现单查入口。
     await waitFor(() => expect(screen.getByTestId("empty-pool-hint")).toBeTruthy());
     fireEvent.change(screen.getByLabelText("单查观众 uid"), { target: { value: "1003" } });
     fireEvent.click(screen.getByRole("button", { name: "单查该观众" }));
@@ -167,7 +167,7 @@ describe("Viewers 单查入口的单飞互斥契约（R3-F1）：409 → 转入�
     expect(screen.queryByText(/单查提交被拒/)).toBeNull();
   });
 
-  // R3#3：拒单错是错误面——走 badge danger；.notice 只留非错提示。
+  // 拒单错是错误面——走 badge danger；.notice 只留非错提示。
   it("422 拒单 →「单查提交被拒」以 badge danger 呈现（不占 notice 非错面）", async () => {
     stubFetchPlan({
       "/api/rooms/983/viewers": [{ status: 200, body: "[]" }],

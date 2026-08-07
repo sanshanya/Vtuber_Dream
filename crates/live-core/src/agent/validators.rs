@@ -1,6 +1,6 @@
 //! 终局校验台：Python `validators.py` 平移 + 设计文档 §9.1 修复 1/6/8 + leads（M4.x 提前出生）。
 //!
-//! 体积备书（轮3）：超 500 线 = 终局校验台的 Python 逐条对齐（错误文案/顺序/ERROR_CAP
+//! 体积备书：超 500 线 = 终局校验台的 Python 逐条对齐（错误文案/顺序/ERROR_CAP
 //! 簿记一体）。真实拆缝 = 块按 section 竖切（mentions/entities/relations/...），但打破
 //! Python 滤镜的一卷对照面（parity 定位坐标与 tools.rs 生产线呼应）——未触发不动切。
 //!
@@ -28,7 +28,7 @@ pub const PLACEHOLDER_SUMMARIES: [&str; 4] = ["测试", "test", "summary", "占�
 /// 修复 8：字符串栏目"有实质内容"判定 = 至少一条去空白后字符数 ≥ 2（S0 实测 ["a"] 曾被接受）。
 pub const SECTION_SUBSTANTIVE_MIN_CHARS: usize = 2;
 /// leads.type 白名单（kickoff §M4.x 薄切提前到 M3：schema + 校验随终局协议进入）。
-/// MXA-7/12：唯一真源在 leads.rs（annex 面与校验面共一张清单）。
+/// 唯一真源在 leads.rs（annex 面与校验面共一张清单）。
 pub const LEAD_TYPE_WHITELIST: [&str; 4] = crate::leads::LEAD_TYPES;
 
 const ERROR_CAP: usize = 100;
@@ -126,7 +126,7 @@ fn validate_leads(
                         errors.push(format!("{label} locator must be a BV id for type video"));
                     }
                 }
-                // 轮2-R1-A⑦：真源 LEAD_TYPES 若长第 5 型，白名单放行但本臂落
+                // 真源 LEAD_TYPES 若长第 5 型，白名单放行但本臂落
                 // unreachable!() 会在生产 panic——校验层只许拒收不许崩溃。
                 other => errors.push(format!(
                     "{label} locator has no validation rule for type {other}（新类型须先补 locator 规则）"
@@ -477,7 +477,7 @@ pub fn validate_viewer_submission(
 
     // 修复 8：占位/空提交拒绝。
     check_summary("profile_summary", &submission.profile_summary, &mut errors);
-    // 轮2-R1-A⑦：内容偏好/近期变化/深挖目标是真实承载观众观点的栏——只有它们
+    // 内容偏好/近期变化/深挖目标是真实承载观众观点的栏——只有它们
     // 单独的合法提交不得被判空（守卫口的空判定与 AI 实质判定必须同一边界）。
     if submission.entities.is_empty()
         && submission.interest_states.is_empty()
@@ -518,7 +518,7 @@ pub fn validate_viewer_submission(
 }
 
 // ---------------------------------------------------------------------------
-// Z5/C1 front_brief 结构校验（P0-5）
+// front_brief 结构校验
 // ---------------------------------------------------------------------------
 
 /// 简报句数上限（终裁：弹性、不收刚性 3+3+1，但 payload 必须有界）。
@@ -538,7 +538,7 @@ fn parse_iso_moment(text: &str) -> Option<chrono::NaiveDateTime> {
         })
 }
 
-/// Z5/C1 结构面：句数上限 / 非空结论 / 句句带出处（≥1 episode_ref）/ 覆盖时段
+/// 结构面：句数上限 / 非空结论 / 句句带出处（≥1 episode_ref）/ 覆盖时段
 /// 可解析且 from<=to。episode 存在性闭包不在此——图谱 append-only，存在性只在
 /// specs 终局闭包一次性核验（references 通道），restore 复核天然保持。
 pub fn validate_front_brief(brief: &crate::models::FrontBrief) -> Vec<String> {
@@ -582,7 +582,7 @@ pub fn validate_audience_submission(
     mention_ids: &HashSet<String>,
     search_result_ids: &HashSet<String>,
 ) -> Vec<String> {
-    // Z5/C1：front_brief 结构先于栏目闭包（简报是首屏面，错误要早现）。
+    // front_brief 结构先于栏目闭包（简报是首屏面，错误要早现）。
     let mut errors: Vec<String> = validate_front_brief(&submission.front_brief);
 
     let check_viewers = |values: &[String], label: String, errors: &mut Vec<String>| {

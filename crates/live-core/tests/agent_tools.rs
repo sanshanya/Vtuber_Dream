@@ -148,7 +148,7 @@ async fn search_clamps_cache_hit_zero_request_and_snapshots() {
     );
 }
 
-/// 安全批 R1：篡改 cache 中的 result_id 不得进入注册表/快照（目录穿越与伪造 id 拦截）。
+/// 安全批：篡改 cache 中的 result_id 不得进入注册表/快照（目录穿越与伪造 id 拦截）。
 #[test]
 fn tampered_cache_ids_neither_registered_nor_snapshotted() {
     let tmp = tempfile::tempdir().unwrap();
@@ -568,7 +568,7 @@ fn references_requires_node_mirror_for_entities() {
 }
 
 // ---------------------------------------------------------------------------
-// R1-2 verify_videos 批原语（与 get_bilibili_video 同详情端点族；Python 无此工具）
+// verify_videos 批原语（与 get_bilibili_video 同详情端点族；Python 无此工具）
 // ---------------------------------------------------------------------------
 
 /// 批内：2 个存在 + 1 个缺失 → 3 条紧凑行；缺失只占一行 error（类别+短原因），

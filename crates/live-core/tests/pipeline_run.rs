@@ -363,14 +363,14 @@ async fn pipeline_green_path_and_fence_order() {
     .await
     .expect("green run");
 
-    // final dict parity（D-4 runtime 五键 + D-1 usage 入 state）
+    // final dict parity（runtime 五键 + usage 入 state）
     assert_eq!(result["status"], "complete");
     assert_eq!(result["runtime"], "openai-agents");
     assert_eq!(result["viewer_count"], 2);
     assert_eq!(result["viewer_failures"], 0);
     assert_eq!(result["usage"]["llm_requests"], 3);
     assert_eq!(result["usage"]["input_tokens"], 30);
-    // Z1/P0-2：cache 观测盒姊妹键——mock 剧本中 backend 不返 cache 计数字段 → 诚实归零；
+    // cache 观测盒姊妹键——mock 剧本中 backend 不返 cache 计数字段 → 诚实归零；
     // 键必须存在且为整数（state 与 final_result 双面同源）。
     assert_eq!(result["cache_usage"]["cache_hit_tokens"], 0);
     assert_eq!(result["cache_usage"]["cache_miss_tokens"], 0);
@@ -396,7 +396,7 @@ async fn pipeline_green_path_and_fence_order() {
     let runtime = cache["runtime"].as_object().unwrap();
     assert_eq!(runtime.len(), 5, "D-4 五键 parity，实际：{runtime:?}");
     assert!(runtime.get("tool_names").is_none());
-    // r3-F3：空 leads 不落盘（Python extra=forbid——键存在即拒；空期双向复用）。
+    // 空 leads 不落盘（Python extra=forbid——键存在即拒；空期双向复用）。
     assert!(
         cache["analysis"]
             .as_object()
@@ -432,7 +432,7 @@ async fn pipeline_green_path_and_fence_order() {
         .query_row("SELECT completed_at FROM graph_runs", [], |row| row.get(0))
         .unwrap();
     assert!(completed_at.is_some(), "run 行 completed_at 落盘");
-    // Z5/C1：本例 audience 提交未带 front_brief → 沉默以键缺席落盘。
+    // 本例 audience 提交未带 front_brief → 沉默以键缺席落盘。
     assert!(
         situation["analysis"]
             .as_object()
@@ -444,7 +444,7 @@ async fn pipeline_green_path_and_fence_order() {
 }
 
 // ---------------------------------------------------------------------------
-// 1b. Z5/C1 front_brief：有效简报全链落地 + 无出处引用被拒后具名重提交
+// 1b. front_brief：有效简报全链落地 + 无出处引用被拒后具名重提交
 // ---------------------------------------------------------------------------
 
 /// audience 提交 + 有效 front_brief（cite 真实入库 episode）：终局接受、situation 缓存留痕。
@@ -608,7 +608,7 @@ async fn pipeline_audience_front_brief_unknown_episode_rejected() {
 
 // ---------------------------------------------------------------------------
 // 2. 全量缓存恢复：同根重跑 → 零 LLM 调用（server 无 mock，任何请求即失败）
-//    + D-10 幂等在 pipeline 层的投影（活跃边零膨胀）
+//    + 幂等在 pipeline 层的投影（活跃边零膨胀）
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -665,7 +665,7 @@ async fn pipeline_full_resume_no_llm_calls() {
 }
 
 // ---------------------------------------------------------------------------
-// 2b. 部分恢复端到端（r7-P4）：run1 双绿 → 删掉 g2 缓存 → run2 只重跑 g2，
+// 2b. 部分恢复端到端：run1 双绿 → 删掉 g2 缓存 → run2 只重跑 g2，
 //     g1 复用校准（含图 references 重校验）、audience 输入不变 → 也恢复；
 //     活跃边零膨胀。
 // ---------------------------------------------------------------------------
@@ -747,7 +747,7 @@ async fn pipeline_partial_resume_reruns_only_evicted_viewer() {
         read(&tmp.path().join("ai/perception/viewers/g2.json"))["status"],
         "complete"
     );
-    // 图幂等：apply 双轮后 INTERESTED_IN 活跃边仍恰 2（D-10 在部分恢复下同样成立）
+    // 图幂等：apply 双轮后 INTERESTED_IN 活跃边仍恰 2（部分恢复下同样成立）
     let store = open_store(tmp.path());
     let active: i64 = store
         .conn
@@ -804,7 +804,7 @@ async fn pipeline_single_viewer_failure_continues() {
 }
 
 // ---------------------------------------------------------------------------
-// 3b. r1-F1：单 viewer token 预算熔断 → viewer_failure("token_budget")，其余照常
+// 3b. 单 viewer token 预算熔断 → viewer_failure("token_budget")，其余照常
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1008,7 +1008,7 @@ async fn pipeline_audience_failure_fails_run() {
 }
 
 // ---------------------------------------------------------------------------
-// 7. D-10：audience apply 幂等（同提交两次应用 → 图面零膨胀）
+// 7. audience apply 幂等（同提交两次应用 → 图面零膨胀）
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -1143,7 +1143,7 @@ async fn store_open_failure_umbrella_writes_failed_state() {
 }
 
 // ---------------------------------------------------------------------------
-// M5-B3：stage hook（per_viewer_ai → audience 顺序钉）+ D7 run_viewer_pipeline
+// M5-B3：stage hook（per_viewer_ai → audience 顺序钉）+ run_viewer_pipeline
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -1242,7 +1242,7 @@ async fn viewer_pipeline_filters_baseline_and_rejects_ghost() {
 }
 
 // ---------------------------------------------------------------------------
-// P0-1 集成钉（迭代细则 v1 §1）：房间语料 Episode 化收账进 pipeline——
+// 集成钉（迭代细则 v1 §1）：房间语料 Episode 化收账进 pipeline——
 // shared/*.json → _room 命名空间 Episode 落图；重跑幂等（行数不增）；
 // 观众 files 零污染（_room 只在图里，绝不成 viewers/ 文件）。
 // ---------------------------------------------------------------------------
@@ -1356,7 +1356,7 @@ async fn pipeline_room_corpus_ingests_into_room_namespace_idempotently() {
 }
 
 // ---------------------------------------------------------------------------
-// P0-2 集成钉（迭代细则 v1 §1）：复盘卡 = 规则四数进 ai/recap.json + AI 只命名。
+// 集成钉（迭代细则 v1 §1）：复盘卡 = 规则四数进 ai/recap.json + AI 只命名。
 // 两路：命名成功进 naming 键；命名失败卡仍落盘、naming=null、未知行补账。
 // ---------------------------------------------------------------------------
 

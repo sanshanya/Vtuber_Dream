@@ -21,7 +21,7 @@
 //! 2. v7→v8 纯增量就地升级（graph_runs 补两列），沿用升格通道；
 //!    v6 连锁两段（v6→v7→v8），v6 以下仍吃“删除重跑”政策。
 //!
-//! schema v9（D9/R2-批6 leads 审批增强）：discovery_leads 增 `reject_chips_json`
+//! schema v9（leads 审批增强）：discovery_leads 增 `reject_chips_json`
 //! 与 `reject_note` 两列（拒绝留档面——reject 端点一击写账）；
 //! 1. v8→v9 纯增量就地升级（补两列），沿用列存在性探测通道；所有 NULL 为
 //!    「无拒因」的合法空态（全空允许），列不带 DEFAULT；
@@ -244,7 +244,7 @@ CREATE INDEX IF NOT EXISTS idx_graph_runs_kind ON graph_runs(kind, completed_at)
 
 /// v6→v7 就地升级的迁移段（SCHEMA_SQL 的增量面；新库两种路径殊途同归——
 /// 本迁移用 IF NOT EXISTS / 列存在性探测保证两段 SQL 叠加幂等）。
-/// 列面与 SCHEMA_SQL 同形（含 D9 的两列——老库走探测段补列，殊途同归）。
+/// 列面与 SCHEMA_SQL 同形（含拒绝留档的两列——老库走探测段补列，殊途同归）。
 const MIGRATE_V6_TO_V7_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS discovery_leads (
     dedupe_key TEXT PRIMARY KEY,
@@ -317,7 +317,7 @@ impl Store {
         (self.clock)()
     }
 
-    /// 轮2-R1-B2：COUNT 类标量读取公共件（原 project.rs/query.rs 各藏一份就地闭包）。
+    /// COUNT 类标量读取公共件（原 project.rs/query.rs 各藏一份就地闭包）。
     pub fn count_scalar(&self, sql: &str, params: &[rusqlite::types::Value]) -> Result<i64> {
         let mut stmt = self.conn.prepare(sql)?;
         let value: i64 =
@@ -379,7 +379,7 @@ impl Store {
                 "detail_json",
                 "ALTER TABLE graph_runs ADD COLUMN detail_json TEXT",
             ),
-            // D9：v8→v9 段 = discovery_leads 拒绝留档两列（NULL=合法空态，不带 DEFAULT，
+            // v8→v9 段 = discovery_leads 拒绝留档两列（NULL=合法空态，不带 DEFAULT，
             // 与 SCHEMA_SQL/MIGRATE_V6_TO_V7_SQL 的 DDL 面完全一致）。
             (
                 "discovery_leads",
@@ -415,11 +415,11 @@ impl Store {
     /// run 类型面（§8.6 行 228/231）：entity_split / entity_merge 维护操作必记
     /// 一条 MAINTENANCE run（detail_json 载全参数，可回放审计）。
     pub const RUN_KIND_MAINTENANCE: &str = "maintenance";
-    /// run 类型面（P0-4 复盘解耦）：collect 尾的复盘卡刷新 run——只重放房间语料
+    /// run 类型面（复盘解耦）：collect 尾的复盘卡刷新 run——只重放房间语料
     /// Episode、零 AI 边。completed 照常记账，但 run_pair_delta 显式排除本类，
     /// 否则每日 collect 的 refresh 会把「vs 上轮感知」对照窗稀释成「无变化」。
     pub const RUN_KIND_RECAP_REFRESH: &str = "recap-refresh";
-    /// run 类型面（R2 批 2 D1 WS 挂接）：WS 弹幕窗的场次窗 Episode 入账 run——
+    /// run 类型面（WS 挂接）：WS 弹幕窗的场次窗 Episode 入账 run——
     /// 只入 WS 窗线、零 AI 边。`run_pair_delta` 显式排除本类（与 recap-refresh
     /// 同理：recording 相与 collect/episodes 同属**一个 collect run** 的面，
     /// 若把 ws-record 放进「vs 上轮感知」对照窗会稀释成「无变化」）。**不可从

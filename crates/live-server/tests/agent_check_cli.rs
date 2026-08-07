@@ -1,4 +1,4 @@
-//! M5-A T-2：`agent-check` 子命令的 env 门钉（r7-P5 消化）。
+//! M5-A T-2：`agent-check` 子命令的 env 门钉。
 //!
 //! 钉面：
 //! 1. 未设 VTD_AGENT_CHECK → 拒绝（exit 2）且**先于 config 读取**（给不存在的路径仍报门）。

@@ -1,6 +1,6 @@
-//! /api/config 面（D6 打码读 + 白名单原子写）。
+//! /api/config 面（打码读 + 白名单原子写）。
 //!
-//! 自 `app.rs` 按头注 rooms/config/runs 条款拆出（r8-F2 兑现）；两个公共常量经
+//! 自 `app.rs` 按头注 rooms/config/runs 条款拆出；两个公共常量经
 //! 根卷 `pub use` re-export，`app::WRITABLE_CONFIG_KEYS` 等外部路径零变化。
 
 use axum::Json;
@@ -10,14 +10,14 @@ use serde_json::{Value, json};
 
 use super::{AppResult, AppState, JsonBody, fail, load_config};
 
-/// D9：PUT 单值长度上限。
+/// PUT 单值长度上限。
 pub const MAX_PUT_VALUE_CHARS: usize = 4096;
-/// D8：主钮旁预估的墙钟粗估常量（秒）。纯体验提示非承诺——实测数据出现后校准：
+/// 主钮旁预估的墙钟粗估常量（秒）。纯体验提示非承诺——实测数据出现后校准：
 /// 单人含 AI 段墙钟的 lo/hi 带宽，加 audience 段固定 90s 底（22 人 → 17~35 分钟）。
 pub const PER_VIEWER_WALL_SECS_LO: u64 = 40;
 pub const PER_VIEWER_WALL_SECS_HI: u64 = 90;
 pub const AUDIENCE_WALL_SECS_BASE: u64 = 90;
-/// D6：允许的写入键白名单（(顶层段, 键)）——此后扩展需要同名加键 + 测试。
+/// 允许的写入键白名单（(顶层段, 键)）——此后扩展需要同名加键 + 测试。
 pub const WRITABLE_CONFIG_KEYS: [(&str, &str); 5] = [
     ("bilibili", "cookie"),
     ("ai", "api_key"),
@@ -30,7 +30,7 @@ pub(super) async fn config_get(State(state): State<AppState>) -> AppResult<Json<
     let config = load_config(&state)?;
     let ai = &config.ai;
     let agent = &ai.agent;
-    // D6：cookie/api_key 只回存在性布尔，永不回显原文。
+    // cookie/api_key 只回存在性布尔，永不回显原文。
     Ok(Json(json!({
         "project_name": config.project_name,
         "output_dir": config.output_dir.display().to_string(),
@@ -59,17 +59,17 @@ pub(super) async fn config_get(State(state): State<AppState>) -> AppResult<Json<
             "search_results_per_query": ai.search_results_per_query,
             "max_output_tokens": ai.max_output_tokens,
             "rules": ai.rules,
-            // Z6 件5：第 5 白名单键回显（None=不设闸，前端输入框初始为空）。
+            // 第 5 白名单键回显（None=不设闸，前端输入框初始为空）。
             "run_budget_cny": ai.run_budget_cny,
         },
         "writable_keys": WRITABLE_CONFIG_KEYS.iter().map(|(s, k)| format!("{s}.{k}")).collect::<Vec<_>>(),
     })))
 }
 
-/// D6：线路级 YAML 重写（保留注释与其余内容）——把 (段, 键) 定位段内首行
+/// 线路级 YAML 重写（保留注释与其余内容）——把 (段, 键) 定位段内首行
 /// `  {key}:` 与整行替换为新值；找不到合法落点 → 422。
 ///
-/// ag2-F3 加固三面：
+/// 加固三面：
 /// - 多行值拒绝：行级重写只承载单行 scalar，换行会被 serde_yml 落成块标量撕裂布局；
 /// - 重复键拒绝：同段内键出现 2 处以上 → 拒绝，不猜哪行是「真值」；
 /// - 原子写：tmp 文件先过 load + validate 双门禁再 rename 落位——不合格配置
@@ -154,7 +154,7 @@ fn write_keys(
         Ok(()) => match std::fs::rename(&tmp_path, config_path) {
             Ok(()) => Ok(()),
             Err(error) => {
-                // W1/r2-F2：rename 失败同样清走 tmp；错文不透服务器绝对路径。
+                // rename 失败同样清走 tmp；错文不透服务器绝对路径。
                 let _ = std::fs::remove_file(&tmp_path);
                 Err(format!("落位失败（原配置未动）：{error}"))
             }
@@ -190,7 +190,7 @@ pub(super) async fn config_put(
             let writable = WRITABLE_CONFIG_KEYS
                 .iter()
                 .find(|(s, k)| s == section && k == key);
-            // D9 显式类型：非字符串值 → 422，不许被「空串=保持」沉默吞掉（ag2-F2）。
+            // 显式类型：非字符串值 → 422，不许被「空串=保持」沉默吞掉。
             if !value.is_string() {
                 rejected.push(format!(
                     "{section}.{key} 的值必须是字符串（null→删除语义不支持）"
@@ -199,8 +199,8 @@ pub(super) async fn config_put(
             }
             let value_str = value.as_str().unwrap_or_default().to_string();
             match (writable, value_str.trim().is_empty()) {
-                (Some(_), true) => {} // 空串 = 保持现值（D6）——语义只对白名单键生效
-                // 轮2-R1-A③：错键+空串不得静默绕过 422 闸——
+                (Some(_), true) => {} // 空串 = 保持现值——语义只对白名单键生效
+                // 错键+空串不得静默绕过 422 闸——
                 // 拼写错误必须被点名，不得借「空串保持」滑走。
                 (None, _) => rejected.push(format!("{section}.{key} 不在可写白名单")),
                 (Some((s, k)), false) => {
@@ -225,20 +225,20 @@ pub(super) async fn config_put(
     if patch.is_empty() {
         return Ok(Json(json!({"status": "unchanged"})));
     }
-    // W1/r2-F3：read-modify-write 全程持锁，并发 PUT 不得相互覆盖。write_keys 是同步块，
+    // read-modify-write 全程持锁，并发 PUT 不得相互覆盖。write_keys 是同步块，
     // 持锁窗口不跨 await；锁中毒 = 上一次持锁者已 panic，用 expect 露头而非封锁修复。
     let _write_guard = state
         .config_write_lock
         .lock()
         .expect("config write lock poisoned");
-    // 校验已并入 write_keys 的 tmp 阶段（ag2-F3）：失败 → 422 且原文件分毫未动。
+    // 校验已并入 write_keys 的 tmp 阶段：失败 → 422 且原文件分毫未动。
     if let Err(error) = write_keys(&state.config_path, &patch) {
         return Err(fail(StatusCode::UNPROCESSABLE_ENTITY, &error));
     }
     Ok(Json(json!({"status": "updated", "keys": patch.len()})))
 }
 
-/// Z6 件3：GET /api/budget —— 月度实耗汇总（读 `{output_dir}/history.jsonl`，
+/// GET /api/budget —— 月度实耗汇总（读 `{output_dir}/history.jsonl`，
 /// 每 run 终态一行，见 registry::append_history_line）。
 ///
 /// 口径：只按追加序逐行聚合，坏行直接跳过（容忍记账面手改/半截写）；
@@ -246,7 +246,7 @@ pub(super) async fn config_put(
 /// 与中国时区 +8 的「自然月」不同，刻意选 UTC——账本口径前后端一致不动摇）；
 /// 文件缺失/全坏 → 全零 + last_run=null。`budget_cny` = config 预算（None → null）。
 ///
-/// D8 追加：`estimate` 段 = 主钮旁 D3 预估（normal_cny 走 budget::estimate_run_cost_cny
+/// `estimate` 段 = 主钮旁预估（normal_cny 走 budget::estimate_run_cost_cny
 /// 上限口径、briefing_cny 恰 audience 平段、etd_minutes 为常量带宽→分钟）；名册
 /// 缺/空 → 四个字段全 null（前端「预估 —」不臆造）。
 pub(super) async fn budget_get(State(state): State<AppState>) -> AppResult<Json<Value>> {
@@ -283,7 +283,7 @@ pub(super) async fn budget_get(State(state): State<AppState>) -> AppResult<Json<
             "spend_mode": record["spend_mode"],
         })
     });
-    // D8：主钮旁预估 = 名册口径（collection.json 的 viewer_count）+ 闸同公式上限价 +
+    // 主钮旁预估 = 名册口径（collection.json 的 viewer_count）+ 闸同公式上限价 +
     // 墙钟粗估带宽。名册缺文件/非数/为空 → estimate 全 null（前端落「预估 —」不臆造）。
     let roster_viewers = live_core::storage::read_json(&config.output_dir.join("collection.json"))
         .ok()

@@ -1,7 +1,7 @@
-//! 下播复盘卡·纯规则层（迭代细则 v1 §1 P0-2）：从 `_room` 房间语料 Episode 的
+//! 下播复盘卡·纯规则层（迭代细则 v1 §1）：从 `_room` 房间语料 Episode 的
 //! platform_facts 直接聚四个数——**全部程序事实，零 AI**。
 //!
-//! 体积备书（轮3）：超 500 线 = compute_recap 单遍四规则（共享 sessions 归类单元
+//! 体积备书：超 500 线 = compute_recap 单遍四规则（共享 sessions 归类单元
 //! 走遍一次弹幕流）+ fixture 对齐测试 ~1/3。逐规则拆会复制 sessions/normalize 预处理；
 //! 拆缝 = 真实需求到（如新增第五数共享窗口）时按规则函数出 `rules.rs`。
 //!
@@ -17,18 +17,18 @@
 //! AI 命名件（peak_name 等）由 pipeline 的终局 Tool Call 另行落进 naming 键；
 //! 本模块只造规则体，命名缺位 = null + 未知行（绝不伪造语义——AGENTS §11）。
 //!
-//! P0-4（复盘解耦）：出卡不再锁全量感知——`refresh_recap_card` 是 collect 尾与
+//! 复盘解耦：出卡不再锁全量感知——`refresh_recap_card` 是 collect 尾与
 //! pipeline 尾的共用刷新闻（语料入账→四个数→旧命名留存/作废→落盘，纯规则零 AI）；
 //! AI 命名是认知层附加窗：同场次同数面旧命名直接留存（不白跑 AI），数面一动即显式
 //! 作废进未知行（绝不拿旧命名盖新数），等下一轮感知重命名。
 //!
-//! D1-换轨（轮2-批2-2B）：场次发现并行扫回放束（live_danmaku）与 WS 窗
+//! 换轨：场次发现并行扫回放束（live_danmaku）与 WS 窗
 //! （live_ws_danmaku / live_ws_sc / live_ws_entry 三源沉降为 sessions + lines）：
 //! 时间区间**重叠即折叠**——客观时间事实，绝不做语义合并；折叠界 = [min start,
 //! max end]，同夜双写不翻成两场。折叠场次 rid 遵循 WS 优先（`ws:{start}`，主轨），
 //! 否则取最早 start 的回放束 rid。
 //!
-//! 身份轨纪律（D2 冻结共识的复盘侧落实）：身份键 = `轨|uid`（轨 ∈ replay/comment/ws；
+//! 身份轨纪律（冻结共识的复盘侧落实）：身份键 = `轨|uid`（轨 ∈ replay/comment/ws；
 //! replay 读 sender_uid_crc，comment 读 mid，ws 读 sender_uid_mid），**跨轨不合并**——
 //! 同人跨轨发言按两轨分计，「回来过」也不跨轨认亲（绝不把回放 crc 与真实 mid 混作
 //! 同一人）；两轨/三轨并出场必进未知行明示。
@@ -51,7 +51,7 @@ use crate::live_ws::episodes::{
     SESSION_RID_PREFIX, SOURCE_WS_DANMAKU, SOURCE_WS_ENTRY, SOURCE_WS_SC, WINDOW_START_ATTACH,
 };
 
-/// 密度峰窗口（分钟）。依据：细则 §1 P0-2「10 分钟窗滑弹幕行数 top-1」——
+/// 密度峰窗口（分钟）。依据：细则 §1「10 分钟窗滑弹幕行数 top-1」——
 /// 10 分钟是主播节奏的可操作颗粒（一首歌/一段杂谈的长度）。改它须改细则。
 pub const RECAP_PEAK_WINDOW_MINUTES: i64 = 10;
 /// 复读句达标线（归一化文本本场出现次数 ≥ 此值才计入 top-1 候选）。
@@ -61,7 +61,7 @@ pub const RECAP_REPEAT_MIN_COUNT: i64 = 3;
 /// 更老的场次对「回来过」的判定稀释成噪声。细则未钉死数值——命名留档。
 pub const RECAP_LOOKBACK_SESSIONS: usize = 10;
 
-/// 身份轨常量（D1 换轨：复盘侧身份键前缀应 trio——replay/comment/ws）。
+/// 身份轨常量（换轨：复盘侧身份键前缀应 trio——replay/comment/ws）。
 const TRACK_REPLAY: &str = "replay";
 const TRACK_WS: &str = "ws";
 const TRACK_COMMENT: &str = "comment";
@@ -149,7 +149,7 @@ pub fn normalize_sentence(text: &str) -> String {
 }
 
 /// 身份键 = `轨|uid`。空 uid 恒为空串（不把「无身份行」升格成一个发言者）。
-/// 跨轨不合并：同数字 uid 跨轨即不同键（D2 冻结共识，杜绝 crc/mid 慢性认亲）。
+/// 跨轨不合并：同数字 uid 跨轨即不同键（冻结共识，杜绝 crc/mid 慢性认亲）。
 fn track_identity(track: &str, uid: &str) -> String {
     if uid.is_empty() {
         String::new()
@@ -297,7 +297,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
                     || source == SOURCE_WS_SC
                     || source == SOURCE_WS_ENTRY =>
             {
-                // D1 换轨：WS 窗的场次窗 = facts["session"]（窗线共享同一窗边界）；
+                // 换轨：WS 窗的场次窗 = facts["session"]（窗线共享同一窗边界）；
                 // 身份 = 真实 mid（`sender_uid_mid`，非回放 crc 轨）。
                 let start_ts = unix_to_i64(&facts["session"]["start_timestamp"]).unwrap_or(0);
                 let end_ts = unix_to_i64(&facts["session"]["end_timestamp"]).unwrap_or(0);
@@ -358,7 +358,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
 
     let mut unknown: Vec<String> = Vec::new();
     if sessions.is_empty() {
-        // 轮2-R1-A⑥b：评论落了库但零场次窗可归 ≠ 「没碰到」——诚实分轨：
+        // 评论落了库但零场次窗可归 ≠ 「没碰到」——诚实分轨：
         // 数字照实给、空场原因照实说，四数不成立也绝不判无罪释放。
         if !comments.is_empty() {
             let ccount = comments.len();
@@ -428,7 +428,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         .collect();
     let current_key = (current.start_ts, current.end_ts);
 
-    // D1 换轨诚实面：当前场次若含 WS 窗且起点为 attach（未收 LIVE 校正），
+    // 换轨诚实面：当前场次若含 WS 窗且起点为 attach（未收 LIVE 校正），
     // 诚实标记进未知行（绝不补段、绝不假装起点=开播）。
     if let Some(meta) = ws_windows
         .iter()
@@ -483,7 +483,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         .collect();
     let speakers = current_speakers.len() as i64;
 
-    // D1 换轨诚实面：身份键跨轨不合并——本场发言多轨并出场时逐轨人数明示
+    // 换轨诚实面：身份键跨轨不合并——本场发言多轨并出场时逐轨人数明示
     // （replay/ws/comment 三轨两两或三三同场），绝不假装是同一套 uid 的并集。
     let mut rail_speakers: Vec<(&str, usize)> = Vec::new();
     for (track, label) in [
@@ -660,7 +660,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
 }
 
 // ---------------------------------------------------------------------------
-// P0-4（复盘解耦）：T0 出卡口——collect 尾与 pipeline 尾共用。四个数是语料
+// 复盘解耦：T0 出卡口——collect 尾与 pipeline 尾共用。四个数是语料
 // 纯规则（零 AI）；AI 命名只作「留存判定」：同场次同数面旧命名继续有效，
 // 数面一动即显式作废（命名本身仍只在 pipeline 尾的 AI 窗里新跑）。
 // ---------------------------------------------------------------------------
@@ -955,8 +955,8 @@ mod round2_tests {
         store
     }
 
-    /// 轮2-R1-A⑥a→D1 换轨：弹幕+评论同场都有人 → 未知行必须明示身份轨多轨并出场
-    /// （D2 冻结共识：replay|crc 与 comment|mid 是两套身份轨，**跨轨不合并**）。
+    /// 弹幕+评论同场都有人 → 未知行必须明示身份轨多轨并出场
+    /// （冻结共识：replay|crc 与 comment|mid 是两套身份轨，**跨轨不合并**）。
     #[test]
     fn mixed_kinds_raise_identity_risk_row() {
         let store = fresh_store("mix");
@@ -989,7 +989,7 @@ mod round2_tests {
         );
     }
 
-    /// 轮2-R1-A⑥b：零弹幕但只有评论 —— 诚实形态：文案必须承认「落了 N 条评论、
+    /// 零弹幕但只有评论 —— 诚实形态：文案必须承认「落了 N 条评论、
     /// 零场次窗可归」，不许说「没碰到」。
     #[test]
     fn comments_without_sessions_are_honestly_named_not_dropped() {
@@ -1020,7 +1020,7 @@ mod round2_tests {
     }
 }
 
-/// D1 换轨（R2-批2-2B）钉组：WS 窗进复盘——区间折叠（重叠即并场）、WS rid 优先、
+/// 换轨钉组：WS 窗进复盘——区间折叠（重叠即并场）、WS rid 优先、
 /// `轨|uid` 身份跨轨不合并、attach 起点诚实未知行。
 #[cfg(test)]
 mod ws_recap_tests {
@@ -1273,7 +1273,7 @@ mod ws_recap_tests {
     }
 }
 
-/// P0-4 钉组：refresh_recap_card 的纪律面值——零 AI 出卡 / refresh run 记账 /
+/// 钉组：refresh_recap_card 的纪律面值——零 AI 出卡 / refresh run 记账 /
 /// 旧命名留存 / 数面动即作废。布景直接写 shared/*.json（真通道读面）。
 #[cfg(test)]
 mod refresh_tests {

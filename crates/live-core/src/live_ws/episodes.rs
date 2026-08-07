@@ -1,6 +1,6 @@
-//! WS 事件流 → 场次窗 Episode 化（R2 批 2 D1 第二段 2B「WS 挂接 + 复盘卡换源」）。
+//! WS 事件流 → 场次窗 Episode 化（第二段 2B「WS 挂接 + 复盘卡换源」）。
 //!
-//! 体积备书（轮3）：超 500 线 = recorder 状态体 + LineRender/Episode 双形态 +
+//! 体积备书：超 500 线 = recorder 状态体 + LineRender/Episode 双形态 +
 //! 本模块自带的大型钉组（fixture 构建成本随轴走）。缝 = 钉组后移 tests/ 单独包；
 //! 真实需求到（第二挂接面/第二事实源）时再动。
 //!
@@ -459,7 +459,7 @@ pub struct WsWindowCapture {
     pub end_reason: String,
 }
 
-/// WS 场窗 Episode 入账：P0-1 房间语料通道（`ingest_room_corpus`，同一 upsert
+/// WS 场窗 Episode 入账：房间语料通道（`ingest_room_corpus`，同一 upsert
 /// 纪律：`viewer:_room` 守卫节点 + `ingest_platform_facts` 逐条撞库）。
 ///
 /// 幂等键纪律（同窗重跑/断线重发背靠背相邻窗）：同一平台行（同 room/ts/uid/文本）

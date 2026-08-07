@@ -119,7 +119,7 @@ const EXPECTED_TOOL_SEQUENCE: [&str; 3] = [
 /// 调用面只许 env-gated 入口（live-audience agent-check 需 VTD_AGENT_CHECK=1，
 /// AGENTS.md 质量门禁·真实端点 opt-in）。
 pub async fn run_agent_check_async(config: &Config) -> Result<Value, AgentRuntimeError> {
-    // Z3/P0-4：探针同样过全局限速闸（默认 0=关闭则无感）。
+    // 探针同样过全局限速闸（默认 0=关闭则无感）。
     let runtime = AgentRuntime::from_ai_config(&config.ai)?.with_throttle(std::sync::Arc::new(
         super::throttle::Throttle::build(config.ai.agent.max_llm_rpm),
     ));

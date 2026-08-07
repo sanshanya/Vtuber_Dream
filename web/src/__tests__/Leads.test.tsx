@@ -1,10 +1,10 @@
 /**
- * G2-B（工作项 2）线索页审批钮钉团：
+ * 线索页审批钮钉团：
  * - 击「批准」→ POST 审批缝 URL（/api/rooms/{room}/leads/{lead_id}/approve）；
  *   成功后 overview 查询失效重取（待审行从盘面撤退）。
  * - 404 / 422 分支：就地 danger 徽标透传服务端错文。
  * - 标题行：L1 自治位可读（overview leads.autonomy）。
- * FE-F2 追加钉团：
+ * 追加钉团：
  * - leads.summary 的 [lead_ledger] 裸文本行不上墙（人话面 = 五态徽标）；
  * - 空账（五态全零）显式空态一句（leads-empty）；
  * - 在飞期间批准钮禁且双击只发一次 POST（busy 护栏 + disabled 双保险）。
@@ -18,7 +18,7 @@ import { Leads } from "../pages/Leads";
 interface FetchCall {
   method: string;
   path: string;
-  /** POST 体原样（D9 拒因断言用；未带体为空串）。 */
+  /** POST 体原样（拒因断言用；未带体为空串）。 */
   body?: string;
 }
 
@@ -331,7 +331,7 @@ describe("FE-F2：LeadsBlock 呈现与在飞护栏", () => {
 });
 
 /**
- * D9/R2-批6 追加钉团：
+ * 拒绝缝追加钉团：
  * - 行级「拒绝」钮一击即飞、无 dialog（window.confirm 零调用）；全空拒因合法提交
  *   （POST 体 {"chips":[],"note":""} → 服务端 NULL/NULL 留档）。
  * - 行内拒因区 = 四 chip 白名单 + 一条注记；选中后提交 → POST 体携带 chips/note。
@@ -384,7 +384,7 @@ describe("D9：拒绝面与持有人分组", () => {
       calls,
     );
     renderLeads(calls);
-    // D9：组默认折叠——闭合态其内容仍在 DOM 中，行级钮可查询可一击。
+    // 组默认折叠——闭合态其内容仍在 DOM 中，行级钮可查询可一击。
     const group = await screen.findByTestId("lead-group-audience");
     expect(group.hasAttribute("open")).toBe(false);
     fireEvent.click(await screen.findByTestId("lead-reject-abc123def4567890"));

@@ -5,7 +5,7 @@ import { api } from "../api";
 import { errText, fmtCny } from "../format";
 
 /**
- * 设置页（D6/Z6 件5）：白名单五键可写（cookie/api_key/base_url/model/run_budget_cny），
+ * 设置页：白名单五键可写（cookie/api_key/base_url/model/run_budget_cny），
  * 空串 = 保持现值；预算键回显现值（null=未设闸）兼月度实耗行（/api/budget）。
  * 其余面只读直出，永不回显原文。
  */

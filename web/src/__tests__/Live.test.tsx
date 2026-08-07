@@ -1,10 +1,10 @@
 /**
- * 直播数据页钉团（Z4）：
+ * 直播数据页钉团：
  * - live 面缺档 → 「档案面未建立」+ 空态解说（不臆造对比）；
  * - records 空 → live-empty 空态；
  * - 最后一场 + 7 天内场次 → 「上周均值」卡呈算术平均（1 场样本口径直陈）；
  * - 周窗未含旧场（>7 天）→ 不纳入均值（对比未开句式）。
- * FE-F2 追加钉团：
+ * 追加钉团：
  * - status 汉化三态（ok→正常 / error→接口故障 / 缺省→—）；
  * - error 分支独立错文并透传 errors 字段（不再撞「主播暂无回放列表」空态）；
  * - 指标列落地（观看/弹幕/在线）：记录真实携带才渲值，缺席 → —。
@@ -27,7 +27,7 @@ function renderLive() {
   const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });
   render(
     <QueryClientProvider client={queryClient}>
-      {/* Z4d：页面动作栏含 KindRunButton，需 RunTracker 上下文。 */}
+      {/* 页面动作栏含 KindRunButton，需 RunTracker 上下文。 */}
       <RunTrackerProvider>
         <Live roomId="983" />
       </RunTrackerProvider>

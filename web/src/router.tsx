@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 /**
  * 极简 hash 路由（现布局单房间，room uid 不进路径，页面经 /api/rooms 自解析）。
  * 不引 react-router（M5 依赖面有意收敛）。
- * R2#9 收口：路径表 = 下方 ROUTES 数据表（单一真源，表即文档——原头注双源已删）；
+ * 路径表 = 下方 ROUTES 数据表（单一真源，表即文档——原头注双源已删）；
  * App.tsx 只负责页面键 → 组件实体的装配（图谱懒加载缝开在那侧）。
  */
 
@@ -24,7 +24,7 @@ export interface RouteEntry {
   page: PageId;
 }
 
-/** Z3 定稿序对齐导航：主播介绍 → 舰长列表（+个人树/局部图）→ 直播数据 → 线索账本 → 图谱 → 设置。 */
+/** 定稿序对齐导航：主播介绍 → 舰长列表（+个人树/局部图）→ 直播数据 → 线索账本 → 图谱 → 设置。 */
 export const ROUTES: RouteEntry[] = [
   { seg: [], page: "streamer" },
   { seg: ["viewers"], page: "viewers" },
@@ -58,7 +58,7 @@ export function matchRoute(segments: string[]): MatchedRoute | null {
   return null;
 }
 
-/** 轮2-R1-B2：段解码容错——畸形百分号序列（%zz/孤儿 %/截断 UTF-8）让
+/** 段解码容错——畸形百分号序列（%zz/孤儿 %/截断 UTF-8）让
  *  decodeURIComponent 抛 URIError，render 期整页白屏；回落原段（路由面照走）。 */
 export function decodeSegment(segment: string): string {
   try {
@@ -81,4 +81,4 @@ export function useHashPath(): string[] {
     .filter(Boolean)
     .map(decodeSegment);
 }
-// 注：ag4-F10——navigate() 助函数曾导出而零调用，已删；链接纪律 = href="#/..." + 手写编码。
+// 注：navigate() 助函数曾导出而零调用，已删；链接纪律 = href="#/..." + 手写编码。

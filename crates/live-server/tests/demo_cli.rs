@@ -78,7 +78,7 @@ fn demo_end_to_end_and_default_demo_namespace() {
     let payload: serde_json::Value =
         serde_json::from_slice(&output.stdout).expect("stdout 是 JSON");
     assert_eq!(payload["status"], "complete");
-    // D-6：默认输出根 = output_dir 同级 _demo
+    // 默认输出根 = output_dir 同级 _demo
     let demo_root = root.join("_demo");
     assert_eq!(
         payload["output_dir"].as_str().unwrap().replace('\\', "/"),

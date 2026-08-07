@@ -1,5 +1,5 @@
 /**
- * 头像统一面（R2#7）：face 有 → NoReferrerImg（防盗链）；无 → 首字 fallback 块
+ * 头像统一面：face 有 → NoReferrerImg（防盗链）；无 → 首字 fallback 块
  * （role="img" + aria-label，占位是谁直陈，不是装饰性灰盘）。
  *
  * 防盗链源头注（全站只此一份，其余消费点引用即可）：B站 hdslb 图床校验 Referer——

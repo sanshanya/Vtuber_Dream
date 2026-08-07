@@ -391,7 +391,7 @@ impl BilibiliClient {
                     }
                 }
             }
-            // 轮2-R1-A②：收杆判据必须含「本轮零新增」——normalize 落 none（uid 脏/0）
+            // 收杆判据必须含「本轮零新增」——normalize 落 none（uid 脏/0）
             // 或全撞 seen 时 members 不长，listing 满页也照滚；修前据此判定 page 无界
             // 自增对服务器灌包（钉：guard_members_full_pages_of_junk…恰好 1 请求）。
             // 语义边界：满页但有新增 → 续页有正当预期；满页零新增 → 后续页只会更重走

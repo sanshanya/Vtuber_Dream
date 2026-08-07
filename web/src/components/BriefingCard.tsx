@@ -1,5 +1,5 @@
 /**
- * Z5/C1（终裁 P0-5）：制片人简报首屏卡——结论先行、句句带出处、沉默可呈现。
+ * 制片人简报首屏卡（终裁）——结论先行、句句带出处、沉默可呈现。
  *
  * 三种呈现态（T1 三态纪律在本卡的最小完整示范）：
  * 1. 未生成（situation 未 complete / 无 analysis）→ 空缺位 ≤ 首屏 40%：一句现状
@@ -9,10 +9,10 @@
  * 3. 就绪 → 句句带出处：每条 refs 以 episode_index 解析归属观众，可点跳个人树页；
  *    未解析的 ref（超 500 帽/旧缓存）退化为不可点 chip，绝不指向臆造目标。
  *
- * ag4-F6 同源纪律：analysis 是 LLM 产物无 schema 校验，所有取值过护栏（形状不符
+ * 同源纪律：analysis 是 LLM 产物无 schema 校验，所有取值过护栏（形状不符
  * 一律当沉默态处理，不抛）。
  *
- * 轮2-R1-B2：双查询（viewers/overview）下沉为 props——父页已持同 key 数据，
+ * 双查询（viewers/overview）下沉为 props——父页已持同 key 数据，
  * 卡不再自备数据源（纯呈现件，测试免 QueryClient/fetch stub）。
  */
 import { fmtTime } from "../format";
@@ -28,11 +28,11 @@ interface BriefSentence {
 export interface EpisodeIndexEntry {
   viewer_id?: string;
   title?: string | null;
-  /** R2 批5 D5：Episode 源（video/dynamic/…/live_ws_*）——芯片副文本类型词的素材。 */
+  /** Episode 源（video/dynamic/…/live_ws_*）——芯片副文本类型词的素材。 */
   source?: string | null;
 }
 
-/** D5 类型词表：芯片副文本=「什么」（Episode 类型），未知源原样落、缺席=空串
+/** 类型词表：芯片副文本=「什么」（Episode 类型），未知源原样落、缺席=空串
  *  （芯片只落人名，绝不臆造类型）。 */
 export function episodeKindWord(source: string | null | undefined): string {
   switch (source ?? "") {
@@ -63,7 +63,7 @@ interface RefGroup {
   refs: string[];
 }
 
-/** D5：refs 按证据持有人（viewer_id）归并为一组，保首次出现序；未解析（无归属面）
+/** refs 按证据持有人（viewer_id）归并为一组，保首次出现序；未解析（无归属面）
  *  的 ref 单独成组、viewerId=null——降级渲染权归调用处。 */
 export function groupRefsByHolder(
   refs: string[],
@@ -181,7 +181,7 @@ export function BriefingCard({
                     覆盖 {sentence.range[0]} ~ {sentence.range[1]}
                   </span>
                 )}
-                {/* R2 批5 D5：芯片=「谁说的·什么」——同一持有人多证据合并一芯携计数；
+                {/* 芯片=「谁说的·什么」——同一持有人多证据合并一芯携计数；
                     标签=持有人名·类型词（不再拿 Episode 标题冒充持有人），点击行为不变
                     （入树并定位），title 载全量 ref 编号。未解析 ref 保持原样降级。 */}
                 {groupRefsByHolder(sentence.episodeRefs, index).map((group) => {

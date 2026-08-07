@@ -1,6 +1,6 @@
 //! M3-B 调查工具面（只读）+ ResearchService（缓存 / 按运行隔离的注册表 / 搜索快照）。
 //!
-//! 体积备书（轮3）：超 500 线是粘合成形——工具工厂闭包按名借 ctx 的 HasResearch/
+//! 体积备书：超 500 线是粘合成形——工具工厂闭包按名借 ctx 的 HasResearch/
 //! HasStore 引用，ResearchService 的缓存读写/快照落盘/tuple 软锚集中不拆。潜在缝=
 //! 服务面拆 `research.rs` 收 Service + Cache；当真实需求到（G2 扩展工具族）再动。
 //!
@@ -37,7 +37,7 @@ use super::runtime::{AgentTool, RunCtx, SubmissionSlot};
 pub const SEARCH_QUERY_MAX_CHARS: usize = 500;
 /// bvid 截断（Python `bvid.strip()[:100]`）。
 pub const BVID_MAX_CHARS: usize = 100;
-/// verify_videos 批内 bvid 上限（R1-2：超过直接拒绝整批）。
+/// verify_videos 批内 bvid 上限（超过直接拒绝整批）。
 pub const VERIFY_VIDEOS_MAX_ITEMS: usize = 10;
 /// verify_videos 错误行的短原因截断（只留「类别 + 短原因」，保持轻量）。
 pub const VERIFY_VIDEO_ERROR_CHARS: usize = 120;
@@ -49,7 +49,7 @@ pub const SEARCH_ENTITY_LIMIT_CAP: i64 = 100;
 pub const SEARCH_LIMIT_HARD_CAP: i64 = 50;
 /// search_bilibili_videos 的默认 limit（Python 函数签名默认值）。
 pub const SEARCH_DEFAULT_LIMIT: i64 = 10;
-/// result_id 形态：程序生成的 sha1 hex 前 16 位（安全批 R1：注册表/快照只接受此形态，
+/// result_id 形态：程序生成的 sha1 hex 前 16 位（安全批：注册表/快照只接受此形态，
 /// 防 cache 文件被篡改后注入目录穿越 id 或伪造可引用 id）。
 pub const SEARCH_RESULT_ID_CHARS: usize = 16;
 /// search_entity_candidates 的默认 limit（Python 函数签名默认值）。
@@ -83,7 +83,7 @@ fn tag_strip_re() -> &'static Regex {
 }
 
 /// Python `str(value or "")`：falsy（None/false/0/""/[]/{}）→ ""，其余 str()。
-/// 轮2-R1-B2 互指：agent/pipeline.rs 的 or_empty 是窄口径变体（只喂预算/索引标量槽，
+/// 互指：agent/pipeline.rs 的 or_empty 是窄口径变体（只喂预算/索引标量槽，
 /// 无 other→py_str 臂）；本件是工具面完整判定，两边职责不同，禁止合并。
 pub(crate) fn py_or_empty(value: Option<&Value>) -> String {
     match value {
@@ -162,7 +162,7 @@ pub struct ResearchService {
     pub client: BilibiliClient,
     per_query_cap: i64,
     /// M4-C 多观众并发：子实例跳过 research_cache.json 落盘（写归宿 = master 在
-    /// viewer_ids 序 join 点 absorb_from——save 内嵌其中；kickoff 补遗 D-11）。
+    /// viewer_ids 序 join 点 absorb_from——save 内嵌其中；补遗）。
     persist: bool,
 }
 
@@ -231,7 +231,7 @@ impl ResearchService {
         self.save();
     }
 
-    /// 持久化时点 = 每次 record_search 与每次 absorb_from（r2-F7：曾宣称的
+    /// 持久化时点 = 每次 record_search 与每次 absorb_from（曾宣称的
     /// 「pipeline 尽头显式持久化/零调用方 save_now」注释漂移已删；崩溃窗口内
     /// research_cache.json 滞后由修复7快照兜底，为书面化的现状语义）。
     fn save(&self) {
@@ -318,7 +318,7 @@ impl ResearchService {
             "owner": if get("owner").is_object() { get("owner") } else { json!({}) },
             "stat": if get("stat").is_object() { get("stat") } else { json!({}) },
             "pubdate": get("pubdate"),
-            // R1-2：verify_videos 批原语的紧凑行需要 aid/duration——与 get_bilibili_video
+            // verify_videos 批原语的紧凑行需要 aid/duration——与 get_bilibili_video
             // 同族（同详情端点、同缓存），在整形对象上增补这两个字段（纯增量，Python 无此工具）。
             "aid": get("aid"),
             "duration": get("duration"),
@@ -507,7 +507,7 @@ pub fn get_bilibili_video_tool<C: HasResearch>() -> AgentTool<C> {
     }
 }
 
-/// `verify_videos`：批量核验真实B站视频（R1-2 批原语，Python 无对应工具）。
+/// `verify_videos`：批量核验真实B站视频（批原语，Python 无对应工具）。
 ///
 /// 契约：
 /// - 参数 `bvids: string[]`，最多 {@link VERIFY_VIDEOS_MAX_ITEMS} 个，超限整批拒绝；

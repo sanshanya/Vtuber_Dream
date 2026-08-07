@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../api";
 
 /**
- * 存档页（R2 批6 D11）：存活天数 + 周健康四数 + 里程碑日历。
+ * 存档页：存活天数 + 周健康四数 + 里程碑日历。
  * 纯事实派生面（铁律#3：零 AI）——数字与文案全部来自服务端
  * crates/live-server/src/app/archive.rs 的派生计算，前端只做 presence
  * 判别与「未就位」措辞兜底，绝不补齐不存在的数字。

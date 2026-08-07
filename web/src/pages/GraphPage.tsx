@@ -12,7 +12,7 @@ type ElementDefinition = cytoscapeTypes.ElementDefinition;
 import { api } from "../api";
 
 /**
- * 层色（FE-F2）：唯一锚点 = styles.css 末尾 :root --layer-* 变量组。
+ * 层色：唯一锚点 = styles.css 末尾 :root --layer-* 变量组。
  * 画布不能消费 var()——cytoscape 3.31 实测 `background-color: var(--x)` 判 invalid
  * 并回落基色，故 KIND_COLORS 保留同名变量色值的字面锚（逐行标注对应变量）；
  * DOM 面（详情 kind 徽标等）一律 inline 引用变量（KIND_LAYER_VARS）。
@@ -27,7 +27,7 @@ const KIND_COLORS: Record<string, string> = {
   Action: "#b45309", // var(--layer-action)
 };
 
-/** 同色号的 CSS 变量引用形——DOM inline style 用（styles.css FE-F2 区块）。 */
+/** 同色号的 CSS 变量引用形——DOM inline style 用（styles.css 追加段）。 */
 export const KIND_LAYER_VARS: Record<string, string> = {
   Viewer: "var(--layer-viewer)",
   Entity: "var(--layer-entity)",
@@ -46,7 +46,7 @@ const EDGE_LABELS: Record<string, string> = {
 };
 
 /**
- * cose 布局迭代随规模降档（ag5-F9/ag4-F9）：小图跑满收敛即可，大图压档保响应
+ * cose 布局迭代随规模降档：小图跑满收敛即可，大图压档保响应
  * （animate:false 同步语义下 numIter 直接决定主线程阻塞时长）。
  */
 const GRAPH_LAYOUT_THRESHOLD_NODES = 500;
@@ -82,7 +82,7 @@ export function markStreamer(elements: unknown[], streamerUid: string): unknown[
 }
 
 // ---------------------------------------------------------------------------
-// FE-F2/R1#5：节点详情结构化
+// 节点详情结构化
 // ---------------------------------------------------------------------------
 
 export interface NodeDetailRow {
@@ -278,9 +278,8 @@ function stylePreset(): Stylesheet[] {
 }
 
 /**
- * 图谱页（D3：整体 + 局部两用）。elements 来自 cytoscape DTO（B2）；
+ * 图谱页（整体 + 局部两用）。elements 来自 cytoscape DTO；
  * properties 原样透传 → edge_label 与状态压平在 JS 侧做（style 预设吃 data 字段）。
- * FE-F2/R1#5+R3#9：
  * - 节点详情面按已知 kind 渲结构化键值（describeNode），兜底才 <details> JSON；
  * - a11y：canvas 外叠 hidden-but-focusable 节点清单（.graph-a11y）——li 可聚焦，
  *   Enter 选中节点（与 canvas 点选同路：cy.select → select 事件 → 详情面）。
@@ -297,7 +296,7 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedData, setSelectedData] = useState<unknown>(null);
 
-  // 轮2-R1-A④：useMemo 把 elements 钉在稳定内容依赖上——裸 markStreamer 每次
+  // useMemo 把 elements 钉在稳定内容依赖上——裸 markStreamer 每次
   // render 返新数组引用，下游 useEffect([elements]) 对纯内容变化照触发，
   // 导致每次点击整 cytoscape.destroy()+重建+清选中（「点节点看详情」曾因此失效）。
   const streamerUid = rooms.data?.[0]?.streamer_uid ?? "";
@@ -309,7 +308,7 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
 
   useEffect(() => {
     if (!mount.current || elements.length === 0) return;
-    // ag4-F9：cy 随新数据重建 → 侧栏选中态必须清，不得残留旧节点 JSON。
+    // cy 随新数据重建 → 侧栏选中态必须清，不得残留旧节点 JSON。
     setSelected(null);
     setSelectedData(null);
     const shaped: ElementDefinition[] = (elements as any[]).map((element) => {
@@ -347,7 +346,7 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
     };
   }, [elements]);
 
-  // FE-F2/R3#9：节点清单（边不入册）与身份推导（边谓词 → 角色信号）。
+  // 节点清单（边不入册）与身份推导（边谓词 → 角色信号）。
   const nodeIndex = elements
     .map((element) => asRecord(asRecord(element).data))
     .filter((data) => typeof data.kind === "string" && typeof data.id === "string")
@@ -391,13 +390,13 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
     <section className="section">
       <div className="section-title">
         <h2>{vid ? `局部图 · ${vid}` : "整体图谱"}</h2>
-        {/* Z6/P0-6：默认折叠视图如实标注——细节层（场次/证据）不进首载。 */}
+        {/* 默认折叠视图如实标注——细节层（场次/证据）不进首载。 */}
         {!vid && (
           <span className="muted small" data-testid="graph-fold-hint">
             默认折叠视图：仅人与关注点主骨架
           </span>
         )}
-        {/* R2 批5 D6：状态/行动机会图例行清退——简报已承接态势展示面，图例只解
+        {/* 状态/行动机会图例行清退——简报已承接态势展示面，图例只解
             说当前实有节点类（Situation/Action 节点机制仍在，复出以色辨位）。 */}
         <div className="legend">
           <span><i className="dot fact" /> Viewer/舰长</span>

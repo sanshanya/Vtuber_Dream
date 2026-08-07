@@ -3,7 +3,7 @@
 //! - `write_json`：父目录建齐 + 同名 `.tmp` 文件原子替换（中断不留半截 JSON）。
 //! - `archive_current_snapshot`：采集前把现状复制到 `history/snapshots/<UTC戳>`；
 //!   `graph/` 与 `history/` 永不归档、永不删除（长期时序记忆，AGENTS.md 时序优先）；
-//!   `ai/` 同样不归档不下刀（Z5：重采保 AI——认知层由 input_hash 失效驱动，不归档即
+//!   `ai/` 同样不归档不下刀（重采保 AI——认知层由 input_hash 失效驱动，不归档即
 //!   不复制冗余）。
 //! - `reset_output`：只清事实面（viewers/site/shared 与顶层 JSON）；graph/history/ai
 //!   三面永不下刀（长期记忆 + 认知层缓存各自续命，失效由 input_hash 判定，不靠山刀）。
@@ -43,7 +43,7 @@ pub fn read_json(path: &Path) -> StorageResult<Option<Value>> {
 }
 
 /// Python `write_json`：indent=2、UTF-8 直写、tmp 原子替换。
-/// 轮2-R1-B：tmp 名唯一化（pid+进程内序号，对齐 server 写键的 `.live-server-tmp-{pid}`
+/// tmp 名唯一化（pid+进程内序号，对齐 server 写键的 `.live-server-tmp-{pid}`
 /// 约定）——固定 `<file>.tmp` 在同路径并发写时会共享 tmp，先 rename 的一方把另一方的
 /// tmp 挪走，后者必炸 NotFound（两个 live-audience 进程同指一 output_dir 是真实场景；
 /// 单进程内经 Registry 409 互斥）。
@@ -79,7 +79,7 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> StorageResult<()> {
     let entries = std::fs::read_dir(source).map_err(|err| io_err("read_dir", source, err))?;
     for entry in entries {
         let entry = entry.map_err(|err| io_err("read_dir entry", source, err))?;
-        // 轮2-R2：跳过隐藏临时件（`.live-core-tmp-*` 写中/崩溃孤儿）——
+        // 跳过隐藏临时件（`.live-core-tmp-*` 写中/崩溃孤儿）——
         // 快照只承载事实面，写中态文件没有归档价值。
         if entry.file_name().to_string_lossy().starts_with('.') {
             continue;
@@ -96,7 +96,7 @@ fn copy_dir_recursive(source: &Path, target: &Path) -> StorageResult<()> {
 }
 
 /// Python `archive_current_snapshot`：归档 collection.json/streamer.json/viewers/shared；
-/// Z5 后 ai/ 不再归档（ai/ 本就保活在 reset 之外，再复制只是磁盘churn——时间序列
+/// ai/ 不再归档（ai/ 本就保活在 reset 之外，再复制只是磁盘churn——时间序列
 /// 快照保持事实层口径，AI 侧的真凭据在图库与 input_hash 里）。
 /// 没有任何候选时返回 None；同秒冲突追加 `-1/-2/...` 后缀。
 pub fn archive_current_snapshot(root: &Path) -> StorageResult<Option<PathBuf>> {
@@ -136,7 +136,7 @@ pub fn archive_current_snapshot(root: &Path) -> StorageResult<Option<PathBuf>> {
 }
 
 /// Python `reset_output`：清出下轮采集的事实工作面；graph/history 长期记忆不动，
-/// ai/ 认知层亦永不下刀（Z5 重采保 AI——AI 缓存的失效由 pipeline 的 per-viewer
+/// ai/ 认知层亦永不下刀（重采保 AI——AI 缓存的失效由 pipeline 的 per-viewer
 /// input_hash 驱动：事实未变即哈希相等 → 复用零 LLM；事实变了仅该舰长重判）。
 /// 原「整目录推倒」是 CLI 全量时代的混代防御，complete_cache 落地后该防御已由
 /// 细粒度哈希接管，整删只剩成本副作用（重采一轮全员 AI 重跑）。
@@ -206,7 +206,7 @@ mod tests {
         assert!(leftovers.is_empty(), "tmp 残留：{leftovers:?}");
     }
 
-    /// 轮2-R1-B 红钉：同路径并发写不得共享固定 tmp——两个写者共用 `<file>.tmp` 时，
+    /// 红钉：同路径并发写不得共享固定 tmp——两个写者共用 `<file>.tmp` 时，
     /// 先 rename 的一方会把另一方的 tmp 挪走，后者 rename 必炸 NotFound（或内容撕裂）。
     /// 修复后二者各写各的唯一 tmp，双双 Ok，终态必为其中一份完整 payload。
     #[test]
@@ -253,7 +253,7 @@ mod tests {
         assert!(read_json(&bad).unwrap_err().contains("invalid JSON"));
     }
 
-    /// Z5 重采保 AI：事实三面清空，graph/history（长期记忆）与 ai/（认知层缓存）
+    /// 重采保 AI：事实三面清空，graph/history（长期记忆）与 ai/（认知层缓存）
     /// 三面保活——失效归 input_hash 管，不归目录山刀管。
     #[test]
     fn reset_output_clears_fact_surface_but_keeps_memory_and_ai() {
@@ -280,7 +280,7 @@ mod tests {
         assert!(!root.join("analysis.json").exists());
     }
 
-    /// MXA-11（r7）：leads.jsonl 是 M4.x 线索账本——在 reset_output 白名单**外**，
+    /// leads.jsonl 是 M4.x 线索账本——在 reset_output 白名单**外**，
     /// 必须永不被清（工作面清理不碰长期账本；「存在性钉」防改清单时灭账）。
     #[test]
     fn reset_output_never_sweeps_leads_ledger() {
@@ -291,7 +291,7 @@ mod tests {
         assert!(root.join("leads.jsonl").exists(), "账本必须在 reset 中存活");
     }
 
-    /// 轮2-R2 复审立项（low）：write/rename 之间进程崩溃会留孤儿
+    /// write/rename 之间进程崩溃会留孤儿
     /// `.{name}.live-core-tmp-*`（唯一命名不复用、不自愈）；归档若原样整拷，
     /// 垃圾态会污染时间序列快照——归档必须滤掉隐藏临时件。
     #[test]
@@ -351,7 +351,7 @@ mod tests {
         assert_eq!(archive_current_snapshot(root.path()).unwrap(), None);
     }
 
-    /// Z5：ai/ 不在归档候选内——它在 reset 里保活，复制进快照只是磁盘 churn；
+    /// ai/ 不在归档候选内——它在 reset 里保活，复制进快照只是磁盘 churn；
     /// 时间序列快照保持事实层口径（单有 ai/ 甚至不足以成档）。
     #[test]
     fn archive_never_sweeps_ai_dir() {

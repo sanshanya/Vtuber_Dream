@@ -1,13 +1,13 @@
 //! 读路径（M3 工具面基元）：search_entities / references / episodes；
 //! 面板聚合读：graph_stats / run_pair_delta（live-server 概览指标条消费）。
 //!
-//! 体积备书（轮3）：超 500 线 = 两族消费者同卷（LLM 工具读 + server 概览读），
+//! 体积备书：超 500 线 = 两族消费者同卷（LLM 工具读 + server 概览读），
 //! 共 row_to_map/fetch_all 读原语。缝 = 概览统计收 `stats.rs`；真实需求到再动。
 //!
 //! 上限口径：全局 GRAPH_QUERY_LIMIT = 500（references 分块 / episodes 钳制），
 //! search_entities 另封顶 100（Python parity，SEARCH_ENTITIES_LIMIT）。
 //!
-//! 轮2-R1-B2 头注纠偏：旧注「query()/project() 已删、待 M2/M3 复出」是 M1 时代的
+//! 头注纠偏：旧注「query()/project() 已删、待 M2/M3 复出」是 M1 时代的
 //! 遗嘱——事实面早已复出：graph_stats/run_pair_delta 服役于 server 概览，
 //! 全量投影像在 project.rs（独立模块，stats 段与本文件 graph_stats 共用
 //! count_scalar，口径差异见各自注释：project 带 current_run_id 过滤，本文件为全存量）。
@@ -491,18 +491,18 @@ pub fn query(
 
 use serde_json::json;
 
-/// 相邻两次 complete 运行的对照窗口取数（kickoff D3/D4）：
+/// 相邻两次 complete 运行的对照窗口取数：
 /// - 双运行定位 = graph_runs 中 completed_at 最近的两行；不足两行 → 基线态。
 /// - interest 口径 = ai_state INTERESTED_IN 边在两端点时刻的 as-of 集合差分
 ///   （valid_from <= t AND (valid_to IS NULL OR valid_to > t)）；
 /// - guards 口径 = GUARD_OF 边在 (from.completed_at, to.completed_at] 窗口内的开/闭。
 ///
-/// 轮2-R1-B2 字序承重注：所有「时间比较」都是 TEXT 列上的字符串序——成立前提是
+/// 字序承重注：所有「时间比较」都是 TEXT 列上的字符串序——成立前提是
 /// 全库时间戳统一 now_iso 形态（`%Y-%m-%dT%H:%M:%S.ffffff+00:00`，定长、UTC、零填充，
 /// 字序≡时序）。任何写入面改用别的格式（如本地时区尾/无微秒段）都会静默撕裂
 /// 这里的 as-of 语义——写时间戳只许走 now_iso/unix_secs_to_iso。
 ///
-/// 首页指标条数据面（Z3：旧版 report 顶部数字条的透传口径——与 project.rs
+/// 首页指标条数据面（旧版 report 顶部数字条的透传口径——与 project.rs
 /// 的 stats 段同款 COUNT SQL，「全存量」口径无 run_id 过滤）。`relations` = 全部
 /// 当前有效边（valid_to IS NULL）；`interest_states` 为其中 AI 状态子集。
 pub fn graph_stats(store: &Store) -> Result<Value> {
@@ -522,10 +522,10 @@ pub fn graph_stats(store: &Store) -> Result<Value> {
 /// `{ baseline_only, from_run_id, to_run_id,
 ///    interest: { opened, closed, changed }, guards: { added, removed } }`。
 pub fn run_pair_delta(store: &Store) -> Result<Value> {
-    // P0-4（复盘解耦）：recap-refresh 类 run（collect 尾的四个数刷新）不进对照窗——
+    // 复盘解耦：recap-refresh 类 run（collect 尾的四个数刷新）不进对照窗——
     // 它只重放语料、零 AI 边；若放行，每日 collect 的 refresh 会把「vs 上轮感知」
     // 稀释成「无变化」。maintenance 类照旧参窗（它真实地动过边，排除即是谎报）。
-    // 轮2-R2-2B：ws-record 同族同理——WS 采录 run 零 AI 边，只看作 graph 语料重放的
+    // ws-record 同族同理——WS 采录 run 零 AI 边，只看作 graph 语料重放的
     // 容器账；对照窗只比较有感知产出的 run。若放行，collect 尾的 WS 采录会把对照窗
     // 稀释成「vs 上轮 WS 采录」而非「vs 上轮感知」。
     let sql = format!(
@@ -683,9 +683,9 @@ fn pair_key(row: &Map<String, Value>) -> String {
     )
 }
 
-/// D10（O-2 列表面：舰长卡→关系卡）出勤二数：`(场次到访计数, 末次到场 unix_ts)`。
+/// 出勤二数（舰长卡→关系卡）：`(场次到访计数, 末次到场 unix_ts)`。
 ///
-/// 口径：只认 `_room` 语料三条 live_ws_* 轨（D1 场次窗是「她来播的时候他在」的
+/// 口径：只认 `_room` 语料三条 live_ws_* 轨（场次窗是「她来播的时候他在」的
 /// 唯一主源；回放弹幕轨道是历史重放，不算「来」）。无 WS 记录 → (0, None)——
 /// 前端落「未知」而不是 0（没有在播窗的数据 ≠ 从没来过）。
 pub fn room_presence(store: &Store, uid: &str) -> Result<(i64, Option<i64>)> {
@@ -711,7 +711,7 @@ pub fn room_presence(store: &Store, uid: &str) -> Result<(i64, Option<i64>)> {
     Ok((visits, last_ts))
 }
 
-/// D10：该观众名下最新条目的发布日期（published_at 恒 ISO 或缺失——MAX 字序即
+/// 该观众名下最新条目的发布日期（published_at 恒 ISO 或缺失——MAX 字序即
 /// 时序，舱内统一 now_iso 纪律下成立；全缺 → None）。
 pub fn latest_published_at(store: &Store, viewer_id: &str) -> Result<Option<String>> {
     let row = select_all(

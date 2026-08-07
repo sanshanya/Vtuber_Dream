@@ -1,5 +1,5 @@
 /**
- * 预算阻断卡钉团（Z6 件2/件5 前端行动面）：
+ * 预算阻断卡钉团（前端行动面）：
  * - outcome.budget_block → 卡片渲染（预估/预算/新鲜比/hint verbatim + 去设置页链接）；
  * - 「只跑增量」/「只推简报」→ 保留 kind/viewer_uid + spend_mode 随行重发 POST；
  * - ai_audience 无单人感知段 → 不摆两选钮（服务端 422 面），只留链路；

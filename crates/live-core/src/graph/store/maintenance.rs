@@ -1,6 +1,6 @@
 //! §8.6 手动图维护：entity_split / entity_merge（store 受控写入族同族）。
 //!
-//! 体积备书（轮3）：超 500 线 = split/merge 两大件共享 Store impl 内私有件
+//! 体积备书：超 500 线 = split/merge 两大件共享 Store impl 内私有件
 //! （canon_ids/savepoint/detail 账），同族隔离卷。缝 = 各成 split.rs/merge.rs
 //! 需把私有 helper 上提到 store 根，收益不抵扩散——留同卷。
 //!
@@ -330,7 +330,7 @@ impl Store {
         })
     }
 
-    /// `entity_drop(entity_id)`（R2 批1 实体归并：AI 裁决的整货删除面）。
+    /// `entity_drop(entity_id)`（实体归并：AI 裁决的整货删除面）。
     /// 关闭语义 = 行删除（entities 无 valid_to 列），范围：
     /// - 前置：实体必须存在；`source_kind` 必须为 `'ai'`（平台事实
     ///   bilibili_tag/bilibili_category/creator 等是 UI 事实面，读面依赖其存在，

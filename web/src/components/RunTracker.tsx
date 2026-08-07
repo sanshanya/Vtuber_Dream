@@ -1,11 +1,11 @@
 /**
- * RunTracker（ag4-F1/ag5-F3 裁定）：run 追踪从 RunButton 组件局部态提升为
+ * RunTracker：run 追踪从 RunButton 组件局部态提升为
  * App 级共享 context——任何提交口（hero 触发钮、Viewers 单查、ViewerTree 空轴）
  * 都把 run_id 登记进同一位置；轮询、终态 invalidate、丢失提示三链在此单点兑现：
  *
- * - 轮询只在 active 期启用（D8 口径不变）；
- * - 终态当拍失效全部数据查询，但排除 ["run"] 键族自身（ag4-F4 收窄）；
- * - 轮询 404（服务重启丢内存 registry）→ 显式「run 记录已丢失」提示（ag4-F3/ag5-F1），
+ * - 轮询只在 active 期启用（口径不变）；
+ * - 终态当拍失效全部数据查询，但排除 ["run"] 键族自身（收窄）；
+ * - 轮询 404（服务重启丢内存 registry）→ 显式「run 记录已丢失」提示，
  *   弹新 track 或 dismissLost 前常驻，不再静默吞掉。
  *
  * design §10「全部页头触发钮」裁决：hero 单点挂载 RunButton（App.tsx），
@@ -74,11 +74,11 @@ export function RunTrackerProvider({ children }: { children: ReactNode }) {
     if (record.data !== undefined) setLastRecord(record.data);
   }, [record.data]);
 
-  // W2/r4-F2：active 只能反映「正在追踪」的 run——丢失后 runId=null，lastRecord
+  // active 只能反映「正在追踪」的 run——丢失后 runId=null，lastRecord
   // 可能还停在 in-flight 帧，不能把旧帧的进行中状态当现实。
   const active = runId !== null && isRunActive(data);
 
-  // ag4-F3/ag5-F1：轮询错误显形——404 语义 = 服务重启丢 registry。
+  // 轮询错误显形——404 语义 = 服务重启丢 registry。
   useEffect(() => {
     if (runId !== null && record.isError) {
       const error: unknown = record.error;
@@ -91,7 +91,7 @@ export function RunTrackerProvider({ children }: { children: ReactNode }) {
     }
   }, [runId, record.isError, record.error]);
 
-  // ag4-F1：终态当拍失效数据查询（ag4-F4：排除 ["run"] 键族自身）。
+  // 终态当拍失效数据查询（排除 ["run"] 键族自身）。
   const status = record.data?.status;
   const previousStatus = useRef<string | undefined>(undefined);
   useEffect(() => {
@@ -104,7 +104,7 @@ export function RunTrackerProvider({ children }: { children: ReactNode }) {
     }
   }, [status, queryClient]);
 
-  // W2/r4-F1：新 run 接管时旧帧必须清场——否则 record.data 未就位的那一拍，
+  // 新 run 接管时旧帧必须清场——否则 record.data 未就位的那一拍，
   // 徽标会把上一个 run 的终局帧贴到新 run 头上。
   const track = useCallback((next: string) => {
     previousStatus.current = undefined;

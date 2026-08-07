@@ -226,7 +226,7 @@ fn v6_db_upgrades_in_place_and_preserves_data() {
         version, GRAPH_SCHEMA_VERSION,
         "升级后 user_version 必须 = GRAPH_SCHEMA_VERSION"
     );
-    // D9：v6→v9 连锁段就绪——拒因两列在升级库上可按 NULL 态写出/读回
+    // v6→v9 连锁段就绪——拒因两列在升级库上可按 NULL 态写出/读回
     let rejects_cols: Vec<String> = store
         .conn
         .prepare("PRAGMA table_info(discovery_leads)")
@@ -583,7 +583,7 @@ fn episode_lead_linkage_write_face() {
 }
 
 // ---------------------------------------------------------------------------
-// P0-3 事实密度 annex 钉团（迭代细则 v1 §1 验收钉三连）：
+// 事实密度 annex 钉团（迭代细则 v1 §1 验收钉三连）：
 // ①零新增时 annex 与前轮逐字节一致；
 // ②每行可回链 lead→episode（行尾 anchor = episode_id 尾 12，且 real 查得回）；
 // ③总长度上限：超出即行边界断 + 封顶句（防账本滚大吞 prompt）。
@@ -763,7 +763,7 @@ fn p0_3_annex_total_chars_cap_and_line_boundary_cut() {
 }
 
 // ---------------------------------------------------------------------------
-// D9/R2-批6：reject 留档——chips/note 列读写、NULL=全空合法态、旧 JSONL 兼容
+// reject 留档——chips/note 列读写、NULL=全空合法态、旧 JSONL 兼容
 // ---------------------------------------------------------------------------
 
 /// insert/update 双写点 + 读回：chips 走 JSON 文本列、note 走宽松文本列；

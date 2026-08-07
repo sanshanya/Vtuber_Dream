@@ -128,7 +128,7 @@ pub fn collect_room_comments(
     Ok((payload, request_delta, count))
 }
 
-/// 轮2-R1-B：返回 Option——rpid 与正文双空的行没有幂等身份
+/// 返回 Option——rpid 与正文双空的行没有幂等身份
 /// （content_id("","") 会把跨目标垃圾行塌缩成同 id 互相覆盖），宁缺毋滥直接拒收。
 fn normalize_comment(room_id: &str, type_id: i64, oid: &str, item: &Value) -> Option<Value> {
     let kind = if type_id == 1 { "video" } else { "dynamic" };

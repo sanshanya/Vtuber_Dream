@@ -1,5 +1,5 @@
 /**
- * api 错误信道钉（ag5-F4 / ag5-F6 / ag4-F3 裁定）：
+ * api 错误信道钉（错误信封化裁定）：
  * - 非 JSON 错误体不得抛裸 SyntaxError → ApiError(status + 「非 JSON」文案)；
  * - 服务端 {error} 体 → message 原样透传、status 保留（404 供 Streamer 首页空态判别）；
  * - 空体成功 → null 载荷不炸。

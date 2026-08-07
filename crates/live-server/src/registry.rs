@@ -1,4 +1,4 @@
-//! run 注册表 + spawn 通道（D3：内存 run registry + events 流）。
+//! run 注册表 + spawn 通道（内存 run registry + events 流）。
 //!
 //! 状态机照 design §10：
 //! `queued → collecting → episodes → per_viewer_ai → audience → done | failed(partial)`
@@ -19,7 +19,7 @@ use live_core::live_ws::session::{WsSessionConfig, run_session};
 use serde_json::{Value, json};
 
 /// 状态序（design §10 枚举字面）。
-/// 轮2-R2-2B（D1 WS 挂接）：`recording` 插在 collecting/episodes 之间——收集尾段
+/// WS 弹幕窗挂接：`recording` 插在 collecting/episodes 之间——收集尾段
 /// 探测在播时开 WS 场次窗，关窗后进既有 episodes 相（原状态机不破）。
 pub const RUN_STATES: [&str; 8] = [
     "queued",
@@ -32,10 +32,10 @@ pub const RUN_STATES: [&str; 8] = [
     "failed",
 ];
 
-/// POST 可提的 kind 值（D3）。
+/// POST 可提的 kind 值。
 pub const RUN_KINDS: [&str; 2] = ["full", "viewer"];
 
-/// Z4 动作平面：采集/AI 分层的四个新 kind（全名面，冻结给 api.ts 的 RunKind）。
+/// 动作平面：采集/AI 分层的四个新 kind（全名面，冻结给 api.ts 的 RunKind）。
 /// collect_* 是事实层（不进 baseline/pipeline）；ai_* 是认知层（不进 collector——
 /// AI 幂等靠 pipeline 既有 complete_cache(input_hash) 短路，不碰采集面）。
 pub const RUN_KINDS_STAGED: [&str; 4] = [
@@ -78,7 +78,7 @@ pub struct Registry {
     inner: Arc<Mutex<RegistryInner>>,
 }
 
-/// W1/r3-F2：登记簿保留上限——run 记录是进程内短时热数据，常驻只增不删会缓慢膨胀；
+/// 登记簿保留上限——run 记录是进程内短时热数据，常驻只增不删会缓慢膨胀；
 /// 终态记录按 started_at 从旧到新剔除至不越顶（在飞 run 永远保留，demo 快照被剔时也
 /// 不影响幂等——demo_snapshot_id 兜底重栽，见 demo_snapshot）。
 pub const RUN_RECORDS_CAP: usize = 64;
@@ -89,7 +89,7 @@ impl Registry {
     }
 
     pub fn register(&self, record: RunRecord) -> Arc<Mutex<RunRecord>> {
-        // r3-F2：与 set_status/finalize 同一家纪律——状态字面只许出自 RUN_STATES。
+        // 与 set_status/finalize 同一家纪律——状态字面只许出自 RUN_STATES。
         debug_assert!(
             RUN_STATES.contains(&record.status.as_str()),
             "未登记的 run 状态字面：{}（请补入 RUN_STATES）",
@@ -145,7 +145,7 @@ impl Registry {
     }
 
     pub fn set_status(&self, run_id: &str, status: &str) {
-        // D3/ag3-F4：状态字面必须来自 RUN_STATES——register 之外的第一消费点，debug 期撕破错拼。
+        // 状态字面必须来自 RUN_STATES——register 之外的第一消费点，debug 期撕破错拼。
         debug_assert!(
             RUN_STATES.contains(&status),
             "未登记的 run 状态字面：{status}（请补入 RUN_STATES）"
@@ -173,7 +173,7 @@ impl Registry {
 
     /// demo 静态快照（G3 裁决）：合成、无网络、幂等——重复 POST /api/runs 返回同一记录。
     ///
-    /// W1/r2-F4/r3-F3：查/栽/回填必须同锁——旧实现先查后栽，两个并发 POST 能各自栽出
+    /// 查/栽/回填必须同锁——旧实现先查后栽，两个并发 POST 能各自栽出
     /// 一份快照并把 demo_snapshot_id 互相踩掉。快照记录若被 GC 剔走，id 兜底重栽。
     pub fn demo_snapshot(&self, outcome: Value) -> Arc<Mutex<RunRecord>> {
         let mut inner = self.inner.lock().expect("registry poisoned");
@@ -210,7 +210,7 @@ impl Registry {
     ///
     /// seam：`bilibili_hosts` 在测试面注入（wiremock）；生产 None → BilibiliClient::new。
     ///
-    /// D3/ag3-F3 单 run 互斥：判定与登记在同一把 inner 锁内完成；已有未终态 run →
+    /// 单 run 互斥：判定与登记在同一把 inner 锁内完成；已有未终态 run →
     /// Err(在飞 run_id)，由调用方折 409。demo 快照恒 done 不挡路。
     pub fn spawn_run(
         registry: &Registry,
@@ -222,7 +222,7 @@ impl Registry {
         bilibili_hosts: Option<(String, String)>,
     ) -> Result<Arc<Mutex<RunRecord>>, String> {
         let events = Arc::new(RunEvents::new());
-        // ag3-F3：互斥判定 + 登记同锁，杜绝「双 POST 同时通过检查」窗口。
+        // 互斥判定 + 登记同锁，杜绝「双 POST 同时通过检查」窗口。
         let shared = {
             let mut inner = registry.inner.lock().expect("registry poisoned");
             if let Some(active) = inner.records.values().find_map(|candidate| {
@@ -258,7 +258,7 @@ impl Registry {
         let kind = kind.to_string();
         // 走账面（件3）需要在 config 被内层闭包整体吞掉前留一份 output_dir 克隆。
         let output_dir = config.output_dir.clone();
-        // ag3-F2：catch_unwind 收尾自持三件套——线程体整体 move 走原句柄。
+        // catch_unwind 收尾自持三件套——线程体整体 move 走原句柄。
         let panic_registry = registry.clone();
         let panic_run_id = run_id.clone();
         let panic_events = events.clone();
@@ -277,7 +277,7 @@ impl Registry {
                 let kind_for_outcome = kind.clone();
                 let outcome_events = events.clone();
                 emit(&format!("[runs] 触发 kind={kind}"));
-                // Z4：动作平面分层——ai_* 只跑认知层（baseline+pipeline），不进 collector
+                // 动作平面分层——ai_* 只跑认知层（baseline+pipeline），不进 collector
                 // 的 reset_output 屠刀（采集 + reset 会灭 ai/ 缓存，动作语义必须干净）。
                 let ai_only = matches!(kind.as_str(), "ai_viewers" | "ai_audience");
                 if !ai_only {
@@ -328,9 +328,9 @@ impl Registry {
                         )
                         .map_err(|error| PipelineError::Message(error.to_string()))?;
                         if collect_only {
-                            // Z4a：collect_* 是事实层终局——collect_with_client 的汇总
+                            // collect_* 是事实层终局——collect_with_client 的汇总
                             // 即 outcome（无 viewer_failures 键 → 默认 0 → 非 partial）。
-                            // 轮2-R2-2B（D1 挂接）：collect 尾段在播采录——live_ws_record==1
+                            // collect 尾段在播采录——live_ws_record==1
                             // 且房间在播时开 WS 弹幕窗（recording 相），窗线入账 graph
                             // （kind=ws-record，对照窗排除见 query.rs 头注），摘要并进
                             // outcome 的 ws_window 键；采录失败响铃不绊 run（采集产物
@@ -361,7 +361,7 @@ impl Registry {
                                     emit(&format!("[WS] 弹幕窗采录失败：{error}"));
                                 }
                             }
-                            // P0-4（复盘解耦）：事实层终局顺带 T0 出卡——下播复盘四个数
+                            //（复盘解耦）事实层终局顺带 T0 出卡——下播复盘四个数
                             // 是 shared/ 语料的纯规则聚合（零 AI），不再等全量感知；
                             // AI 命名仍属认知层（缺位 = null）。出卡失败响铃不绊 run
                             // （采集产物已落盘，卡只是呈现层读物）。
@@ -403,9 +403,9 @@ impl Registry {
                             apply_viewer: None,
                             bilibili_origin: bilibili_hosts.clone(),
                             stage: Some(&stage_listener),
-                            // Z4b：ai_viewers 在 viewer 阶段写盘后收——不跑 audience。
+                            // ai_viewers 在 viewer 阶段写盘后收——不跑 audience。
                             stop_after_viewer_stage: kind_for_outcome == "ai_viewers",
-                            // R2 批4 D3：省钱模式由 POST 动作面解析落位（Normal=默认全量）。
+                            // 省钱模式由 POST 动作面解析落位（Normal=默认全量）。
                             spend_mode,
                         };
                         match kind_for_outcome.as_str() {
@@ -467,10 +467,10 @@ impl Registry {
                             );
                         }
                         _ => {
-                            // partial 的数据源是 pipeline 契约键 viewer_stage_status（ag3-F1）。
+                            // partial 的数据源是 pipeline 契约键 viewer_stage_status。
                             // 注意 collect 期失败时上一轮 state 已被 collector 归档进
                             // history/snapshots，此处读到缺文件 → false，是正确语义。
-                            // W1/r2-F5 时间闸：updated_at 早于本轮 started_at 的 complete
+                            // 时间闸：updated_at 早于本轮 started_at 的 complete
                             // 是旧轮次底票，不算本轮数据面（baseline/pipeline 期失败时
                             // collect 的旧 state 不再回来，窗口真实存在）。
                             let stage_complete =
@@ -494,7 +494,7 @@ impl Registry {
                 }
             };
             if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
-                // ag3-F2：spawn 线程恐慌不得静默弃档——记录 failed + 留 events 足迹。
+                // spawn 线程恐慌不得静默弃档——记录 failed + 留 events 足迹。
                 let message = panic
                     .downcast_ref::<&str>()
                     .map(|text| (*text).to_string())
@@ -521,7 +521,7 @@ impl Registry {
     }
 }
 
-/// 轮2-R2-2B（D1 挂接）：collect 尾段的 WS 弹幕窗采录。
+/// collect 尾段的 WS 弹幕窗采录。
 ///
 /// 流程（run 状态机 `collecting → recording → episodes`）：
 /// 1. `live_ws_record==1` 且房间在播（`get_room_live_status==1`）才开窗；
@@ -664,7 +664,7 @@ fn record_ws_window(
     Ok(Some(ws_window))
 }
 
-/// ag3-F1：partial = viewer 阶段已完整走得一遍。数据源是 pipeline 契约键
+/// partial = viewer 阶段已完整走得一遍。数据源是 pipeline 契约键
 /// `viewer_stage_status`（pipeline.rs fail_run_and_state 写 "complete"/"incomplete"）；
 /// 宽松的 `status` 键恒为 "failed"/"interrupted"，任何 `status==viewer_complete`
 /// 式读法都会假阴性（且若真有 status=="viewer_complete" 则假阳性）。
@@ -677,7 +677,7 @@ pub fn viewer_stage_complete(state_path: &std::path::Path) -> bool {
         == Some("complete")
 }
 
-/// W1/r2-F5：partial 判定的时间闸——state.json 的 complete 必须是「本轮」的。
+/// partial 判定的时间闸——state.json 的 complete 必须是「本轮」的。
 /// baseline/pipeline 期失败时 collect 前留下的旧 state.json 可能在原地侥幸带
 /// viewer_stage_status=complete；`updated_at < started_at` 即旧票，不算本轮数据面。
 /// ISO 时间戳同形：字符串序 == 时间序；缺 updated_at 按旧票处理（保守 false）。
@@ -696,7 +696,7 @@ pub fn viewer_stage_complete_since(state_path: &std::path::Path, started_at: &st
         .is_some_and(|updated_at| updated_at >= started_at)
 }
 
-/// GET /api/runs/{id} 的回返形状（D3：轮询载体）。
+/// GET /api/runs/{id} 的回返形状（轮询载体）。
 pub fn run_to_json(record: &RunRecord) -> Value {
     json!({
         "run_id": record.run_id,
@@ -712,7 +712,7 @@ pub fn run_to_json(record: &RunRecord) -> Value {
     })
 }
 
-/// Z6 件3：run 到终态（done|failed，含恐慌收尾与预算阻断）即追加一行
+/// run 到终态（done|failed，含恐慌收尾与预算阻断）即追加一行
 /// `{output_dir}/history.jsonl`（append-only，一行一 JSON）。
 ///
 /// 实耗语料 = `{output_dir}/ai/state.json` 的 usage 键（collect_* 无 AI → 全零）；

@@ -1,9 +1,9 @@
 /**
- * 存档页钉团（R2 批6 D11）：
+ * 存档页钉团：
  * - 页面三态纪律（T1）：loading / error / empty 三种具名知识态，禁止混用；
  * - 已知面渲染：存活天数 / 周健康四数 / 里程碑日历 DOM 钉（数字全部来自服务端
  *   archive.rs 成文，前端不臆造）；未知行「未就位」措辞与「缺乏起始锚点」逐字钉死；
- * - 导航口径（裁决 R2-γ）：主导航「存档」在位、「图谱」不在；#/graph 原路由仍可达。
+ * - 导航口径（裁决）：主导航「存档」在位、「图谱」不在；#/graph 原路由仍可达。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";

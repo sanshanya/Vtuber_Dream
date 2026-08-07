@@ -1,6 +1,6 @@
 //! 线索账本（design §8.4 + §9.2 行 254 G2 JSONL→表迁移）。
 //!
-//! 体积备书（轮3）：超 500 线 = 账本状态机 + JSONL→表迁移卫 + P0-3 annex 回喂。
+//! 体积备书：超 500 线 = 账本状态机 + JSONL→表迁移卫 + annex 回喂。
 //! annex 段只在「consumed」一行与账本体耦合——可分 `runs/annex.rs`，待 annex 条规
 //! 增生再动（现在拆是切正交设计面，无收益）。
 //!
@@ -9,13 +9,13 @@
 //!   同键任意状态再入账 → OR IGNORE 跳行（幂等）。
 //! - 状态机：pending_approval →（审批缝端点 / L1 自治）approved →
 //!   （collect 尾段按预算消费）consumed + yield_count；人工可改 rejected
-//!   （D9 一击终态，拒因留档）；适配器无映射的类型写 deferred。
+//!   （一击终态，拒因留档）；适配器无映射的类型写 deferred。
 //!   禁倒退路径（approve_transition / reject_transition 唯一裁决点）。
 //! - 迁移：`migrate_jsonl` 把 M4.x 的 `output_dir/leads.jsonl` 一次性导入表
 //!   （守卫解析——坏行响铃不动文件；dedupe_key OR IGNORE 使重导入零新行），
 //!   随后把文件归档为 `leads.jsonl.bak`（不删除，可回滚；再撞名加序号）。
 //!   JSONL 读面兼容层**不留**——读本领只走表。
-//! - fail-open 血脉（kickoff D7 的表形态）：入账/写回失败以 Err 面世，调用方
+//! - fail-open 血脉（表形态）：入账/写回失败以 Err 面世，调用方
 //!   （pipeline/collect 尾段）响铃吞错——丢账目不丢感知，但绝不静默。
 //! - 摘要段 `summary_line` 是下轮 AI 上下文唯一消费者（移除实验体：不在则死）。
 
@@ -43,15 +43,15 @@ pub const AUDIENCE_VIEWER_ID: &str = "audience";
 pub const LEAD_TYPES: [&str; 4] = ["search", "creator", "video", "room"];
 /// annex 摘要里 latest_consumed 的 locator 展示宽度。
 pub const ANNEX_LOCATOR_CAP: usize = 80;
-/// D9/R2-批6 拒绝面：拒因 chip 白名单——前端 chip 渲染与 reject 端点校验的唯一
+/// 拒绝面：拒因 chip 白名单——前端 chip 渲染与 reject 端点校验的唯一
 /// 真源；reject_annex_line 聚合只携带与计数，不代行裁决（平台事实不可被 AI 改写，
 /// 裁决留在人工审批面）。暂定值留档：首批真实使用后校准。
 pub const REJECT_CHIP_REASONS: [&str; 4] = ["太泛", "不对路", "已知道", "做不了"];
-/// D9：单行拒因 chip 数上限（一拒几句因，不叠瓦）。
+/// 单行拒因 chip 数上限（一拒几句因，不叠瓦）。
 pub const REJECT_CHIP_CAP: usize = 4;
-/// D9：拒因 note 字数上限（观点留档，不打爆账本行）。
+/// 拒因 note 字数上限（观点留档，不打爆账本行）。
 pub const REJECT_NOTE_CAP: usize = 80;
-/// D9：reject_annex_line 最近注记的展示宽度（规格的「…40字截」）。
+/// reject_annex_line 最近注记的展示宽度（规格的「…40字截」）。
 pub const REJECT_ANNEX_NOTE_CHARS: usize = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -82,11 +82,11 @@ pub struct LedgerRow {
     pub yield_count: i64,
     #[serde(default)]
     pub resolution_note: String,
-    /// D9：拒绝提交的 chip（reject 端点白名单校验后落账）；
+    /// 拒绝提交的 chip（reject 端点白名单校验后落账）；
     /// `#[serde(default)]` 兼容旧 .bak/已归档 JSONL 行的缺席形态（空数组）。
     #[serde(default)]
     pub reject_chips: Vec<String>,
-    /// D9：拒绝注记（reject 端点自由文本；全空合法 = 空串）。
+    /// 拒绝注记（reject 端点自由文本；全空合法 = 空串）。
     #[serde(default)]
     pub reject_note: String,
 }
@@ -187,7 +187,7 @@ fn archive_target(output_dir: &Path) -> PathBuf {
 /// 归档为 `.bak`（不删除，可回滚）。
 ///
 /// - 无账本文件 → Ok(0)（零副作用）；
-/// - 文件存在但任一行不可解析 → Err 响铃，**文件原地不动、表不导半份**（MXA-1 同族守卫）；
+/// - 文件存在但任一行不可解析 → Err 响铃，**文件原地不动、表不导半份**（同族守卫）；
 /// - 入库失败（FK 违约等）→ Err，文件不归档，下轮重试面自愈合。
 pub fn migrate_jsonl(store: &Store, output_dir: &Path) -> Result<usize, StoreError> {
     let path = ledger_path(output_dir);
@@ -222,7 +222,7 @@ pub fn approve_transition(status: LeadStatus) -> Result<bool, String> {
     }
 }
 
-/// D9/R2-批6：reject 端点状态机辅助——`pending_approval → rejected` 是拒绝通道
+/// reject 端点状态机辅助——`pending_approval → rejected` 是拒绝通道
 /// 唯一合法迁移（一击终态：approved/consumed/deferred 源态一律 Err，禁倒退）。
 /// 返回值 = 是否需要落盘改写：
 /// - rejected 重放 → Ok(false)：幂等，终态相同、表不动（reject 端点据此决定
@@ -266,7 +266,7 @@ pub fn status_from_name(name: &str) -> Option<LeadStatus> {
 /// kickoff 契约摘要段。`viewer=None` → 全局行；`Some(v)` → 前缀 `viewer=… own_pending=…`。
 /// by_type 只计未被 reject 的行（死账不喂回下轮）。
 ///
-/// MXA-12（r2-F4+r6-Q6 加固）：账本是人工编辑面——
+/// 账本是人工编辑面——
 /// 1. by_type 键只走四型白名单，其余收拢进 `other`（手编毒行灌不进命题面）；
 /// 2. latest_consumed 的 locator 截 ANNEX_LOCATOR_CAP=80（文本维度有封顶）。
 pub fn summary_line(rows: &[LedgerRow], viewer: Option<&str>) -> String {
@@ -323,7 +323,7 @@ pub fn summary_line(rows: &[LedgerRow], viewer: Option<&str>) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// P0-3 消费回喂 annex（迭代细则 v1 §1）：summary_line 之外的事实密度段——
+// 消费回喂 annex（迭代细则 v1 §1）：summary_line 之外的事实密度段——
 // 每 consumed lead 一纸「事实密度」账单：触达的观众画像 + M 条证据摘要，
 // 行尾 episode_id 回链 lead→episode 链。幂等与单调漂移是铁律：
 // 零新增 → 同库逐字节一致；变化只随 consumed 漂移。
@@ -420,7 +420,7 @@ pub fn consumed_annex_lines(store: &Store, rows: &[LedgerRow]) -> Result<Vec<Str
     Ok(lines)
 }
 
-/// D9/R2-批6：拒绝回喂聚合线——`[lead_reject] 上轮被拒 N 条：太泛×1、不对路×2；最近注记「…40字截」`。
+/// 拒绝回喂聚合线——`[lead_reject] 上轮被拒 N 条：太泛×1、不对路×2；最近注记「…40字截」`。
 ///
 /// - 零被拒行 → Ok(None)：pipeline 零字节不打补丁（与旧版无拒绝态逐字节一致）；
 /// - 计数只折叠白名单内 chip（REJECT_CHIP_REASONS 定义序渲染，非 Unicode 序——
@@ -495,7 +495,7 @@ struct AnnexFact {
 }
 
 /// episodes.lead_id = discovery_leads.dedupe_key（FK 反向读面）。
-/// 排序 = episode_id 字典序：确定性锚（同一库零改变同输出——P0-3 松物料名需求）。
+/// 排序 = episode_id 字典序：确定性锚（同一库零改变同输出——松物料名需求）。
 fn query_episode_annex(store: &Store, dedupe_key: &str) -> Result<Vec<AnnexFact>, StoreError> {
     let mut stmt = store
         .conn
@@ -614,7 +614,7 @@ mod tests {
         assert_ne!(dedupe_key(&row), dedupe_key(&other));
     }
 
-    /// MXA-11（r5-F6）：JSONL/.bak 行字段序 = 冻结契约书写序（serde 声明序隐式
+    /// JSONL/.bak 行字段序 = 冻结契约书写序（serde 声明序隐式
     /// 保证过域，不做断言则一次字段重排即静默违约——归档本被线下工具消费）。
     #[test]
     fn ledger_row_field_order_pinned() {
@@ -646,7 +646,7 @@ mod tests {
         }
     }
 
-    /// MXA-11（r1）：空账本摘要形态钉——零账本状态下 pipeline annex 依赖此形态。
+    /// 空账本摘要形态钉——零账本状态下 pipeline annex 依赖此形态。
     #[test]
     fn empty_ledger_summary_pinned() {
         assert_eq!(
@@ -719,7 +719,7 @@ mod tests {
         assert!(line.contains("yield_total=10"));
     }
 
-    /// MXA-12（r2-F4/r6-Q6）：手编毒行进不了命题面——非白名单 type 收拢进
+    /// 手编毒行进不了命题面——非白名单 type 收拢进
     /// "other" 桶；长 locator 在 latest 里截断到上限。
     #[test]
     fn annex_folds_unknown_types_and_caps_locator() {
@@ -741,7 +741,7 @@ mod tests {
     }
 
     /// 四型真源一致性钉：validators 的 LEAD_TYPE_WHITELIST 指认 leads::LEAD_TYPES
-    /// （MXA-7 登记合轴：类型闸声明单源化）。
+    /// （类型闸声明单源化）。
     #[test]
     fn lead_types_single_source_pinned() {
         assert_eq!(crate::agent::validators::LEAD_TYPE_WHITELIST, LEAD_TYPES);
@@ -762,7 +762,7 @@ mod tests {
         assert_eq!(status_from_name("nonsense"), None);
     }
 
-    /// D9：reject 状态机——pending→Ok(true) 落盘；rejected 重放→Ok(false)（幂等
+    /// reject 状态机——pending→Ok(true) 落盘；rejected 重放→Ok(false)（幂等
     /// 终态、表不动）；approved/consumed/deferred 源态 → Err（422 规则错文）。
     /// 与 approve 同构：无倒退路径、错文带当前源态。
     #[test]
@@ -782,7 +782,7 @@ mod tests {
         assert_eq!(approve_transition(LeadStatus::Approved), Ok(false));
     }
 
-    /// D9：白名单与 cap 的字面钉（防误改/防复制错位——前端与服务端共享镜像）。
+    /// 白名单与 cap 的字面钉（防误改/防复制错位——前端与服务端共享镜像）。
     #[test]
     fn reject_constants_pinned() {
         assert_eq!(REJECT_CHIP_REASONS, ["太泛", "不对路", "已知道", "做不了"]);
@@ -792,7 +792,7 @@ mod tests {
         assert_eq!(REJECT_ANNEX_NOTE_CHARS, 40);
     }
 
-    /// D9：reject_annex_line 聚合形态——白名单定义序计数、非白名单残留尾随、
+    /// reject_annex_line 聚合形态——白名单定义序计数、非白名单残留尾随、
     /// 最近注记取写账序末条并截 40 字。
     #[test]
     fn reject_annex_line_aggregates_in_whitelist_order() {
@@ -811,7 +811,7 @@ mod tests {
             .insert_lead_rows(&[&r1, &r2, &r3, &r4], false)
             .expect("insert");
         let line = reject_annex_line(&store).unwrap().expect("有被拒行");
-        // 白名单定义序（太泛在前，忽略 r1 的提交序）；× 用 U+00D7
+        // 白名单定义序（太泛在前，不按提交序）；× 用 U+00D7
         assert_eq!(
             line,
             "[lead_reject] 上轮被拒 3 条：太泛×2、不对路×1、历史手编残值×1；最近注记「长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长」"
@@ -838,7 +838,7 @@ mod tests {
         assert_eq!(line, "[lead_reject] 上轮被拒 1 条：无拒因");
     }
 
-    /// D9：零被拒行 → None（零字节未响应面）且同库两次读逐字节一致（幂等钉）。
+    /// 零被拒行 → None（零字节未响应面）且同库两次读逐字节一致（幂等钉）。
     #[test]
     fn reject_annex_line_none_and_byte_identical() {
         let store = Store::open(Path::new(":memory:")).expect("store");

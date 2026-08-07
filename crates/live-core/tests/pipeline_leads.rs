@@ -259,7 +259,7 @@ fn audience_submission(root: &Path) -> Value {
         "communities": [], "situations": [], "content_opportunities": [],
         "individual_highlights": [], "content_calendar": [],
         "data_gaps": [], "safety_notes": [],
-        // MXA-6（r2-F7/r5-F3）：AUDIENCE_VIEWER_ID 支路必触线——一条 search lead。
+        // AUDIENCE_VIEWER_ID 支路必触线——一条 search lead。
         "leads": [{
             "type": "search", "locator": "异环 实机",
             "motivation": "全员聚合实体缺少实机语料校各自推断。",
@@ -382,7 +382,7 @@ async fn leads_end_to_end_and_rerun_ledger_stable() {
     .expect("run1 complete");
     assert_eq!(result["status"], "complete");
 
-    // ── 账本行：两条（viewer 一条 + audience 一条，MXA-6），字段按 kickoff 契约 ──
+    // ── 账本行：两条（viewer 一条 + audience 一条），字段按 kickoff 契约 ──
     let rows = table_rows(tmp.path());
     assert_eq!(rows.len(), 2);
     let row = &rows[0];
@@ -426,7 +426,7 @@ async fn leads_end_to_end_and_rerun_ledger_stable() {
         audience_body.contains("[lead_ledger]") && audience_body.contains("pending=1"),
         "audience prompt 缺账本 annex：{audience_body}"
     );
-    // D9：本轮无 rejected 行 → 拒绝回喂线零面世（旧版字节不变 pin）。
+    // 本轮无 rejected 行 → 拒绝回喂线零面世（旧版字节不变 pin）。
     assert!(
         !audience_body.contains("[lead_reject]"),
         "无被拒行不得注入 reject 线：{audience_body}"
@@ -444,7 +444,7 @@ async fn leads_end_to_end_and_rerun_ledger_stable() {
         .expect("viewer g1 prompt");
     assert!(!g1_body.contains("[lead_ledger]"), "{g1_body}");
 
-    // ── MXA-5 探针 ②（表形态）：账本漂移（行状态被人工翻动 + 删账毁掉幂等锚）
+    // ── 探针 ②（表形态）：账本漂移（行状态被人工翻动 + 删账毁掉幂等锚）
     // 不影响缓存命中：在「同输入 + 漂移账本」下 run2 不得发 LLM ──
     let mut drifted = rows.clone();
     drifted[0].status = leads::LeadStatus::Approved;
@@ -483,7 +483,7 @@ async fn leads_end_to_end_and_rerun_ledger_stable() {
         "缓存命中轮不应再发 LLM 请求（账本漂移不失效 input_hash）"
     );
 
-    // ── MXA-5 探针 ①（表形态）：删账后缓存命中重跑 → 账本被**重写回来**（补写真的发生）──
+    // ── 探针 ①（表形态）：删账后缓存命中重跑 → 账本被**重写回来**（补写真的发生）──
     {
         let store = Store::open(&tmp.path().join("graph/perception.sqlite3")).unwrap();
         store
@@ -564,7 +564,7 @@ async fn force_rerun_scoped_annex_and_ledger_deduped() {
     );
 }
 
-/// r2-F8 钉：checkpoint 通道可失败——Err 必须吞掉记 progress，不打断本观众队列。
+/// 钉：checkpoint 通道可失败——Err 必须吞掉记 progress，不打断本观众队列。
 #[tokio::test(flavor = "multi_thread")]
 async fn checkpoint_error_rings_progress_and_never_breaks_runs() {
     use std::sync::{Arc, Mutex};
@@ -605,7 +605,7 @@ async fn checkpoint_error_rings_progress_and_never_breaks_runs() {
     );
 }
 
-/// D9/R2-批6：reject 回喂线注入——手工置一条已拒行（chips + 注记），管线轮
+/// reject 回喂线注入——手工置一条已拒行（chips + 注记），管线轮
 /// viewer/audience 提示面必须带 `[lead_reject]` 分析行（白名单序计数 + 最近
 /// 注记截字）；无被拒行的零面世已在 leads_end_to_end 钉过（旧版字节 parity）。
 #[tokio::test(flavor = "multi_thread")]

@@ -1,4 +1,4 @@
-//! R2 批 2 D1「WS 弹幕窗」—— 协议 codec 层的合成字节流 fixture 钉（测试即规格）。
+//! 「WS 弹幕窗」—— 协议 codec 层的合成字节流 fixture 钉（测试即规格）。
 //!
 //! 协议真理源：bilibili-API-collect `docs/live/message_stream.md`（执行单
 //! 2026-08-06-r2-execution-spec.md 批 2 已核对；本文件按字节级/事件级/构造级三类钉死）。

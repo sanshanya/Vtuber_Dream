@@ -11,8 +11,8 @@ export interface UsageRow {
 
 /**
  * 金额估算（元）：按未命中价的两段式求和；无 usage → null（不硬编 0）。
- * ag4-F5：usage 存在但 input/output 任一缺键 → 同样 null——同屏 fmtInt 对缺键
- * 显「—」，金额不得静默 0 化（D8 单屏单口径）。
+ * usage 存在但 input/output 任一缺键 → 同样 null——同屏 fmtInt 对缺键
+ * 显「—」，金额不得静默 0 化（单屏单口径）。
  */
 export function estimateCostCny(usage: UsageRow | null | undefined): number | null {
   if (!usage) return null;
@@ -49,7 +49,7 @@ export function fmtInt(value: number | null | undefined): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "—";
 }
 
-/** unknown 捕获件 → 用户可读本（Error 取 message，其余 String 化）：submit/加载面唯一口径（ag5-F4 同源）。 */
+/** unknown 捕获件 → 用户可读本（Error 取 message，其余 String 化）：submit/加载面唯一口径（与 api 错误信道同源）。 */
 export function errText(error: unknown): string {
   return String(error instanceof Error ? error.message : error);
 }

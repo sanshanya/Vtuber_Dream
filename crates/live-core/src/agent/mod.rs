@@ -3,7 +3,7 @@
 //! M3-B 挂载：tools（调查工具 + ResearchService）。
 //! M3-C 挂载：validators（终局校验台 +§9.1 修复 1/6/8 + leads）。
 //! M4-A 挂载：pipeline（输入小件：hash/usage/bundle/audience 索引）。
-//! Z3/P0-4 挂载：throttle（限速漏桶 leaky bucket——全局 LLM 请求节律门）。
+//! 挂载：throttle（限速漏桶 leaky bucket——全局 LLM 请求节律门）。
 
 pub mod budget;
 pub mod history;

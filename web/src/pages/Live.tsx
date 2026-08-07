@@ -1,12 +1,12 @@
 /**
- * 直播数据页（Z4）：默认对比「最后一场 vs 上周平均值」，其下场次档案表。
+ * 直播数据页：默认对比「最后一场 vs 上周平均值」，其下场次档案表。
  *
  * 数据面 = overview.live（shared/live_records.json 整场记录原样透传，B站
  * xlive/web-room/v1/record/getList 回放列表）。对比窗口口径：以最后一场开播时刻
  * 为锚、往前 7 天（含）内的其他场次取简单算术平均；样本 0 → 不臆造，显式空态。
  * 指标只呈现记录中真实存在的数值字段（时长恒由 start/end 差推导）——B站返回
  * 形状随账号/版本漂移，本页对所有可选字段做 presence 判别，不补齐不存在的数字。
- * FE-F2：
+ * 追加钉面：
  * - status 汉化三态（ok→正常 / error→接口故障 / 其他或缺省→—）；
  * - error 分支独立错文并透传 errors 数组（不再撞「主播暂无回放列表」空态）；
  * - 场次表落地「观看/弹幕/在线」三列——仅当本场记录真实携带该字段才渲值，无则 —。
@@ -33,7 +33,7 @@ interface LiveRecord {
   durationMin: number | null;
   area: string;
   cover: string;
-  /** FE-F2：指标列——null = 本场记录未携带该字段（渲 —，不补齐）。 */
+  /** 指标列——null = 本场记录未携带该字段（渲 —，不补齐）。 */
   watchNum: number | null;
   danmuNum: number | null;
   online: number | null;
@@ -56,7 +56,7 @@ function toRecord(row: Record<string, unknown>): LiveRecord {
   };
 }
 
-/** FE-F2/R1#2：status 汉化三态——ok→正常 / error→接口故障 / 其他或缺省→—。 */
+/** status 汉化三态——ok→正常 / error→接口故障 / 其他或缺省→—。 */
 const LIVE_STATUS_LABELS: Record<string, string> = {
   ok: "正常",
   error: "接口故障",
@@ -97,7 +97,7 @@ export function Live({ roomId }: { roomId: string }) {
   const live = overview.data?.live ?? null;
   const rows = Array.isArray(live?.records) ? (live.records as Array<Record<string, unknown>>) : [];
   const records = rows.map(toRecord).sort((a, b) => (b.start ?? 0) - (a.start ?? 0));
-  // FE-F2/R1#4：errors 数组原样透传。api.ts 的 OverviewView（F3 收口面）未把 errors
+  // errors 数组原样透传。api.ts 的 OverviewView（收口面）未把 errors
   // 写进窄形状——这里是 presence 护栏读（服务端 live_records.json 本就带 errors 键）；
   // 形状漂移时非字符串项丢弃，绝不臆造。
   const liveErrorsRaw = live === null ? undefined : (live as { errors?: unknown }).errors;
@@ -130,14 +130,14 @@ export function Live({ roomId }: { roomId: string }) {
               : `${liveStatusLabel(live.status)} · ${String(live.count ?? rows.length)} 场`}
           </span>
         </div>
-        {/* Z4d 动作落页：本页数据 = 主播采集（回放列表 + profile/投稿）产物，钮住本页。 */}
+        {/* 动作落页：本页数据 = 主播采集（回放列表 + profile/投稿）产物，钮住本页。 */}
         <div className="action-bar" data-testid="live-actions">
           <KindRunButton
             kind="collect_streamer"
             note="事实层：重抓主播 profile/投稿/直播回放（本页数据源）。舰长 AI 结论不受影响（保留为参考，信源有变会被标注）。"
           />
         </div>
-        {/* FE-F2/R1#4：error 与 empty 分家——接口故障要透传 errors，不混进空态句式。 */}
+        {/* error 与 empty 分家——接口故障要透传 errors，不混进空态句式。 */}
         {live?.status === "error" ? (
           <div className="notice" data-testid="live-error">
             回放接口故障——B站 record/getList 抓取失败
@@ -194,7 +194,7 @@ export function Live({ roomId }: { roomId: string }) {
                     <td>{r.start !== null ? fmtClock(r.start) : "—"}</td>
                     <td>{fmtDuration(r.durationMin)}</td>
                     <td>{r.area || "—"}</td>
-                    {/* FE-F2：指标列 presence 判别——本场记录真实携带才渲值，无则 —。 */}
+                    {/* 指标列 presence 判别——本场记录真实携带才渲值，无则 —。 */}
                     <td>{r.watchNum ?? "—"}</td>
                     <td>{r.danmuNum ?? "—"}</td>
                     <td>{r.online ?? "—"}</td>

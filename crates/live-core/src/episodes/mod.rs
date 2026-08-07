@@ -43,7 +43,7 @@ pub fn now_iso() -> String {
     )
 }
 
-/// 当前 unix 秒——与 `now_iso` 同一时钟面的整数锚（D1 WS 会话矩阵：
+/// 当前 unix 秒——与 `now_iso` 同一时钟面的整数锚（WS 会话矩阵：
 /// `WsRecorder::attach`/`on_event` 的 recv_ts 与 `run_session` 的 now 回调）。
 pub fn now_unix_secs() -> i64 {
     chrono::Utc::now().timestamp()
@@ -54,7 +54,7 @@ pub fn now_unix_secs() -> i64 {
 /// 需要 `or` truthiness（0/0.0 落槽）的调用点请走 collector 的 `or_chain`/层本身，
 /// 不要在本函数里改语义（hash_parts 的 `str(p or "")` 依赖此层的空串兜底）。
 /// unix 秒（Number 许 int/float、String 许十进制串；不可解析 → None）。
-/// 轮2-R1-B12：recap.rs 与 room_corpus.rs 的同名解析收敛到此。0/负值由调用方按
+/// recap.rs 与 room_corpus.rs 的同名解析收敛到此。0/负值由调用方按
 /// 「时间戳必须 > 0」的聚合口径另行过滤。
 pub fn value_unix_secs(value: &Value) -> Option<i64> {
     match value {

@@ -1,4 +1,4 @@
-//! M3-R1 安全批：LLM 传输错误的脱敏（review 8-agent 安全 M1）。
+//! 安全批：LLM 传输错误的脱敏。
 //!
 //! 红线（AGENTS.md 明确禁止）：reasoning_content 与 api_key 片段永不进 trace/日志/终态。
 //! 事故路径：async-openai 的 `OpenAIError::JSONDeserialize` Display 全量携带响应体

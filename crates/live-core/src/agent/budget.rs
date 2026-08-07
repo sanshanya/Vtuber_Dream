@@ -1,4 +1,4 @@
-//! R2 批4 D3「花费预算闸」核心件。证据锚 docs/2026-08-06-r2-roster-budget-evidence.md D3 条
+//! 「花费预算闸」核心件。证据锚 docs/2026-08-06-r2-roster-budget-evidence.md
 //! （22 舰长全量 ¥34.49、≈¥1.5/人、audience ≈¥1.5、基线 ≤¥3/轮被爆 11 倍）；口径 =
 //! web/src/format.ts estimateCostCny `(input×2+output×8)/1_000_000` CNY。
 
@@ -20,7 +20,7 @@ pub fn cost_cny(input_tokens: i64, output_tokens: i64) -> f64 {
         / 1_000_000.0
 }
 
-/// 省钱模式（D3 三选收窄两选：b「只跑分层」随 D2 名册分档冻结缺席）。
+/// 省钱模式（三选收窄两选：b「只跑分层」随名册分档冻结缺席）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SpendMode {
     /// 全量：名册全员扇出（默认，现状一字不动）。

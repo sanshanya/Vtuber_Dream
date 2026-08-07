@@ -4,7 +4,7 @@ import { useStartRun } from "../hooks/useStartRun";
 import { isRunActive, useRunTracker } from "./RunTracker";
 
 /**
- * 单查触发钮（ag5-F7：ViewerTree 空轴引导位）。提交成功 → run_id 登记进
+ * 单查触发钮（ViewerTree 空轴引导位）。提交成功 → run_id 登记进
  * 全局 RunTracker（终态后各页自动失效刷新）；进度不再本组件自显——hero 徽标承担。
  */
 export function SingleViewerRunButton({ vid, label }: { vid: string; label?: string }) {
@@ -17,7 +17,7 @@ export function SingleViewerRunButton({ vid, label }: { vid: string; label?: str
     clearError();
     setPending(true);
     try {
-      // R3-F1：viewer 属单飞互斥契约——409 错文在飞 id 由 useStartRun 转 RunTracker
+      // viewer 属单飞互斥契约——409 错文在飞 id 由 useStartRun 转 RunTracker
       // 跟随（与 KindRunButton 同构）并照返在飞 id：入口翻转成跟随态，不裸报错。
       const runId = await start({ kind: "viewer", viewer_uid: vid });
       if (runId !== null) setSubmitted(runId);
@@ -26,7 +26,7 @@ export function SingleViewerRunButton({ vid, label }: { vid: string; label?: str
     }
   }
 
-  // R3#4：submitted 不是永久锁——tracker 见我那条 run 的终态帧后释放，入口恢复可再发
+  // submitted 不是永久锁——tracker 见我那条 run 的终态帧后释放，入口恢复可再发
   //（丢失/被别口接管时不擅自放行：在飞与否以 tracker 可见帧为准）。
   const terminalSeen =
     submitted !== null &&

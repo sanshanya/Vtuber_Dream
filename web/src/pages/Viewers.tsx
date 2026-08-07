@@ -13,8 +13,8 @@ import { useStartRun } from "../hooks/useStartRun";
 export function Viewers({ roomId }: { roomId: string }) {
   const viewers = useQuery({ queryKey: ["viewers", roomId], queryFn: () => api.viewers(roomId) });
   const tracker = useRunTracker();
-  // ag4-F1/ag5-F3：单查 run 走 useStartRun 登记进全局 RunTracker——hero 徽标轮询 +
-  // 终态全失效兑现「完成后列表自动刷新」；R3-F1：409 错文在飞 id 由 hook 转跟随。
+  // 单查 run 走 useStartRun 登记进全局 RunTracker——hero 徽标轮询 +
+  // 终态全失效兑现「完成后列表自动刷新」；409 错文在飞 id 由 hook 转跟随。
   const { start, error: singleError, followedId } = useStartRun();
   const [singleUid, setSingleUid] = useState("");
   const [pending, setPending] = useState(false);
@@ -34,7 +34,6 @@ export function Viewers({ roomId }: { roomId: string }) {
     return <div className="state-loading">载入观众列表…</div>;
   }
   if (viewers.isError) {
-    // ag5-F5：错别字修正（面面→列表）。
     return <div className="notice">观众列表加载失败：{errText(viewers.error)}</div>;
   }
   const rows = viewers.data ?? [];
@@ -44,7 +43,7 @@ export function Viewers({ roomId }: { roomId: string }) {
       <div className="section-title">
         <h2>舰长列表</h2>
       </div>
-      {/* Z4d 动作落页：名单与每人近态 = collect_guards 产物；逐舰长感知 = ai_viewers
+      {/* 动作落页：名单与每人近态 = collect_guards 产物；逐舰长感知 = ai_viewers
           产物——钮住本页。重采会重建采集面并清空 AI 缓存（历史归档），文案直陈。 */}
       <div className="action-bar" data-testid="guard-actions">
         <KindRunButton
@@ -67,7 +66,7 @@ export function Viewers({ roomId }: { roomId: string }) {
       ) : (
         <ViewerTable rows={rows} />
       )}
-      {/* R3#3：拒单错是错误面——badge danger；.notice 只留空池引导等非错提示。 */}
+      {/* 拒单错是错误面——badge danger；.notice 只留空池引导等非错提示。 */}
       {singleError && <span className="badge danger">单查提交被拒：{singleError}</span>}
       {followedId && (
         <p className="muted small">
@@ -99,7 +98,7 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
             <th>uid</th>
             <th>采集于</th>
             <th>Perception</th>
-            {/* R2 批6 D10（舰长卡→关系卡）：四微件整列。 */}
+            {/* 舰长卡→关系卡：四微件整列。 */}
             <th>关系</th>
             <th>入口</th>
           </tr>
@@ -107,7 +106,7 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
         <tbody>
           {rows.map((row) => (
             <tr key={row.uid}>
-              {/* Z3d：身份列（大航海 API 一发即带 face/guard_level/medal_level——
+              {/* 身份列（大航海 API 一发即带 face/guard_level/medal_level——
                   旧版站的观众签名是「头像+名字」，有头像是人能认出人的前提）。 */}
               <td>
                 <span className="viewer-cell">
@@ -131,10 +130,10 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
                 <span className={`badge ${row.ai_completed ? "state" : ""}`}>
                   {row.ai_status ?? "未运行"}
                 </span>
-                {/* Z5c 时效位：旧结论保留作参考但信源已翻 → 亮标不重删（重跑才落新结论）。 */}
+                {/* 时效位：旧结论保留作参考但信源已翻 → 亮标不重删（重跑才落新结论）。 */}
                 {row.ai_stale === true && <AiStaleBadge testId="ai-stale-badge" />}
               </td>
-              {/* R2 批6 D10：四微件——缺件落「未知」微行（设计钉同款狠法：无数据
+              {/* 四微件——缺件落「未知」微行（设计钉同款狠法：无数据
                   是有信息的状态，不补文案、两态可辨）。身份一句盖 AI 徽标不入事实色。 */}
               <td data-testid={`relation-widgets-${row.uid}`}>
                 <div className="micro-line">

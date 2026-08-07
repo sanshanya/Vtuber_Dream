@@ -426,7 +426,7 @@ impl BilibiliClient {
             false,
             Some("https://live.bilibili.com/"),
         )?;
-        // DANMAKU_SHARD_CAP：无尺循环会放大异常 num 成请求风暴（安全批 R1）。
+        // DANMAKU_SHARD_CAP：无尺循环会放大异常 num 成请求风暴（安全批）。
         let shards = info
             .get("dm_info")
             .and_then(|d| d.get("num"))
@@ -451,7 +451,7 @@ impl BilibiliClient {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            // P0-1（迭代细则 v1）：随行打贴本片片号——房间语料 Episode 的幂等身份
+            // 随行打贴本片片号——房间语料 Episode 的幂等身份（迭代细则 v1）
             // 是 (rid, shard_index, 行序)，行序靠本循环的按序拼接，片号必须落在行上
             // 才不会跨片漂移。零新增请求：纯内存打标。
             for row in chunk.iter_mut() {
@@ -464,7 +464,7 @@ impl BilibiliClient {
         Ok(messages)
     }
 
-    /// D1 弹幕网关握手凭据：`getDanmuInfo`（场次窗主源的连接前置）。
+    /// 弹幕网关握手凭据：`getDanmuInfo`（场次窗主源的连接前置）。
     /// 取 `data.host_list[0].{host,port}` 与 `data.token`；任一缺段上抛
     /// `Transport`（细节为固定文案，token/cookie 绝不入错误串——§11 红线）。
     /// 与 Python `bilibili.py` 取 host_list[0] 口径一致。
@@ -508,7 +508,7 @@ impl BilibiliClient {
         Ok(DanmakuInfo { host, port, token })
     }
 
-    /// D1 场次窗兜底轮询：房间信息接口的 `live_status`
+    /// 场次窗兜底轮询：房间信息接口的 `live_status`
     /// （0 未开播 / 1 直播中 / 2 轮播）。`live_status` 缺席才算错误，
     /// 值 0 是平台的合法「未在播」事实，必须原样返回。
     pub fn get_room_live_status(&mut self, room_id: &str) -> Result<i64, BilibiliError> {
@@ -529,7 +529,7 @@ impl BilibiliClient {
     }
 }
 
-/// `getDanmuInfo` 返回的弹幕网关凭据（D1：只取 host_list[0] + token）。
+/// `getDanmuInfo` 返回的弹幕网关凭据（只取 host_list[0] + token）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DanmakuInfo {
     /// `host_list[0].host`（原始字符串，未归一）。

@@ -1,6 +1,6 @@
 //! M4 评审修复4：§9「图写入幂等、关系证据合并、旧状态失效」的断言化补钉。
-//! 背景：r7-P1（upsert_edge 合并无主断言）、r7-P2（interest target 消失关臂）、
-//! r7-P3（resolve_entity SAME_AS/UNCERTAIN 落库）、r5-FIND-4/5（project 臂三与
+//! 背景：upsert_edge 合并无主断言、interest target 消失关臂、
+//! resolve_entity SAME_AS/UNCERTAIN 落库、project 臂三与
 //! current_run_id=None 组合臂零覆盖）。
 
 use std::path::Path;
@@ -72,7 +72,7 @@ fn active_count(store: &Store, predicate: &str) -> i64 {
 }
 
 // ---------------------------------------------------------------------------
-// 1. r7-P1：upsert_edge 活跃边合并：evidence 并集去重保序 + confidence=max
+// 1. upsert_edge 活跃边合并：evidence 并集去重保序 + confidence=max
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -135,7 +135,7 @@ fn upsert_edge_merges_evidence_and_takes_max_confidence() {
 }
 
 // ---------------------------------------------------------------------------
-// 2. r7-P1 正臂：close_missing_viewer_semantic_edges 关闭非本运行的语义边
+// 2. 正臂：close_missing_viewer_semantic_edges 关闭非本运行的语义边
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -217,7 +217,7 @@ fn close_missing_closes_other_runs_semantic_edges_only() {
 }
 
 // ---------------------------------------------------------------------------
-// 3. r7-P2：interest target 从新提交消失 → 关闭区间
+// 3. interest target 从新提交消失 → 关闭区间
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -245,7 +245,7 @@ fn interest_target_vanishes_closes_interval() {
 }
 
 // ---------------------------------------------------------------------------
-// 4. r7-P3：resolve_entity 落库行为：SAME_AS 建 alias，UNCERTAIN 不进正式库
+// 4. resolve_entity 落库行为：SAME_AS 建 alias，UNCERTAIN 不进正式库
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -283,7 +283,7 @@ fn resolve_entity_same_as_writes_alias_and_uncertain_skips_book() {
 }
 
 // ---------------------------------------------------------------------------
-// 5. r5-FIND-4/5：project 臂三（include_situation_actions=true ∧ run_id=None）
+// 5. project 臂三（include_situation_actions=true ∧ run_id=None）
 //    与 current_run_id=None 的闸门组合
 // ---------------------------------------------------------------------------
 
@@ -391,7 +391,7 @@ fn demo_python_order_drops_only_unlisted_keys() {
 }
 
 // ---------------------------------------------------------------------------
-// 轮2-R1-A⑤：存量 evidence_json 损坏时 upsert_edge 必须报错而非静默清空——
+// 存量 evidence_json 损坏时 upsert_edge 必须报错而非静默清空——
 // 修前 `from_str(...).unwrap_or_default()` 会把旧证据坍缩为空向量并物理覆写，
 // 既往证据不可逆丢失（图层的唯一事件溯源裂纹）。
 // ---------------------------------------------------------------------------

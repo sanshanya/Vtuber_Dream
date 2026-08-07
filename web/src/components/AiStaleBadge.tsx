@@ -1,9 +1,9 @@
 /**
- * Z5c 时效位徽标「信源已更新·待重判」——三处消费面（舰长列表 / 个人树感知区 /
+ * 时效位徽标「信源已更新·待重判」——三处消费面（舰长列表 / 个人树感知区 /
  * 首页舰长 strip）的文案与熄灭路径 title 单一来源。className 复用 .badge.action
  * （不另造新类）；data-testid 按消费面区分，断言一律 getByTestId 锚点
- * （Z5 教训：文案与 note 可能同语撞车，绝不用文本全文匹配）。
- * R3#8 可达性：熄灭路径不止藏 title（hover 不可达的面也有知情权）——随行
+ * （教训：文案与 note 可能同语撞车，绝不用文本全文匹配）。
+ * 可达性：熄灭路径不止藏 title（hover 不可达的面也有知情权）——随行
  * .muted small 直陈，title 保留完整因果。
  */
 export function AiStaleBadge({ testId }: { testId: string }) {

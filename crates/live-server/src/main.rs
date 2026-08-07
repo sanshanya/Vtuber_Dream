@@ -81,7 +81,7 @@ fn parse(args: &[String]) -> Parse {
     if command == "-h" || command == "--help" {
         return Parse::Help;
     }
-    // run 的合法形态只有 `run --demo`（D5）。
+    // run 的合法形态只有 `run --demo`。
     if command == "run" && rest.next().map(String::as_str) != Some("--demo") {
         return Parse::Usage("run 仅支持 --demo（合成演示通道）".to_string());
     }
@@ -206,7 +206,7 @@ fn main() -> ExitCode {
                 })
         }),
         Parse::RunDemo { config, port } => {
-            // D5 run --demo：构建合成 Demo → 起服（demo 模式 = run 通道返回静态快照，G3）。
+            // run --demo：构建合成 Demo → 起服（demo 模式 = run 通道返回静态快照，G3）。
             let built = live_core::config::load_config(&config)
                 .map_err(|error| error.to_string())
                 .and_then(|cfg| {
@@ -230,7 +230,7 @@ fn main() -> ExitCode {
     }
 }
 
-/// serve/run 共用启动面（B1+D5）：端口 + demo 模式 + 数据根覆盖。
+/// serve/run 共用启动面（B1）：端口 + demo 模式 + 数据根覆盖。
 fn serve_command(config: PathBuf, port: u16, demo: bool, demo_root: Option<PathBuf>) -> ExitCode {
     match live_server::app::serve(live_server::app::StartOptions {
         config_path: config,

@@ -253,7 +253,7 @@ async fn live_records_caps_at_two_pages() {
     assert_eq!(pages.len(), 2, "恰好 2 次请求，不追第 3 页 pages={pages:?}");
 }
 
-/// DANMAKU_SHARD_CAP：异常 num=1_000_000_000 必须被钳到 200，切片请求数钉死（安全批 R1）。
+/// DANMAKU_SHARD_CAP：异常 num=1_000_000_000 必须被钳到 200，切片请求数钉死（安全批）。
 #[tokio::test(flavor = "multi_thread")]
 async fn live_record_danmaku_shard_cap_clamps_amplification() {
     let server = MockServer::start().await;
@@ -602,7 +602,7 @@ async fn search_videos_filters_junk_and_truncates_to_limit() {
     assert_eq!(rows[1]["bvid"], "BV2");
 }
 
-/// P0-1（迭代细则 v1 §1 地基）：弹幕 shard 必须随行打标——
+/// 弹幕 shard 必须随行打标（迭代细则 v1 §1 地基）——
 /// Episode 身份公式 (rid, shard_index, 行序) 依赖上游保序与分片索引；
 /// 不打标则无法构造幂等身份。零新增请求：同一拉片循环内打标。
 #[tokio::test(flavor = "multi_thread")]
@@ -645,7 +645,7 @@ async fn live_record_danmaku_rows_tag_shard_index() {
     assert_eq!(tags, [0, 0, 1], "每片行必须打贴本片片号: {messages:?}");
 }
 
-/// 轮2-R1-A② 红钉：满页全垃圾（uid 全空）时必须按「本轮零新增」收杆——
+/// 红钉：满页全垃圾（uid 全空）时必须按「本轮零新增」收杆——
 /// 修前判定只看未过滤 listing.len()：满页恒不满足「页不满」→ page 无限自增死循环。
 #[tokio::test(flavor = "multi_thread")]
 async fn guard_members_full_pages_of_junk_terminate_on_zero_growth() {
@@ -685,7 +685,7 @@ async fn guard_members_full_pages_of_junk_terminate_on_zero_growth() {
 }
 
 // ---------------------------------------------------------------------------
-// D1 弹幕网关：getDanmuInfo / get_info live_status（场次窗主源连接前置）
+// 弹幕网关：getDanmuInfo / get_info live_status（场次窗主源连接前置）
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]

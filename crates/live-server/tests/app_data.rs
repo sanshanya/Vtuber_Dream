@@ -78,7 +78,7 @@ async fn get(app: &axum::Router, path: &str) -> (u16, Value) {
     (status, json)
 }
 
-/// Z5c 时效位钉族公共夹具（删码专项 ID-3：viewers/tree 两钉的同源三参闭包原系逐字两份）。
+/// 时效位钉族公共夹具（viewers/tree 两钉的同源三参闭包原系逐字两份）。
 fn write_perception_cache(root: &std::path::Path, uid: &str, hash: &str) {
     let cached = serde_json::json!({
         "status": "complete",
@@ -136,9 +136,9 @@ async fn overview_combines_collection_ai_leads_and_baseline_delta() {
     // 线索簿：demo 合成通道不带 leads → 空集合与空 summary
     assert_eq!(body["leads"]["totals"]["pending_approval"], 0);
     assert!(body["leads"]["pending"].is_array());
-    // D9：rejected 明细面恒为数组（demo 无拒账 → 空数组，非缺键）。
+    // rejected 明细面恒为数组（demo 无拒账 → 空数组，非缺键）。
     assert!(body["leads"]["rejected"].is_array(), "{body}");
-    // D9：拒因 chip 白名单恒下发（前端 chip 面唯一真源 = 服务端，不落第二份字面）。
+    // 拒因 chip 白名单恒下发（前端 chip 面唯一真源 = 服务端，不落第二份字面）。
     assert_eq!(
         body["leads"]["reject_chip_reasons"],
         serde_json::json!(["太泛", "不对路", "已知道", "做不了"]),
@@ -150,21 +150,21 @@ async fn overview_combines_collection_ai_leads_and_baseline_delta() {
         "单次 complete 观众的 delta 码必须是基线态：{}",
         body["delta"]
     );
-    // Z2：主播卡/直播档案两新面必须始终就位（demo 布景无 profile/records → null 空态，
+    // 主播卡/直播档案两新面必须始终就位（demo 布景无 profile/records → null 空态，
     // 而不是缺键——前端空态分支靠「键存在且值为 null」判别，缺键会让判别歧义）。
     let keys = body.as_object().expect("overview object");
     assert!(keys.contains_key("streamer"), "{body}");
     assert!(keys.contains_key("live"), "{body}");
     assert!(body["streamer"].is_null(), "{body}");
     assert!(body["live"].is_null(), "{body}");
-    // Z3：首页指标条 graph_stats（demo 布景图存在 → 非 null 且 episodes/entities ≥ 1）。
+    // 首页指标条 graph_stats（demo 布景图存在 → 非 null 且 episodes/entities ≥ 1）。
     let stats = &body["graph_stats"];
     assert!(stats.is_object(), "demo 布景有图 → 指标面必须建账：{body}");
     assert!(stats["episodes"].as_i64().unwrap_or(0) > 0, "{stats}");
     assert!(stats["entities"].as_i64().unwrap_or(0) > 0, "{stats}");
     assert!(stats.get("relations").is_some() && stats.get("interest_states").is_some());
-    // Z5/C1：BriefingCard refs 归属解析面——episode_index 恒在（键纪律同上），
-    // demo 布景有图 → 非空；R2 批5 D5 起每行恰三键 viewer_id + title + source
+    // BriefingCard refs 归属解析面——episode_index 恒在（键纪律同上），
+    // demo 布景有图 → 非空；每行恰三键 viewer_id + title + source
     // （芯片类型词素材；大键不上 overview 面）。
     let index = &body["episode_index"];
     let entries = index.as_object().expect("episode_index 是对象");
@@ -194,7 +194,7 @@ async fn overview_combines_collection_ai_leads_and_baseline_delta() {
 #[tokio::test(flavor = "multi_thread")]
 async fn overview_passes_through_streamer_profile_and_live_records() {
     let fx = fixture();
-    // Z2 主播卡面：streamer.json 的 profile 段原样透传——sources（原始事实原料，体大）
+    // 主播卡面：streamer.json 的 profile 段原样透传——sources（原始事实原料，体大）
     // 不得爬上 overview 面，由 Vue/直播数据页之外的专用端点或文件面另行服务。
     live_core::storage::write_json(
         &fx.data_root.join("streamer.json"),
@@ -244,7 +244,7 @@ async fn viewers_list_reports_ai_completion_per_viewer() {
         "{body}"
     );
     assert!(viewers.iter().any(|v| v["name"] == "演示观众A"), "{body}");
-    // Z3：大航海身份面透传——face/guard_level/medal_level 键恒在（demo face 空串 = 未采到，
+    // 大航海身份面透传——face/guard_level/medal_level 键恒在（demo face 空串 = 未采到，
     // 呈现侧 fallback；guard/medal 是有意义数字必须原样到面）。
     for row in viewers {
         let obj = row.as_object().expect("viewer row object");
@@ -256,7 +256,7 @@ async fn viewers_list_reports_ai_completion_per_viewer() {
     assert_eq!(viewers[0]["medal_level"], 20, "{body}");
 }
 
-/// Z5c 时效位：旧 AI 结论保留不删，但 fact 面/提示面已变 → 行面 ai_stale 必须亮
+/// 时效位：旧 AI 结论保留不删，但 fact 面/提示面已变 → 行面 ai_stale 必须亮
 /// 「信源已更新」；哈希同参镇定 → stale=false；三态互斥互不串扰。
 #[tokio::test(flavor = "multi_thread")]
 async fn viewers_list_marks_stale_perception_hash_flips() {
@@ -335,7 +335,7 @@ async fn viewer_tree_joins_raw_ai_episodes_mentions() {
     assert_eq!(status, 404);
 }
 
-/// Z5c 时效位的 tree 面钉：与 room_viewers 行同源算法（同 config/raw/cached 三参）。
+/// 时效位的 tree 面钉：与 room_viewers 行同源算法（同 config/raw/cached 三参）。
 /// 栽现行哈希 → false；栽死哈希 → true；哈希复位 → 熄灭。
 #[tokio::test(flavor = "multi_thread")]
 async fn viewer_tree_marks_stale_perception_hash_flips() {
@@ -383,7 +383,7 @@ async fn viewer_tree_marks_stale_perception_hash_flips() {
 #[tokio::test(flavor = "multi_thread")]
 async fn graph_endpoints_cytoscape_shape_and_viewer_scope() {
     let fx = fixture();
-    // Z6：默认视图已折叠——「全量」形状钉走显式 all 逃生门（Z6 前 payload 面同形）。
+    // 默认视图已折叠——「全量」形状钉走显式 all 逃生门（折叠前 payload 面同形）。
     let (status, body) = get(&fx.app, "/api/rooms/983/graph?kinds=all").await;
     assert_eq!(status, 200, "{body}");
     let elements = body["elements"].as_array().expect("elements");
@@ -440,7 +440,7 @@ async fn graph_endpoints_cytoscape_shape_and_viewer_scope() {
 }
 
 // ---------------------------------------------------------------------------
-// Z6/P0-6：整体图谱物化协商 + kind 折叠钉团
+// 整体图谱物化协商 + kind 折叠钉团
 // ---------------------------------------------------------------------------
 
 /// 带请求头的原始往返（status, headers, raw bytes）。
@@ -575,7 +575,7 @@ async fn graph_default_folded_serves_artifact_with_etag_gzip_and_304() {
     }
 }
 
-/// ?kinds=all 逃生门 = Z6 前的全量面；csv 自定义折叠现算直通；未知类响亮 400。
+/// ?kinds=all 逃生门 = 未折叠的全量面；csv 自定义折叠现算直通；未知类响亮 400。
 #[tokio::test(flavor = "multi_thread")]
 async fn graph_kinds_all_escape_and_csv_straight_through_and_bad_kind_400() {
     let fx = fixture();
@@ -734,7 +734,7 @@ async fn graph_artifact_etag_follows_store_content() {
     );
 }
 
-/// G2-E 盲评 R1-F1 立单修复钉：三条原地写路径（upsert_edge 合入 / upsert_node 改名 /
+/// G2-E 盲评立单修复钉：三条原地写路径（upsert_edge 合入 / upsert_node 改名 /
 /// merge 重指坐标）必使内容寻址 ETag 翻面——逃逸指纹 = 物化静默服旧字节。
 #[tokio::test(flavor = "multi_thread")]
 async fn graph_artifact_etag_flips_on_in_place_writes() {
@@ -819,10 +819,10 @@ async fn graph_endpoints_404_when_graph_absent() {
 }
 
 // ---------------------------------------------------------------------------
-// X1 修复批钉团（8-agent 盲评裁定）
+// 修复批钉团（8-agent 盲评裁定）
 // ---------------------------------------------------------------------------
 
-/// ag2-F1/X1-a（blocker）：viewer 路径段的 vid 清洗——Path 抽取器把 %2F/%5C 解码成
+/// viewer 路径段的 vid 清洗——Path 抽取器把 %2F/%5C 解码成
 /// 真斜杠，零校验时 tmp 之外的哨兵会经 viewers/../../ 穿透读出；guard 必须 404 截断。
 #[tokio::test(flavor = "multi_thread")]
 async fn viewer_tree_graph_reject_traversal_vids_404() {
@@ -849,7 +849,7 @@ async fn viewer_tree_graph_reject_traversal_vids_404() {
     assert_eq!(status, 200, "demo-1 tree 应通行");
 }
 
-/// Z7 补钉（R5-F1b）：overview 读面的 MXA-1 端点响铃——legacy leads.jsonl 含坏行时
+/// 补钉：overview 读面的端点响铃——legacy leads.jsonl 含坏行时
 /// 必须 500（绝不带病半账出面）、文件原地 .bak 缺席。
 #[tokio::test(flavor = "multi_thread")]
 async fn overview_with_bad_legacy_jsonl_rings_500() {
@@ -871,7 +871,7 @@ async fn overview_with_bad_legacy_jsonl_rings_500() {
     assert!(!fx.data_root.join("leads.jsonl.bak").exists());
 }
 
-/// Z7 补钉（R5-F3）：overview 的 leads.autonomy 徽标数据面双布景钉——
+/// 补钉：overview 的 leads.autonomy 徽标数据面双布景钉——
 /// 默认 0（人工审批文化）；config 写 leads_autonomy: 1 → 投影 1（徽标跟随）。
 #[tokio::test(flavor = "multi_thread")]
 async fn overview_leads_autonomy_projects_config_flag() {
@@ -892,7 +892,7 @@ async fn overview_leads_autonomy_projects_config_flag() {
     assert_eq!(body2["leads"]["autonomy"], 1, "L1 徽标跟随：{body2}");
 }
 
-/// P0-2c 钉（迭代细则 v1 §1）：overview 的 recap 键纪律——
+/// 钉（迭代细则 v1 §1）：overview 的 recap 键纪律——
 /// ①缺 ai/recap.json：键存在且 null（前端「复盘尚未生成」的分前，绝不缺键）；
 /// ②落盘后原样透传（四数/命名件/未知行不被消毒）。
 #[tokio::test(flavor = "multi_thread")]

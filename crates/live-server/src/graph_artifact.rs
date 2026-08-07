@@ -1,4 +1,4 @@
-//! Z6/P0-6：整体图谱 payload 物化 + 协商服务（弱指针，内容寻址）。
+//! 整体图谱 payload 物化 + 协商服务（弱指针，内容寻址）。
 //!
 //! 现状痛点（s0 实测）：`/api/rooms/{id}/graph` 每次重跑 project()（≈0.6s CPU）并吐
 //! 1.92MB raw JSON、零压缩、零缓存协商。
@@ -11,7 +11,7 @@
 //! 派生物）。探针一次读扫 ≈数 MB、毫秒级；若内容零变化，读面命中直接服务
 //! `web-graph.<etag>.json{,.gz,.br}` 三件套，零 project 重算。
 //!
-//! 内容模型（G2-E 盲评 R1-F1 立单修复）：图面**并非纯 append-only**——
+//! 内容模型（G2-E 盲评立单修复）：图面**并非纯 append-only**——
 //! upsert_edge 原地合入（RELATED_TO interpretation / INTERESTED_IN evidence+confidence
 //! 跨 run 变化）、entity_merge 重指坐标（source/target 变而 valid_to 不动）、upsert_node
 //! 改名——三条原地写路径若逃逸指纹，AI 重跑/维护合并后物化将静默服旧字节。
@@ -61,7 +61,7 @@ fn hash_rows(
 pub const GRAPH_FOLD_VERSION: &str = "fold-v2-zero-degree-drop-2026-08-05";
 
 /// 探针：投影可见内容 + 白名单 + **算法版本**的 sha256 前缀 = 指纹 = ETag。
-/// 列集拟定依据 =「DTO 可见列 ∪ project SQL 过滤臂谓词列」（卷首注 G2-E R1-F1）。
+/// 列集拟定依据 =「DTO 可见列 ∪ project SQL 过滤臂谓词列」（卷首注 G2-E）。
 pub fn content_probe(store: &Store, kinds_csv: &str, fold_version: &str) -> StoreResult<String> {
     let mut hasher = sha2::Sha256::new();
     {

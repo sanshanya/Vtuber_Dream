@@ -156,7 +156,7 @@ async fn mount_baseline(server: &MockServer) {
                 "content": {"message": "前排"},
                 "like": 5, "ctime": 1700003000, "rcount": 1
             },
-            // 轮2-R1-B 红钉：rpid 与正文双空的垃圾行（平台漂移/半成品 payload）——
+            // 红钉：rpid 与正文双空的垃圾行（平台漂移/半成品 payload）——
             // 该行没有幂等身份（content_id("","") 跨目标塌缩成同 id 互相覆盖），必须被跳过。
             {"member": {"mid": "", "uname": ""}, "content": {"message": ""}}
         ]})),
@@ -452,12 +452,12 @@ async fn collect_full_run_happy_path() {
         );
     }
 
-    // 验收钉④（迭代细则 v1 §1 P0-1）：房间语料三源独立记账进 source_status_counts
+    // 验收钉④（迭代细则 v1 §1）：房间语料三源独立记账进 source_status_counts
     // （每源计 1 = 源级状态计数，与观众源的 viewer 计数分层共存）。
     assert_eq!(counts["room_comments:ok"], 1, "评论源独立记账");
     assert_eq!(counts["live_records:ok"], 1, "回放列表源独立记账");
     assert_eq!(counts["replay_danmaku:ok"], 1, "回放弹幕源独立记账");
-    // 弹幕行必须带 shard_index 打标（P0-1 幂等身份 (rid, shard, 行序) 的物证）
+    // 弹幕行必须带 shard_index 打标（幂等身份 (rid, shard, 行序) 的物证）
     assert_eq!(danmaku["records"][0]["messages"][0]["shard_index"], 0);
 }
 
@@ -598,7 +598,7 @@ async fn single_viewer_mode_collects_one_manual_viewer() {
 /// 都必须跳过，只覆写目标 uid 的 viewers/<uid>.json；其余舰长事实、site、
 /// shared 与 ai/ 哨兵一律字节级原样。
 ///
-/// R2 强化：
+/// 强化点：
 /// - u2 预栽升级为「带 sources.videos items（含 bvid）的完整舰长壳」——pre-fix
 ///   enrich 无差别全量会把 u2 也回写（tags/platform_category 进件 → u2 字节翻）
 ///   → u2 字节不变断言即是 F2 的红点。
@@ -641,7 +641,7 @@ async fn single_viewer_preserves_other_viewers_site_and_shared() {
     let summary = run_collect(server, root, 12, CollectMode::SingleViewer("u1".into()))
         .await
         .expect("collect ok");
-    // R2-F1 口径：结果摘要的 viewer_count 也走盘面（=2），不是 seed=1
+    // 口径：结果摘要的 viewer_count 也走盘面（=2），不是 seed=1
     assert_eq!(summary["viewer_count"], 2);
 
     // (a) 其余舰长事实字节级原样
@@ -671,7 +671,7 @@ async fn single_viewer_preserves_other_viewers_site_and_shared() {
     assert!(u1.get("collected_at").is_some(), "新采集痕迹：collected_at");
     assert!(u1.get("sources").is_some(), "新采集痕迹：sources 面");
 
-    // (d) R2-F1 成功口径：collection.json 不得落成 seed=1 的空壳——viewer_count
+    // (d) 成功口径：collection.json 不得落成 seed=1 的空壳——viewer_count
     // 必须等于盘面 viewers/*.json 实际文件数（u1+u2 都在盘 = 2）；guard_count
     // 读不到既有值（本轮冷启动）置 0。
     let collection = read(&root.join("collection.json"));
@@ -687,7 +687,7 @@ async fn single_viewer_preserves_other_viewers_site_and_shared() {
     );
 }
 
-/// R2-F1 失败径回归钉：单查失败完全不写 collection.json——已经 status==complete
+/// 失败径回归钉：单查失败完全不写 collection.json——已经 status==complete
 /// 的旧集合字节级保留（失败不杀伤 baseline 门禁）；若冷启动本来就没有则该当保持没有。
 #[tokio::test(flavor = "multi_thread")]
 async fn single_viewer_failure_preserves_collection_json_gate() {
@@ -730,7 +730,7 @@ async fn single_viewer_failure_preserves_collection_json_gate() {
     );
 }
 
-/// R2-F 的尾段消费闸回归钉（G2 表形态）：单查模式不得消费已批准线索——无论
+/// 尾段消费闸回归钉（G2 表形态）：单查模式不得消费已批准线索——无论
 /// lead_fetch_budget_per_run 多大，表中 pre-planted approved 行逐字段原样，
 /// 搜索消费端点零请求，summary 不面世 leads_consumed；旧 JSONL 账本同样
 /// 不被迁移触碰（单查不动账本是闸门级纪律）。
@@ -772,7 +772,7 @@ async fn single_viewer_does_not_consume_leads() {
     store.begin_run_fixed("run:a", "t0", "m").unwrap();
     store.insert_lead_rows(&[&row], true).unwrap();
     drop(store);
-    // 预置旧 JSONL 账本（同一行内容）：单查不得触发迁移（R2-F3 闸门——不动账本）
+    // 预置旧 JSONL 账本（同一行内容）：单查不得触发迁移（闸门——不动账本）
     let ledger_text = format!("{}\n", serde_json::to_string(&row).unwrap());
     std::fs::write(root.join("leads.jsonl"), &ledger_text).unwrap();
 
@@ -891,7 +891,7 @@ async fn room_comment_budget_zero_disables_points_without_requests() {
 }
 
 // ---------------------------------------------------------------------------
-// MXA-10（r3-F3 / r5-F2 / r7-环-1）：M4.x 消费环集成钉——approved 账本 +
+// M4.x 消费环集成钉——approved 账本 +
 // budget=1 + wiremock 假搜索面 → 尾段消费写回 + leads_consumed 键 +
 // request_count 不漏报。
 // G2 表形态（design §9.2 行 254）：账本 = discovery_leads 表；旧 JSONL 在
@@ -987,7 +987,7 @@ async fn collect_tail_consumes_approved_leads_and_recounts_requests() {
 
     // 消费键：预算 1 → 恰消费 1 条
     assert_eq!(summary["leads_consumed"], 1);
-    // MXA-2：request_count = 本进程向 mock 服务器发出的全部请求（含消费那一次）
+    // request_count = 本进程向 mock 服务器发出的全部请求（含消费那一次）
     let total_requests = server.received_requests().await.expect("requests").len() as i64;
     assert_eq!(
         summary["request_count"].as_i64().unwrap(),

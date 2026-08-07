@@ -85,7 +85,7 @@ impl Store {
         Ok(())
     }
 
-    /// D1-2B 身份面收拢（同窗续接幂等复检臂）：WS 行 identity = stable 前缀
+    /// 身份面收拢（同窗续接幂等复检臂）：WS 行 identity = stable 前缀
     /// `episode:{viewer}:{stable}`，**不含** content_version 尾段。理由：WS 场次事实
     /// （session rid / 窗口起点）随附着时刻漂移，背靠背两次 collect（或同窗断线重发）
     /// 采到同一条平台行（同 ts/uid/文本）会得到不同 content_version → full-id 撞库

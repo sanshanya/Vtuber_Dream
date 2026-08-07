@@ -1,6 +1,6 @@
 //! Agent 运行时（移植 Python `agent/runtime.py`，design §M3 协议红线）。
 //!
-//! 体积备书已兑现（r8-F2 拆分条款触发）：原注「出 850 再议，自然缝 = 传输层
+//! 体积备书已兑现（拆分条款触发）：原注「出 850 再议，自然缝 = 传输层
 //! vs 合约层」——996 行已破阈，BYO wire 类型与 HTTP 瞬时错回环构出
 //! `runtime/transport.rs`（chat 通道件），本卷留合约层（终局/重试状态机/trace）。
 //! wire 类型经本卷 `pub use` 再导出，`agent::runtime::Oai*` 外部路径零变化。
@@ -17,7 +17,7 @@
 //!   （timeout/connect/本轮发送失败/408/409/429/5xx）只在 `chat()` 内层 ≤[`transport::HTTP_EXTRA_ATTEMPTS`]
 //!   次压住——429/5xx 形态恢复前提：body 是 OpenAI 错误 JSON；裸文本 body 解析为
 //!   JSONDeserialize 形态属非瞬时，单次即败（钉见 agent_runtime.rs）——与 Python
-//!   httpx 状态码驱动的差异已入偏差单（r1-M4）；
+//!   httpx 状态码驱动的差异已入偏差单；
 //! - reasoning_content：BYO 消息结构体全程往返（回放上送）。`replay_reasoning=false` 时
 //!   落历史前剥离；**永不写入 trace**；
 //! - Trace：JSONL 元数据（time/event/agent/token 三元组/tool 名+tool_call_id/result_chars
@@ -72,7 +72,7 @@ pub enum AgentRuntimeError {
         attempts: usize,
         reason: String,
     },
-    /// r1-F1 单 agent token 熔断：累计 total_tokens 超过 budget 后触顶终止。
+    /// 单 agent token 熔断：累计 total_tokens 超过 budget 后触顶终止。
     /// 前缀 `token_budget` 即失败分类（viewer_failure 缓存 error 面落盘）。
     #[error("token_budget {budget} exceeded: cumulative total_tokens {used}")]
     TokenBudget { budget: u32, used: i64 },
@@ -87,7 +87,7 @@ pub struct RuntimeStats {
     pub input_tokens: i64,
     pub output_tokens: i64,
     pub total_tokens: i64,
-    /// Z1/P0-2:prompt-cache 命中/未中累计，cache 观测盒数据源。
+    /// prompt-cache 命中/未中累计，cache 观测盒数据源。
     pub cache_hit_tokens: i64,
     pub cache_miss_tokens: i64,
     pub tool_names: Vec<String>,
@@ -182,7 +182,7 @@ struct TerminalArgs<S> {
     submission: S,
 }
 
-/// 终局校验器三态（R4：基础设施失败与业务拒收分道——Python SDK tool-error 通道镜像）。
+/// 终局校验器三态（基础设施失败与业务拒收分道——Python SDK tool-error 通道镜像）。
 /// 此前 infrastructure 失败被白标为「模型可修正的校验拒收」，模型空烧修正轮回。
 pub enum TerminalOutcome {
     /// 校验通过 → `accepted:true` + 计数载荷（Python 终局工具返回形状）。
@@ -261,7 +261,7 @@ where
 pub const DRAFT_TRUNCATE_CHARS: usize = 200_000;
 pub const FORCED_TURNS_MIN: usize = 4;
 pub const FORCED_TURNS_CAP: usize = 16;
-/// P2-γ-2：历史估算口径——1 token ≈ 4 字节。GIS/KB 层用这个粗秤即可，
+/// 历史估算口径——1 token ≈ 4 字节。GIS/KB 层用这个粗秤即可，
 /// 不为精确计费，只为「何时开始折叠」的触发信号。
 pub const CHARS_PER_TOKEN: usize = 4;
 
@@ -277,17 +277,17 @@ pub struct AgentRuntime {
     thinking_enabled: bool,
     /// false → 回放 assistant 消息前剥离 reasoning_content（Python should_replay 开关）。
     replay_reasoning: bool,
-    /// P2-γ-1：reasoning 回放窗口。None=不限窗（现行逐字回放）；
+    /// reasoning 回放窗口。None=不限窗（现行逐字回放）；
     /// Some(k)=仅末条带 tool_calls 的 assistant 保留原文，更早轮保留字段但置空串——
     /// 形状即 dsv4 执法矩阵安全形态（字段必现豁免，见 docs/2026-08-05-pi-source-verdict.md §6）。
     replay_window: Option<u32>,
-    /// P2-γ-2：中间轮折叠配置；None=不折叠（默认关）。
+    /// 中间轮折叠配置；None=不折叠（默认关）。
     fold: Option<FoldConfig>,
-    /// Z3/P0-4：全局 LLM 请求漏桶；None = 不限速（config max_llm_rpm=0 默认）。
+    /// 全局 LLM 请求漏桶；None = 不限速（config max_llm_rpm=0 默认）。
     throttle: Option<Arc<Throttle>>,
 }
 
-// P2-γ 历史管理已拆到 `super::history`——FoldConfig 在本层是复用入口。
+// 历史管理已拆到 `super::history`——FoldConfig 在本层是复用入口。
 pub use super::history::FoldConfig;
 
 impl AgentRuntime {
@@ -312,7 +312,7 @@ impl AgentRuntime {
         // parity 红线：重试主权唯一属于 chat() 内层（HTTP_EXTRA_ATTEMPTS）。
         // 0.41.3 默认 ReqwestExecutor 内嵌 OpenAIRetryLayer(max_retries=3)——
         // 必须显式换成纯传输 ReqwestService，否则瞬时错请求数 ×4（M4-C 实测 12/agent）。
-        // r1-N1：with_http_service 只换 executor、不换 request_client——请求仍由内部
+        // with_http_service 只换 executor、不换 request_client——请求仍由内部
         // 默认 client 构造；超时等行为唯一由本 service client 在 execute 阶段决定。
         Ok(Self::build(
             async_openai::Client::with_config(config)
@@ -339,7 +339,7 @@ impl AgentRuntime {
             .with_api_base(base_url)
             .with_api_key("test");
         // 同 from_ai_config：禁默认 executor 隐藏重试层（见该处注释）。
-        // r1-M5：裸 client 必须有超时护栏——否则「挂起 server」剧本永不返回，
+        // 裸 client 必须有超时护栏——否则「挂起 server」剧本永不返回，
         // 失真地挂死测试本体；30s 与现存 wiremock delay 剧本（毫秒级）相容。
         let http = reqwest13::Client::builder()
             .timeout(Duration::from_secs(30))
@@ -387,20 +387,20 @@ impl AgentRuntime {
         }
     }
 
-    /// P2-γ-1：构造器——回放窗口。仅 replay_reasoning=true 时窗口才有物压缩机；
+    /// 构造器——回放窗口。仅 replay_reasoning=true 时窗口才有物压缩机；
     /// 两者同时关掉则等价现行行为（全量 / 不剥）。
     pub fn with_replay_window(mut self, k: u32) -> Self {
         self.replay_window = Some(k);
         self
     }
 
-    /// P2-γ-2：构造器——中间轮折叠。None=历史永不被折叠（现行行为）。
+    /// 构造器——中间轮折叠。None=历史永不被折叠（现行行为）。
     pub fn with_fold(mut self, fold: FoldConfig) -> Self {
         self.fold = Some(fold);
         self
     }
 
-    /// Z3/P0-4：挂载 run 级共享漏桶。同一 Arc 在 viewer 任务间克隆共享，
+    /// 挂载 run 级共享漏桶。同一 Arc 在 viewer 任务间克隆共享，
     /// 故全 run 的出队 LLM 请求（全部 agent 的每一轮）合并限速。
     pub fn with_throttle(mut self, throttle: Arc<Throttle>) -> Self {
         self.throttle = Some(throttle);
@@ -408,7 +408,7 @@ impl AgentRuntime {
     }
 
     /// 单次 chat + 瞬时重试。非流式 + 网关超时：以 retry 兜住（S0 实测 0 失败）。
-    /// Z3/P0-4：过闸放行后才出网（许可即请求，1:1）；退避升级为指数 + 全区间抖动，
+    /// 过闸放行后才出网（许可即请求，1:1）；退避升级为指数 + 全区间抖动，
     /// 429/503 携带 Retry-After 时取其秒数（封顶 RETRY_AFTER_MAX_SECONDS）与指数退避取大者。
     pub async fn chat(
         &self,
@@ -442,14 +442,14 @@ impl AgentRuntime {
         ))
     }
 
-    // ── P2-γ：历史管理（窗化+折叠+估算）已拆到 `super::history` ──────────────
+    // ── 历史管理（窗化+折叠+估算）已拆到 `super::history` ──────────────
 
-    /// P2-γ-2：run_rounds 在构建请求前按 token 阈值折叠中间轮。
+    /// run_rounds 在构建请求前按 token 阈值折叠中间轮。
     fn maybe_fold(&self, agent_name: &str, history: &mut Vec<OaiMessage>, trace: &mut Trace) {
         super::history::maybe_fold(self.fold.as_ref(), agent_name, history, trace)
     }
 
-    /// P2-γ-1：历史送入 build_request 前按窗口化置空老轮 reasoning_content。
+    /// 历史送入 build_request 前按窗口化置空老轮 reasoning_content。
     fn apply_replay_window(&self, messages: Vec<OaiMessage>) -> Vec<OaiMessage> {
         super::history::apply_replay_window(self.replay_window, messages)
     }
@@ -524,7 +524,7 @@ impl AgentRuntime {
                 json!({"agent": agent_name, "input_item_count": history.len()}),
             );
             let started = Instant::now();
-            // P2-γ-2：构建请求前按 token 阈值折叠中间轮（不动头/尾，可复跑）。
+            // 构建请求前按 token 阈值折叠中间轮（不动头/尾，可复跑）。
             self.maybe_fold(agent_name, history, trace);
             let request = self.build_request(tools, visible, history.clone());
             // P2-δ：chat 内层负责瞬时错重试；tool_choice 的面已删——无降级分支。
@@ -533,10 +533,10 @@ impl AgentRuntime {
             trace.stats.input_tokens += usage.prompt_tokens;
             trace.stats.output_tokens += usage.completion_tokens;
             trace.stats.total_tokens += usage.total_tokens;
-            // Z1/P0-2:prompt-cache 命中/未中累计
+            // prompt-cache 命中/未中累计
             trace.stats.cache_hit_tokens += usage.prompt_cache_hit_tokens;
             trace.stats.cache_miss_tokens += usage.prompt_cache_miss_tokens;
-            // r1-F1 熔断点：每轮 LLM 请求后核对累计 total_tokens，超预算即触顶终止。
+            // 熔断点：每轮 LLM 请求后核对累计 total_tokens，超预算即触顶终止。
             // 顺既有 Fatal 通道（不发新错误类）；run_toolcall_agent 对 TokenBudget 特判不重试。
             if let Some(budget) = token_budget
                 && trace.stats.total_tokens > budget as i64
@@ -597,7 +597,7 @@ impl AgentRuntime {
                 };
                 let result = match routed {
                     Some(tool) => match serde_json::from_str(&call.function.arguments) {
-                        // W2-C1（M6-C② 实战炸出）：工具 handler 必须在「无 tokio 上下文」的
+                        // （M6-C② 实战炸出）：工具 handler 必须在「无 tokio 上下文」的
                         // 线程上执行。reqwest::blocking 的 wait.rs enter() 在 debug 构建下
                         // 会为每次阻塞调用临时建/丢一个壳 runtime 做误脚枪检查——在 async
                         // ctx 内执行即 panic「Cannot drop a runtime…」。scoped std::thread：
@@ -646,7 +646,7 @@ struct RoundArgs<'a, C: RunCtx> {
     history: &'a mut Vec<OaiMessage>,
     ctx: &'a mut C,
     max_turns: usize,
-    /// r1-F1：None=不设预算；Some(budget)=累计 total_tokens 超限即熔断。
+    /// None=不设预算；Some(budget)=累计 total_tokens 超限即熔断。
     token_budget: Option<u32>,
     trace: &'a mut Trace,
 }
@@ -658,7 +658,7 @@ pub struct AttemptPlan<'a> {
     pub max_turns: usize,
     pub retries: usize,
     pub backoff_seconds: f64,
-    /// r1-F1：None=不设预算；Some(budget)=该 agent 累计 total_tokens 超限即熔断终止。
+    /// None=不设预算；Some(budget)=该 agent 累计 total_tokens 超限即熔断终止。
     pub token_budget: Option<u32>,
 }
 
@@ -710,7 +710,7 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
             .await;
         let attempt_error = match main {
             Ok(()) => None,
-            // r1-F1：熔断是终局地——不是可重试的瞬时/协议失败；立即原样抛出。
+            // 熔断是终局地——不是可重试的瞬时/协议失败；立即原样抛出。
             Err(RoundEnd::Fatal(err)) => match err {
                 AgentRuntimeError::TokenBudget { .. } => return Err(err),
                 other => Some(other.to_string()),
@@ -744,7 +744,7 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
                     .await;
                 match forced_end {
                     Ok(()) => None,
-                    // r1-F1：forced 续跑同样受预算约束，触顶即抛（不重试）。
+                    // forced 续跑同样受预算约束，触顶即抛（不重试）。
                     Err(RoundEnd::Fatal(err)) => match err {
                         AgentRuntimeError::TokenBudget { .. } => return Err(err),
                         other => Some(other.to_string()),

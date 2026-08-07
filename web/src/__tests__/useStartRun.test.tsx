@@ -1,5 +1,5 @@
 /**
- * FE-F1：useStartRun 归一钉团（四个提交口的控制流核心，直取分支）：
+ * useStartRun 归一钉团（四个提交口的控制流核心，直取分支）：
  * - 成功：track 登记 run_id 并返回；error/followedId 双清。
  * - 409 错文带在飞 run（ID）：改跟随——返回在飞 id、followedId 置位、error 不置。
  *   409 但错文无 run（ID）字样：跟随失败，按普通错误就地置 error（跟随契约严格）。

@@ -1,8 +1,8 @@
 //! AudienceAnalysisAgent 编排（移植 `agent/pipeline.py`；Peer 链挂 G2）。
 //!
-//! 体积备书（r8-F2）：1439 行超 800 行拆分线——但本卷是 Python parity 逐段对照面，
+//! 体积备书：1439 行超 800 行拆分线——但本卷是 Python parity 逐段对照面，
 //! golden 对账按段定位（M4-A..M4-D 段标题与 tests/fixtures 同名），拆卷会打断
-//! 「Python 旧实现即预言机」的坐标系。G2/后议再拆，拆分锚 = Python 顶层函数边界。
+//! 「Python 旧实现即预言机」的坐标系。后议再拆，拆分锚 = Python 顶层函数边界。
 //!
 //! M4-A 先落输入小件：`stable_hash` / `aggregate_runtime_usage` / `viewer_input_bundle` /
 //! `compact_interest_state` / `build_audience_input`（两级封顶闸门）。
@@ -38,7 +38,7 @@ pub fn stable_hash(value: &Value) -> String {
     format!("{:x}", Sha256::digest(canonical_json(value).as_bytes()))
 }
 
-/// Z2/P0-3：episode 集合身份 —— blake2s256(canonical_json 化的排序后 episode_id 列表)。
+/// episode 集合身份 —— blake2s256(canonical_json 化的排序后 episode_id 列表)。
 /// episode_id 已焊 content_version 16 位内容摘要（episodes/build.rs），本函数只对
 /// 「集合成员资格」的身份二次定海：成员重排不翻面（序无关），成员增删/内容变才翻面。
 /// 域分离：kind 字面防与 stable_hash 家族值域互撞。（圆桌性能席 blake2b 提案的收敛实现：
@@ -88,14 +88,14 @@ pub struct ViewerInputBundle {
     pub episodes: Vec<Episode>,
     pub input_payload: Value,
     pub input_hash: String,
-    /// Z2/P0-3 壳身份：config 描述子 + 去 episodes 的输入包。episode 面任意漂移
+    /// 壳身份：config 描述子 + 去 episodes 的输入包。episode 面任意漂移
     /// （增删/内容变/重排）都不翻面——「环境没变」与「证据变了」从此可分账。
     pub shell_hash: String,
-    /// Z2/P0-3 集合身份：episode_id 焊 content_version，排序无关（episode_set_hash）。
+    /// 集合身份：episode_id 焊 content_version，排序无关（episode_set_hash）。
     pub episode_set_hash: String,
 }
 
-/// Z5 语义哈希口径：`observed_at` = 观察时刻（本轮采集墙钟），不是事实内容。
+/// 语义哈希口径：`observed_at` = 观察时刻（本轮采集墙钟），不是事实内容。
 /// 事实相同的两次采集必须产出同一 input_hash——否则 complete_cache 跨采集恒假死，
 /// 「重采保 AI」成空架（reset_output 全删 ai/ 时代这个问题被物理掩盖）。
 /// 只从哈希件中摘除；LLM 提示面（input_payload.episodes）继续保留
@@ -115,7 +115,7 @@ fn episodes_hash_material(episodes: &[Episode]) -> Vec<Value> {
 
 /// Python `_viewer_input_bundle`：context + episodes + payload + hash 四元组。
 /// `reasoning`/`rules`/`model`/`api` 只参与 hash，不改写平台事实。
-/// Z5：hash 件用 episodes_hash_material（摘 observed_at），payload 原样保真。
+/// hash 件用 episodes_hash_material（摘 observed_at），payload 原样保真。
 pub fn viewer_input_bundle(
     raw_viewer: &Value,
     baseline: &Value,
@@ -150,7 +150,7 @@ pub fn viewer_input_bundle(
         "rules": rules,
         "input": hash_input,
     }));
-    // Z2/P0-3：input_hash 保持与 Python golden 逐字对账的整包口径；壳/集合同源新算。
+    // input_hash 保持与 Python golden 逐字对账的整包口径；壳/集合同源新算。
     // 壳 = 环境+描述子：episodes 与其导出物（deterministic_mention_seeds 由 episodes
     // 函数派生）同属证据层，两面同时摘出——否则证据变 = 壳变，双轨语义塌陷。
     let mut shell_input = input_payload
@@ -227,7 +227,7 @@ pub enum AudienceInputError {
 }
 
 /// Python `str(value or "")`（falsy → ""）；预算/索引专用（0/0.0 落槽语义与 Python 对齐）。
-/// 轮2-R1-B2 互指：agent/tools.rs 的 py_or_empty 是完整 falsy 判定 + other→py_str 臂
+/// 互指：agent/tools.rs 的 py_or_empty 是完整 falsy 判定 + other→py_str 臂
 /// （工具面要承载 array/object）；本件只喂标量槽（预算/索引），_ 臂直接落 "" 是
 /// 刻意的窄口径，两边职责不同，禁止合并。
 fn or_empty(value: Option<&Value>) -> String {
@@ -254,11 +254,11 @@ fn compact_chars(value: &Value) -> usize {
 
 /// Python `build_audience_input`：bounded 索引；详情只经工具按需取。两级封顶：
 /// ①逐条回退 interest_state 直到预算内；②清空全部 profile_summary；③仍超 → TooLarge。
-/// Z5 语义哈希口径（audience 侧，与 episodes_hash_material 同族）：baseline_summary 的
+/// 语义哈希口径（audience 侧，与 episodes_hash_material 同族）：baseline_summary 的
 /// collection_request_count / collection_elapsed_seconds 是**过程指标**（每轮采集必变），
 /// 不是听众事实——计入哈希会让 situation 缓存跨采集恒假死。提示面原样保留（与 Python
 /// 预言机 golden 对账面不漂移），哈希件剔除这两键。
-/// Z1/P0-1：oracle 测试面需要直接消费——与 build_audience_input 同族升级为 pub。
+/// oracle 测试面需要直接消费——与 build_audience_input 同族升级为 pub。
 pub fn audience_input_hash_material(input: &Value) -> Value {
     let mut material = input.clone();
     if let Value::Object(summary) = &mut material["baseline_summary"] {
@@ -469,7 +469,7 @@ use crate::recap;
 use crate::storage::{self, load_viewers};
 
 /// Python asyncio.Semaphore(4)（ADR-0004 同构）。
-/// Z3/P0-4：作为 config `ai.agent.max_parallel_viewers` 的默认锚保留；
+/// 作为 config `ai.agent.max_parallel_viewers` 的默认锚保留；
 /// 实际并发上限由 config 决定（pipeline 扇出处消费），本常量不再直接驱动 Semaphore。
 pub const INVESTIGATE_CONCURRENCY: usize = 4;
 
@@ -482,7 +482,7 @@ pub enum PipelineError {
     Store(#[from] StoreError),
     #[error("storage: {0}")]
     Storage(String),
-    /// R2 批4 D3：花费预算闸阻断。块内附预估/预算/名册数字与建议方向（wire 文案
+    /// 花费预算闸阻断。块内附预估/预算/名册数字与建议方向（wire 文案
     /// 首字「budget_blocked」供运行概览归类；两选即省钱模式三选的前两项）。
     #[error(
         "budget_blocked：预估 ¥{estimated_cny:.2} > 预算 ¥{budget_cny:.2}（新鲜 {fresh_viewers}/{total_viewers} 人）——两选重发：spend_mode=incremental 只更新变化者 / briefing_only 只推简报"
@@ -512,20 +512,20 @@ pub struct PipelineKnobs<'a> {
     /// Python progress callback。
     pub progress: Option<&'a dyn Fn(&str)>,
     /// 每观众应用完成后的报告刷新（Python checkpoint=；M5 报告层真实接线）。
-    /// r2-F8：通道可失败——Err 不穿透（Python 吞异常记 progress 同型）。
+    /// 通道可失败——Err 不穿透（Python 吞异常记 progress 同型）。
     pub checkpoint: Option<&'a mut dyn FnMut() -> Result<(), String>>,
     /// 测试接缝：graph_failed 分支的确定性复现（默认 build::apply_viewer_submission）。
     pub apply_viewer: Option<&'a mut ApplyViewerFn<'a>>,
     /// 测试接缝：Bilibili 回放根地址（默认官方端点；调查工具发起网络时才消费）。
     pub bilibili_origin: Option<(String, String)>,
-    /// M5-B3/D3：run 状态机 stage hook。已公布的字面名只来自本文件两个常量；
+    /// M5-B3：run 状态机 stage hook。已公布的字面名只来自本文件两个常量；
     /// queued/collecting/episodes/done/failed 由调用方（live-server registry）控制——
     /// 显式 seam 使 progress 文案与状态机解耦（不改既有测试签名：Option<'_'> 字段）。
     pub stage: Option<&'a dyn Fn(&'static str)>,
-    /// Z4b（动作平面 kind=ai_viewers）：viewer 阶段写盘完成即收——不跑 audience。
+    /// 动作平面 kind=ai_viewers：viewer 阶段写盘完成即收——不跑 audience。
     /// 语义边界：situation.json 保持上一轮；终盘 state.json 落 `stage_terminal=per_viewer_ai`。
     pub stop_after_viewer_stage: bool,
-    /// R2 批4 D3 省钱模式。Normal=全量扇出（默认，现状一字不动）；IncrementalOnly=
+    /// 省钱模式。Normal=全量扇出（默认，现状一字不动）；IncrementalOnly=
     /// 只更新完整旧结论且输入已变者；BriefingOnly=跳过单人感知只推简报。budget.json
     /// 的 failure 文案由 PipelineError::BudgetBlocked 携带（wire 为 spend_mode 串）。
     pub spend_mode: SpendMode,
@@ -548,10 +548,10 @@ fn stage_say(knobs: &PipelineKnobs<'_>, stage: &'static str) {
 pub const STAGE_PER_VIEWER_AI: &str = "per_viewer_ai";
 pub const STAGE_AUDIENCE: &str = "audience";
 
-/// r3-F3：analysis 落盘剥「空 leads」——Python 模型 extra=forbid：键存在即拒；
+/// analysis 落盘剥「空 leads」——Python 模型 extra=forbid：键存在即拒；
 /// 空期双通（Rust serde 有 default 补齐、Python 无解码阻力）；非空 leads 是 M4.x
 /// 新能力，跨实现缓存复用本就有界（登记 design-Δ）。
-/// Z5/C1：空 front_brief（sentences 空数组）同型剥键——沉默以「键缺席」落盘，
+/// 空 front_brief（sentences 空数组）同型剥键——沉默以「键缺席」落盘，
 /// 前端 BriefingCard 依「缺席必可见」呈空缺位。
 fn strip_empty_leads(mut analysis: Value) -> Value {
     if analysis
@@ -578,7 +578,7 @@ fn strip_empty_leads(mut analysis: Value) -> Value {
     analysis
 }
 
-/// D-4：缓存/runtime 载荷只落 Python 五键；tool_names 属进程内诊断。
+/// 缓存/runtime 载荷只落 Python 五键；tool_names 属进程内诊断。
 fn stats_json(stats: &RuntimeStats) -> Value {
     json!({
         "llm_calls": stats.llm_calls,
@@ -589,7 +589,7 @@ fn stats_json(stats: &RuntimeStats) -> Value {
     })
 }
 
-/// Z1/P0-2（cache 观测盒落地）：usage 键守 Python D-1 五键 parity；
+/// cache 观测盒落地：usage 键守 Python 五键 parity；
 /// prompt-cache 计量以姊妹键 `cache_usage` 进 state.json/final_result——
 /// Rust 增量面，不冒充 Python 输出（零值如实落：复用臂/非 DeepSeek 端皆可读）。
 fn cache_usage_json(viewer: (i64, i64), audience: (i64, i64)) -> Value {
@@ -603,7 +603,7 @@ fn write_state(path: &Path, fields: Value) -> Result<(), PipelineError> {
     storage::write_json(path, &fields).map_err(PipelineError::Storage)
 }
 
-/// M4.x kickoff D4 → G2 表形态（design §9.2 行 254）：leads 账本摘要注入用户消息
+/// M4.x → G2 表形态（design §9.2 行 254）：leads 账本摘要注入用户消息
 ///（hash 之外——账本漂移不是 Python parity 的输入身份，缓存有效性不因此失效；
 /// 登记 design-Δ）。数据源 = discovery_leads 表；账本为空则零面世（首跑提示面
 /// 与 M4 逐字节一致）。读库失败 → 吞纳零面世（annex 是上下文增益面，不绊管线）。
@@ -613,7 +613,7 @@ fn ledger_annex(store: &Store, viewer: Option<&str>, prompt: String) -> String {
         return prompt;
     }
     let mut prompt = format!("{prompt}\n\n{}", leads::summary_line(&rows, viewer));
-    // P0-3（迭代细则 v1 §1）：事实密度 annex——每 consumed lead 的观众画像数
+    // 事实密度 annex（迭代细则 v1 §1）：每 consumed lead 的观众画像数
     // + 证据摘要（行尾 episode 回链）。增益面纪律同人 comment：读错吞纳不绊管线。
     if let Ok(lines) = leads::consumed_annex_lines(store, &rows)
         && !lines.is_empty()
@@ -621,7 +621,7 @@ fn ledger_annex(store: &Store, viewer: Option<&str>, prompt: String) -> String {
         prompt.push('\n');
         prompt.push_str(&lines.join("\n"));
     }
-    // D9/R2-批6：拒绝回喂聚合线（零被拒 → None：旧版逐字节不变；rejected 只
+    // 拒绝回喂聚合线（零被拒 → None：旧版逐字节不变；rejected 只
     // 折叠白名单 chip 计数 + 最近注记截字——平台事实不可被 AI 改写，仅携带）。
     if let Ok(Some(line)) = leads::reject_annex_line(store) {
         prompt.push('\n');
@@ -638,7 +638,7 @@ fn reasoning_json(config: &Config) -> Value {
     })
 }
 
-/// Z5c：舰长感知缓存的「时效位」（用户裁决：旧 AI 结论保留作参考、不删——但
+/// 舰长感知缓存的「时效位」（用户裁决：旧 AI 结论保留作参考、不删——但
 /// 事实面/提示面变化后，旧结论行必须亮「信源已更新·待重判」，不得摆绿）。
 /// 语义 = 「今天重跑会不会复用这条旧结论」的同源对照：
 /// `complete_cache` 用的完整判定里只有哈希对决策有话语权，此处频道专属：
@@ -713,7 +713,7 @@ fn has_complete_cache(viewer_cache_dir: &Path, uid: &str) -> bool {
         && cached.get("analysis").is_some_and(Value::is_object)
 }
 
-/// R2 批4 D3：名册 →「本轮真的会新建/更新」的 fresh 集合（预算闸的分子）。
+/// 名册 →「本轮真的会新建/更新」的 fresh 集合（预算闸的分子）。
 /// Normal=全员（现状一字不动）；BriefingOnly=空（单人感知整体跳过）；IncrementalOnly=
 /// 有完整旧结论**且**输入已变者。缓存缺失/读取失败一律视无旧结论——读错保守不扩大
 /// fresh；force 清缓存路径下增量模式自然全员缺席（无旧结论可增量）。
@@ -754,7 +754,7 @@ struct ViewerTaskOut {
     analysis: Value,
     /// 待 absorb 的子实例（含 blocking client——跨任务移动后由主任务集中处置）。
     child: ResearchService,
-    /// Z1/P0-2：本观众本轮 LLM 的 prompt-cache 计量（hit, miss）；复用/早退为零——
+    /// 本观众本轮 LLM 的 prompt-cache 计量（hit, miss）；复用/早退为零——
     /// 语义即「本轮新发起请求的缓存命中量」（复用路径没有新请求，计数诚实归零）。
     cache_tally: (i64, i64),
 }
@@ -763,7 +763,7 @@ enum ViewerStage {
     Ok(Box<ViewerTaskOut>),
     /// 缓存复用短路（Python：不再触碰 research；无新发现可吸收）。
     Reused(Value),
-    /// Z1/P0-2：失败臂同样携带本轮已烧的 cache 计量（撞 budget 的浪费要入账）。
+    /// 失败臂同样携带本轮已烧的 cache 计量（撞 budget 的浪费要入账）。
     Failed((i64, i64)),
 }
 
@@ -782,7 +782,7 @@ async fn run_one_viewer(
     force: bool,
 ) -> (String, ViewerStage) {
     let input_hash = bundle.input_hash.clone();
-    // Z2/P0-3：壳/集合身份随缓存落盘——增量复用消费者（后续批次）的判定件。
+    // 壳/集合身份随缓存落盘——增量复用消费者（后续批次）的判定件。
     let hash_manifest = json!({
         "input_hash": bundle.input_hash,
         "shell_hash": bundle.shell_hash,
@@ -811,7 +811,7 @@ async fn run_one_viewer(
                 let store = Store::open(&graph_file_ref).map_err(|err| err.to_string())?;
                 let entity_exists =
                     |candidate: &str| store.entity_exists(candidate).unwrap_or(false);
-                // r2-F3/r3-F2（评审双坐实）：Python 传共享 research 的注册表，其 ctor 从
+                // Python 传共享 research 的注册表，其 ctor 从
                 // research_cache.json 回填——闭包必须是「子实例磁盘视图」（含上运行归档 +
                 // 本运行已落盘发现），不是空集。
                 let client = new_client(
@@ -914,7 +914,7 @@ async fn run_one_viewer(
             max_turns: config.ai.agent.max_turns as usize,
             retries: config.ai.agent.run_retries as usize,
             backoff_seconds: config.ai.agent.retry_backoff_seconds,
-            // r1-F1：单 viewer token 预算熔断（累计 total_tokens 超限 → viewer_failure）。
+            // 单 viewer token 预算熔断（累计 total_tokens 超限 → viewer_failure）。
             token_budget: Some(config.ai.agent.viewer_token_budget),
         },
         &mut ctx,
@@ -923,7 +923,7 @@ async fn run_one_viewer(
     .await;
     let elapsed = (started.elapsed().as_secs_f64() * 100.0).round() / 100.0;
     let runtime_payload = stats_json(&trace.stats);
-    // Z1/P0-2：cache 计量走独立 tally——persisted runtime 载荷守 Python D-4 五键 parity。
+    // cache 计量走独立 tally——persisted runtime 载荷守 Python 五键 parity。
     let cache_tally = (trace.stats.cache_hit_tokens, trace.stats.cache_miss_tokens);
     let ViewerAgentCtx {
         research: child, ..
@@ -942,7 +942,7 @@ async fn run_one_viewer(
                     "terminal_tool": "submit_viewer_perception",
                     "elapsed_seconds": elapsed,
                     "runtime": runtime_payload,
-                    // r3-F3：空 leads 剥键（Python extra=forbid——键存在即拒）。
+                    // 空 leads 剥键（Python extra=forbid——键存在即拒）。
                     "analysis": strip_empty_leads(payload.clone()),
                 }),
             );
@@ -985,7 +985,7 @@ async fn run_audience_stage(
     runtime: &AgentRuntime,
     knobs: &PipelineKnobs<'_>,
     force: bool,
-    // Z1/P0-2：三元组尾件 = 本轮 LLM 的 prompt-cache 计量 (hit, miss)；复用臂为 (0, 0)。
+    // 三元组尾件 = 本轮 LLM 的 prompt-cache 计量 (hit, miss)；复用臂为 (0, 0)。
 ) -> (
     Result<(Value, Value, (i64, i64)), PipelineError>,
     ResearchService,
@@ -996,9 +996,9 @@ async fn run_audience_stage(
             return (Err(PipelineError::Message(err.to_string())), research);
         }
     };
-    // Z5：哈希件走 audience_input_hash_material（过程指标摘出——同数据重采同哈希），
+    // 哈希件走 audience_input_hash_material（过程指标摘出——同数据重采同哈希），
     // 提示面 input 原样保真（golden 对账不漂移）。
-    // Z5/C1：协议版本串入哈希——终局 schema 或指令文本一改，situation 缓存即失效
+    // 协议版本串入哈希——终局 schema 或指令文本一改，situation 缓存即失效
     // （认知层正确性条款：否则新字段如 front_brief 永不被补算）。viewer 面另有
     // reasoning/rules 成分但暂未入版本串——登记为统一化设计债。
     let input_hash = stable_hash(&json!({
@@ -1016,7 +1016,7 @@ async fn run_audience_stage(
         let cached = storage::read_json(&cache_path).ok().flatten();
         if let Some(cached) = cached.as_ref() {
             if !complete_cache(cached, &input_hash) {
-                // Z5 观测面：situation 缓存命中判别不可静默——哈希不等 / 复核不过 / 形态坏
+                // 观测面：situation 缓存命中判别不可静默——哈希不等 / 复核不过 / 形态坏
                 // 三分面都写 events（viewer 阶段同款静默曾让我们排查三小时）。
                 let shape_ok = serde_json::from_value::<AudienceSituationSubmission>(
                     cached["analysis"].clone(),
@@ -1122,7 +1122,7 @@ async fn run_audience_stage(
             max_turns: config.ai.agent.max_turns as usize,
             retries: config.ai.agent.run_retries as usize,
             backoff_seconds: config.ai.agent.retry_backoff_seconds,
-            // r1-F1 熔断只属 viewer 面；audience 单 agent 不设 budget。
+            // token 预算熔断只属 viewer 面；audience 单 agent 不设 budget。
             token_budget: None,
         },
         &mut ctx,
@@ -1131,7 +1131,7 @@ async fn run_audience_stage(
     .await;
     let elapsed = (started.elapsed().as_secs_f64() * 100.0).round() / 100.0;
     let runtime_payload = stats_json(&trace.stats);
-    // Z1/P0-2：同 viewer 臂——cache 计量进程内 tally，不进 persisted runtime 五键。
+    // 同 viewer 臂——cache 计量进程内 tally，不进 persisted runtime 五键。
     let cache_tally = (trace.stats.cache_hit_tokens, trace.stats.cache_miss_tokens);
     let AudienceAgentCtx { research, .. } = ctx;
     match outcome {
@@ -1194,7 +1194,7 @@ fn fail_run_and_state(
         && let Ok(store) = Store::open(&graph_file(&config.output_dir))
     {
         // aborted=非 Exception 型：Rust 一切 Err 皆「Exception 等价」→ false；
-        // 唯一 true 的来源是 ctrl-c（KeyboardInterrupt 同型物，D-3）。
+        // 唯一 true 的来源是 ctrl-c（KeyboardInterrupt 同型物）。
         let _ = store.fail_run(run_id, error, interrupted);
     }
     let _ = write_state(
@@ -1219,7 +1219,7 @@ struct UmbrellaNote {
     viewer_input_hashes: Map<String, Value>,
 }
 
-/// 主体（Python `run_async`）。ctrl-c → aborted=true 收尾（D-3）。
+/// 主体（Python `run_async`）。ctrl-c → aborted=true 收尾。
 pub async fn run_pipeline(
     config: Config,
     analysis: &Value,
@@ -1229,12 +1229,12 @@ pub async fn run_pipeline(
     let runtime = Arc::new(
         AgentRuntime::from_ai_config(&config.ai)
             .map_err(|err| PipelineError::Message(err.to_string()))?
-            // Z3/P0-4 闸门二：run 级限速漏桶（max_llm_rpm=0 → Throttle::disabled，空操作）。
+            // 闸门二：run 级限速漏桶（max_llm_rpm=0 → Throttle::disabled，空操作）。
             // viewer 任务克隆 Arc<AgentRuntime> 共享同一桶；audience 臂同一 runtime 引用。
             .with_throttle(Arc::new(Throttle::build(config.ai.agent.max_llm_rpm))),
     );
     // Python 次序：research(master) 在 begin_graph_run 之前构造；其失败走裸传播（不 umbrella）。
-    // 含 blocking client → 构造与处置都走 spawn_blocking（D-2）。
+    // 含 blocking client → 构造与处置都走 spawn_blocking。
     let master = {
         let (root, cfg, origin) = (
             config.output_dir.clone(),
@@ -1296,8 +1296,8 @@ pub async fn run_pipeline(
     }
 }
 
-/// D7（M5-B3）：单观众薄封装——analysis 的 viewer_profiles 过滤后走同一 run_pipeline
-/// 主体；viewer 未落入 baseline → 明确错误，不新写编排（kickoff G1/D7 裁决）。
+/// M5-B3：单观众薄封装——analysis 的 viewer_profiles 过滤后走同一 run_pipeline
+/// 主体；viewer 未落入 baseline → 明确错误，不新写编排。
 ///
 /// 注：run_pipeline 的 force 语义为**全局**清理（重算所有篮内观众），viewer 面 force 的
 /// 拒绝职责归调用方（live-server POST /api/runs 的 422）。
@@ -1438,7 +1438,7 @@ async fn run_pipeline_inner(
     };
     note.run_id = Some(run_id.clone());
     progress_say(knobs, "[GRAPH] 写入Episode、Mention、Entity和兴趣状态");
-    // P0-1（迭代细则 v1 §1）：房间语料 Episode 化收账——collect 只写 shared/*.json
+    // 房间语料 Episode 化收账（迭代细则 v1 §1）：collect 只写 shared/*.json
     // （replay_danmaku / room_comments），这里在观众扇出前转 Episode 走既有 ingest
     // 通道落图（viewer 命名空间 = _room）。幂等语义继承 upsert_episode_inner；
     // 入账失败是独立工作单元：响铃不绊管线（已完成的观众结果不受影响）。
@@ -1479,7 +1479,7 @@ async fn run_pipeline_inner(
     // master 由 run_pipeline 传入（Python 次序：research 先于 begin_graph_run）。
     // 并发扇出 + 有序应用栅栏（M5-B3：状态机 hook——queued/collecting/episodes 由
     // registry 自己直接进入 per_viewer_ai）。
-    // R2 批4 D3 花费预算闸：先于扇出决定 fresh 集合与放行/阻断，budget.json 侧文件
+    // 花费预算闸：先于扇出决定 fresh 集合与放行/阻断，budget.json 侧文件
     // 一次 run 一写（放行/阻断都落盘，供运行概览/上次实耗并列用）；写失败响铃不绊。
     let fresh = fresh_viewer_ids(&viewer_ids, &bundles, &viewer_cache_dir, knobs.spend_mode);
     {
@@ -1534,12 +1534,12 @@ async fn run_pipeline_inner(
         }
     }
     stage_say(knobs, STAGE_PER_VIEWER_AI);
-    // Z3/P0-4 闸门一：并行 viewer 数由 config 驱动（默认锚 = INVESTIGATE_CONCURRENCY）。
+    // 闸门一：并行 viewer 数由 config 驱动（默认锚 = INVESTIGATE_CONCURRENCY）。
     let semaphore = Arc::new(Semaphore::new(
         config.ai.agent.max_parallel_viewers.max(1) as usize
     ));
     let mut set: tokio::task::JoinSet<(String, ViewerStage)> = tokio::task::JoinSet::new();
-    // R2 批4 D3 门控 fanout：BriefingOnly 全跳（gate 已放行才到这）；IncrementalOnly
+    // 门控 fanout：BriefingOnly 全跳（gate 已放行才到这）；IncrementalOnly
     // 只扇出「有完整旧结论」（哈希同/变都在新鲜面——变者重判、同者复用，全零新增
     // 的纯新建者缺席本轮）。缺席走 continue，静默不占 semaphore。
     let fresh_set: HashSet<&str> = fresh.iter().map(String::as_str).collect();
@@ -1607,7 +1607,7 @@ async fn run_pipeline_inner(
     // 栅栏：viewer_ids 序应用 + absorb；失败 → graph_failures 明细 + 缓存 graph_failed。
     let mut viewer_submissions: Map<String, Value> = Map::new();
     let mut graph_failures: Vec<Value> = Vec::new();
-    // Z1/P0-2：viewer 阶段本轮 LLM 的 prompt-cache 入账（复用臂不贡献——诚实零）。
+    // viewer 阶段本轮 LLM 的 prompt-cache 入账（复用臂不贡献——诚实零）。
     let mut viewer_cache_tally: (i64, i64) = (0, 0);
     for uid in &viewer_ids {
         let Some(stage) = outputs.remove(uid) else {
@@ -1688,16 +1688,15 @@ async fn run_pipeline_inner(
             continue;
         }
         viewer_submissions.insert(uid.clone(), analysis);
-        // M4.x kickoff D3：Ok/Reused 双臂在 apply 成功点汇流——账本补写幂等，
+        // M4.x：Ok/Reused 双臂在 apply 成功点汇流——账本补写幂等，
         // 缓存命中路径同样补账（首跑中断后恢复不丢账）。
         // G2 表形态（design §9.2）：dedication 表 OR IGNORE 幂等，唯一键即 dedupe_key。
-        // MXA-4（r6 驳 D7「无通道」前提）：fail-open 保持但响铃——
-        // 线索无痕蒸发 ≠ 豁免项。
+        // fail-open 保持但响铃——线索无痕蒸发 ≠ 豁免项。
         if let Err(err) = leads::record_leads(&store, uid, &run_id, &utc_now(), &submission.leads) {
             progress_say(knobs, &format!("[LEADS] 观众 {uid} 账本写入失败：{err}"));
         }
         if let Some(checkpoint) = knobs.checkpoint.as_deref_mut() {
-            // r2-F8：报告刷新失败必须与 Python 同型——吞掉记 progress，不打断管线。
+            // 报告刷新失败必须与 Python 同型——吞掉记 progress，不打断管线。
             if let Err(err) = checkpoint() {
                 progress_say(knobs, &format!("[AI] 观众 {uid} checkpoint 失败：{err}"));
             }
@@ -1756,7 +1755,7 @@ async fn run_pipeline_inner(
     }
     // viewer 阶段收口标记：兜底伞 interrupted/failed 文案的 viewer_stage_status 数据源。
     note.viewer_stage_complete = true;
-    // Z4b（动作平面「舰长 AI 分析」kind）：viewer 阶段全部落盘即收——不进 audience；
+    // 动作平面「舰长 AI 分析」kind：viewer 阶段全部落盘即收——不进 audience；
     // situation.json 未动（overview.situation 保持上一轮的态势面，这些钮的语义边界）。
     if knobs.stop_after_viewer_stage {
         progress_say(
@@ -1842,7 +1841,7 @@ async fn run_pipeline_inner(
             bail!(PipelineError::Store(err));
         }
         // M4.x → G2 表形态：audience leads 以 AUDIENCE_VIEWER_ID 入账
-        //（apply 成功后，同 viewer 纪律）。MXA-4：fail-open 保持但响铃。
+        //（apply 成功后，同 viewer 纪律）。fail-open 保持但响铃。
         if let Err(err) = leads::record_leads(
             &store,
             leads::AUDIENCE_VIEWER_ID,
@@ -1857,7 +1856,7 @@ async fn run_pipeline_inner(
         Ok(()) => {}
         Err(err) => bail!(PipelineError::Store(err)),
     }
-    // P0-2（迭代细则 v1 §1）+ P0-4（复盘解耦）：四个数 + 旧命名留存/作废判定全沉
+    // 复盘解耦（迭代细则 v1 §1）：四个数 + 旧命名留存/作废判定全沉
     // 进 recap::refresh_recap_card（collect 尾同门进出——出卡不再锁全量感知）。
     // 本处只叠 AI 命名窗：卡 ready 且命名缺位才跑 naming 一击终局——同场次同数面
     // 的旧命名已被 refresh 留存，不白跑 AI。子失败响铃不绊管线（图与 situation
@@ -1887,7 +1886,7 @@ async fn run_pipeline_inner(
             Err(err) => progress_say(knobs, &format!("[RECAP] 复盘卡计算失败：{err}")),
         }
     }
-    // R2 批1（用户裁决：AI 看图裁决归并，程序出纳）：实体「AI 归并」管道尾门。
+    // 用户裁决（AI 看图裁决归并，程序出纳）：实体「AI 归并」管道尾门。
     // 本轮确实铸起了新实体（minted>0）才值得派归并 Agent 出场——minted=0 表示
     // 本轮对实体事实面零触碰，归并无对象，跳过（保持零模型调用静默性）。
     // 归并失败只响铃不绊管线：图事实、证据、账本均已落，归并属于聚合层润色。
@@ -1927,9 +1926,9 @@ async fn run_pipeline_inner(
             "situation_input_hash": situation_input_hash,
             "viewer_input_hashes": viewer_input_hashes,
             "graph_run_id": run_id,
-            // D-1（design-Δ）：token 成本一等公民入 state.json。
+            // design-Δ：token 成本一等公民入 state.json。
             "usage": usage,
-            // Z1/P0-2：cache 观测盒姊妹键（usage 保 Python 五键 parity）。
+            // cache 观测盒姊妹键（usage 保 Python 五键 parity）。
             "cache_usage": cache_usage,
         }),
     ) {

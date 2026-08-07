@@ -113,7 +113,7 @@ async fn post(app: &axum::Router, path: &str) -> (u16, Value) {
     (status, json)
 }
 
-/// D9：带体 POST（reject 端点用）——体缺省无 body 的语义由空体测试单独钉。
+/// 带体 POST（reject 端点用）——体缺省无 body 的语义由空体测试单独钉。
 async fn post_json(app: &axum::Router, path: &str, body: &str) -> (u16, Value) {
     let request = Request::builder()
         .method("POST")
@@ -301,7 +301,7 @@ async fn approve_migrates_legacy_jsonl_then_flips_row() {
     assert_eq!(rows[0].lead_type, "search");
 }
 
-/// Z7 补钉（R5-F1a）：approve 缝的 MXA-1 端点响铃——legacy leads.jsonl 含坏行时
+/// 补钉：approve 缝的端点响铃——legacy leads.jsonl 含坏行时
 /// 必须 500（守卫停火）、文件原地、归档缺席、表不被半份导入。
 #[tokio::test(flavor = "multi_thread")]
 async fn approve_with_bad_legacy_jsonl_rings_500_and_stays_put() {
@@ -337,7 +337,7 @@ async fn approve_with_bad_legacy_jsonl_rings_500_and_stays_put() {
 }
 
 // ---------------------------------------------------------------------------
-// D9/R2-批6 leads 拒绝缝：POST /api/rooms/:uid/leads/:lead_id/reject
+// leads 拒绝缝：POST /api/rooms/:uid/leads/:lead_id/reject
 // ---------------------------------------------------------------------------
 
 /// 钉①正常翻转：pending → rejected；空体（全空拒因）→ 留档列落 NULL/NULL，

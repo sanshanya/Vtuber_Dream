@@ -13,13 +13,13 @@ use crate::leads::{LedgerRow, status_from_name, status_name};
 
 use super::{Result, Store, repo_err};
 
-/// 轮2-R1-B2：evidence_ids 序列化口径公共件（insert/update 双写点同修一份）。
+/// evidence_ids 序列化口径公共件（insert/update 双写点同修一份）。
 fn evidence_ids_json(row: &LedgerRow) -> Result<String> {
     serde_json::to_string(&row.evidence_ids)
         .map_err(|err| super::StoreError::Repo(format!("evidence_ids 不可序列化：{err}")))
 }
 
-/// D9：拒绝 chip 落列口径——空数组 → NULL（全空合法空态）；非空 → JSON 数组文本。
+/// 拒绝 chip 落列口径——空数组 → NULL（全空合法空态）；非空 → JSON 数组文本。
 /// insert/update 双写点同修一份（与 evidence_ids 同构）。
 fn reject_chips_json(row: &LedgerRow) -> Result<Option<String>> {
     if row.reject_chips.is_empty() {
@@ -30,7 +30,7 @@ fn reject_chips_json(row: &LedgerRow) -> Result<Option<String>> {
         .map_err(|err| super::StoreError::Repo(format!("reject_chips 不可序列化：{err}")))
 }
 
-/// D9：拒绝注记落列口径——空串 → NULL（与 chip 同构：全空合法空态）。
+/// 拒绝注记落列口径——空串 → NULL（与 chip 同构：全空合法空态）。
 /// 端点已对 note 做 trim 归一（纯空白注记视同无注记），此处只管空串。
 fn reject_note_sql(row: &LedgerRow) -> Option<&str> {
     if row.reject_note.is_empty() {
@@ -91,7 +91,7 @@ impl Store {
                 format!("未知线索状态 {status_text}").into(),
             )
         })?;
-        // D9：reject_chips_json 可 NULL（无拒因）；NULL → 空数组。
+        // reject_chips_json 可 NULL（无拒因）；NULL → 空数组。
         let reject_chips_json: Option<String> = row.get(13)?;
         let reject_chips = match reject_chips_json {
             Some(text) => serde_json::from_str(&text).map_err(|err| {

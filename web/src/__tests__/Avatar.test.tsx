@@ -1,5 +1,5 @@
 /**
- * Avatar 统一头像面钉团（R2#7）：
+ * Avatar 统一头像面钉团：
  * - face 有 → img no-referrer 防盗链（理由源头注在 components/Avatar.tsx）+ 尺寸档位类；
  * - face 空串/null → 首字 fallback 块 + role="img" + aria-label（可达性面）；
  * - name 缺 → 「?」占位，不臆造字符。

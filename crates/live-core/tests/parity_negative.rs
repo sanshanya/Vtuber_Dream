@@ -589,7 +589,7 @@ fn episodes_readback_parses_json_fields_and_clamps_limit() {
     assert!(empty.is_empty(), "未知 viewer 回空集");
 }
 
-/// r5-FIND-1 记录测试（已知分叉，防误改）：应用层 upsert 保证活跃 (u,v) 唯一，
+/// 记录测试（已知分叉，防误改）：应用层 upsert 保证活跃 (u,v) 唯一，
 /// project()/detect_communities 复刻 Python 时依赖此前提而不自行去重。
 /// 手工 SQL 注入重复活跃 INTERESTED_IN 边（正常路径不可造）时：
 /// - project 导出的 edges 保留两行（不做 networkx add_edge 式折叠）；

@@ -1,7 +1,7 @@
 //! collect() 编排（移植 Python `collector.py` 的 `_collect_viewer / _enrich_video_metadata /
 //! _write_platform_snapshot / _collect_streamer / collect`）。
 //!
-//! 体积备书（轮3）：超 500 线 = 预算簿记 + 编排主干一条线（budget 计数与失败隔离
+//! 体积备书：超 500 线 = 预算簿记 + 编排主干一条线（budget 计数与失败隔离
 //! 同事务连写）；M4.x 已把 enrich/leads/room/viewer 出块，本卷是收完的壳。
 //!
 //! 预算纪律（与 Python 逐行对齐）：
@@ -23,7 +23,7 @@ use crate::episodes::now_iso;
 use crate::storage;
 
 pub(crate) mod enrich;
-// MXA-9（r5-F1）：crate 内私有，与兄弟模块同纪律——外部消费者零（M5 CLI 需要时再开）。
+// crate 内私有，与兄弟模块同纪律——外部消费者零（M5 CLI 需要时再开）。
 pub(crate) mod leads;
 pub(crate) mod room;
 pub(crate) mod viewer;
@@ -32,7 +32,7 @@ use leads::{consume_approved_leads, fetch_lead_yield};
 
 pub(crate) use enrich::*;
 
-/// W1/r2-F1 文件名 uid 白名单字符集（与 live-server `uid_charset_legal` 同集，
+/// 文件名 uid 白名单字符集（与 live-server `uid_charset_legal` 同集，
 /// 这里独立成一条是因为 live-core 不依赖 live-server；两实现同源记事于本头注）。
 /// 单笔工作单元合法性阈值：几乎不会变的常理上界 128（大于 B 站现 uid 域与一个身位）。
 pub(crate) fn uid_file_name_legal(uid: &str) -> bool {
@@ -123,7 +123,7 @@ pub fn collect_with_client(
     // 险口 #1：单查（SingleViewer）不清场不归档——只覆写目标 uid 的
     // viewers/<uid>.json；其余舰长事实、site、shared 全原样。其余模式
     // （StreamerOnly/Guards）保持原清场+归档行为一字不差。
-    // 用引用判断以免改动 `mode` 的所有权流；R2 起同时把这 bool 复用于
+    // 用引用判断以免改动 `mode` 的所有权流；同时把这 bool 复用于
     // F1 的 /success/failure collection 收口与 F3 的线索消费闸。
     let single_viewer = matches!(&mode, CollectMode::SingleViewer(_));
     if !single_viewer {
@@ -137,7 +137,7 @@ pub fn collect_with_client(
     }
     let started_at = now_iso();
     let started = Instant::now();
-    // 险口 #2（R2-F1）：单查不预写 "running" 态——中途失败/被杀不得把上一轮
+    // 险口 #2：单查不预写 "running" 态——中途失败/被杀不得把上一轮
     // collection.json（哪怕是 complete）覆写掉；单查的 collection 只在本轮成功
     // 收敛时落盘，失败即保持原字节或保持没有。其余模式保持原 running 预写。
     if !single_viewer {
@@ -150,10 +150,10 @@ pub fn collect_with_client(
 
     match collect_inner(&mut client, config, &mode, emit, &started_at, started) {
         Ok(mut summary) => {
-            // M4.x kickoff D5/D6 → G2 表形态（design §9.2 行 254）：尾段消费
+            // M4.x → G2 表形态（design §9.2 行 254）：尾段消费
             // discovery_leads 表（预算 0 秒返=默认休眠；消费失败不杀 collection，
             // 薄切 fail-open 亲属的对应面）。
-            // R2-F3：单查（SingleViewer）不碰账本——线索消费是把当前账本已批准行
+            // 单查（SingleViewer）不碰账本——线索消费是把当前账本已批准行
             // 整体烧尽的 batch 动作，单查是 single-point 增量检查，不该动账本
             //（lead_fetch_budget_per_run > 0 也不放行；旧 JSONL 迁移同样不触发）。
             let consumed = if single_viewer {
@@ -167,11 +167,11 @@ pub fn collect_with_client(
                 // 面板/报告消费者按「显式 i64、缺省 0」解读。
                 summary["leads_consumed"] = json!(consumed);
             }
-            // MXA-2（r3-F1）：request_count 在 collect_inner 内冻结——消费请求真实
+            // request_count 在 collect_inner 内冻结——消费请求真实
             // 发生，写盘前刷新不漏报（否则传染 baseline 的 collection_request_count）。
             summary["request_count"] = json!(client.request_count());
             if single_viewer {
-                // R2-F1 成功收口：单查写 collection.json 但口径诚实——status 固定
+                // 成功收口：单查写 collection.json 但口径诚实——status 固定
                 // complete；viewer_count = 盘面 viewers/*.json 实际文件数（含未动手
                 // 他人），不再落成 seed=1 的空壳骗过项目概览；guard_count 读取既有
                 // summary 值（冷启动读不到置 0）；request_count/elapsed_seconds 等
@@ -198,7 +198,7 @@ pub fn collect_with_client(
             Ok(summary)
         }
         Err(err) => {
-            // R2-F1 失败收口：单查失败完全不写 collection.json——上一轮字节（哪怕
+            // 失败收口：单查失败完全不写 collection.json——上一轮字节（哪怕
             // 是 complete）原样保留，失败不杀伤集合门禁（episodes/baseline.rs 只认
             // status=="complete"）；冷启动本来就没 collection.json 就保持没有。
             // 其余模式保持原 failed 文案一字不差。
@@ -223,9 +223,9 @@ pub fn collect_with_client(
 
 /// G2 尾段账本动作一体化的表形态（design §9.2 行 254）：
 /// 1. 图库不存在且旧 JSONL 账本也不存在 → 秒返 0（鲜房零副作用——不建空库，
-///    Z3 缺图空态不被消费通道提前翻牌）；
+///    缺图空态不被消费通道提前翻牌）；
 /// 2. 库在（或旧账本需在库）→ 开库 → `migrate_jsonl` 一次性把 M4.x JSONL 导入表并
-///    归档 .bak（幂等；守卫失败响铃+本轮账本停火，MXA-1 同族）；
+///    归档 .bak（幂等；守卫失败响铃+本轮账本停火，同族）；
 /// 3. G2-B 自治 L1 先翻页 → 预算内消费 approved 行。
 ///
 /// 全程失败响铃吞纳（返回 0）：账本失败不杀 collection（薄切 fail-open 血脉）。
@@ -296,7 +296,7 @@ fn room_roster(root: &std::path::Path, config: &Config) -> BTreeSet<String> {
     roster
 }
 
-/// R2-F1：单查成功收口的盘面口径——viewers/*.json 实际文件数（含未动他人）。
+/// 单查成功收口的盘面口径——viewers/*.json 实际文件数（含未动他人）。
 fn viewer_json_file_count(root: &std::path::Path) -> Result<i64, CollectError> {
     let directory = root.join("viewers");
     if !directory.is_dir() {
@@ -347,8 +347,8 @@ fn collect_inner(
         _ => Vec::new(),
     };
     let mut seeds: Vec<(String, Value)> = Vec::new();
-    // R2-F2：SingleViewer 的显式目标 uid——后续 enrich 收面用它过滤 viewer 文件，
-    // 避免无差别全量回写其余舰长（每次单查都翻一批 input_hash → Z5「重保 AI」破）。
+    // SingleViewer 的显式目标 uid——后续 enrich 收面用它过滤 viewer 文件，
+    // 避免无差别全量回写其余舰长（每次单查都翻一批 input_hash → 「重保 AI」破）。
     let single_viewer_uid: Option<String> = if let CollectMode::SingleViewer(uid) = mode {
         let uid = uid.trim().to_string();
         if uid.is_empty() {
@@ -420,7 +420,7 @@ fn collect_inner(
     for (index, (_, base)) in seeds.iter().enumerate() {
         let viewer = collect_viewer(client, base, config);
         let uid = pystr(viewer.pointer("/viewer/id"));
-        // W1/r2-F1 纵深防御：落盘文件名 uid 必须是白名单字符集 [A-Za-z0-9_-]，
+        // 纵深防御：落盘文件名 uid 必须是白名单字符集 [A-Za-z0-9_-]，
         // 否则拒绝本单元（即便 server 层已拦截，collect 本身不得裸写穿透）。
         if !uid_file_name_legal(&uid) {
             return Err(CollectError::Message(format!(
@@ -516,7 +516,7 @@ fn collect_inner(
     for key in &counter_order {
         status_counts.insert(key.clone(), Value::from(source_counter[key]));
     }
-    // 验收钉④（迭代细则 v1 §1 P0-1）：房间语料三源独立记账——此前只在 coverage
+    // 验收钉④（迭代细则 v1 §1）：房间语料三源独立记账——此前只在 coverage
     // 记行数/请求数，status 不进 source_status_counts（「独立记账」缺半边）。
     // 每源三个 Boolean 量级固定计 1（源级状态，非行级），与观众源的 viewer
     // 计数语义分层共存（键名前缀 disambiguate）。
@@ -549,9 +549,9 @@ fn collect_inner(
     }))
 }
 
-/// B-B4（R2-D11 前置补丁）：主播粉丝数快照随行落账 `{output}/history/
+/// 主播粉丝数快照随行落账 `{output}/history/
 /// follower_snapshots.jsonl`，一行 `{ts, followers}`。等值不追加——快照的意义
-/// 是拐点时序，等值行纯噪；delta 读面 = 末行 vs 首条异值行（D11 存档页）。
+/// 是拐点时序，等值行纯噪；delta 读面 = 末行 vs 首条异值行（存档页）。
 /// 写失败响铃不绊采集（快照是派生账，事实面 streamer.json 已落盘）。
 fn append_follower_snapshot(
     output_dir: &std::path::Path,
@@ -636,7 +636,7 @@ mod tests {
         assert_eq!(or_chain(&[&json!(2.0), &name]), "2.0"); // Python str(2.0)="2.0"
     }
 
-    /// W1/r2-F1 文件名守卫钉：落盘 uid 只许白名单字符集——
+    /// 文件名守卫钉：落盘 uid 只许白名单字符集——
     /// dot-dot/内嵌斜杠/空串/超长/非 ASCII 一律拒（与 live-server uid_charset_legal 同族）。
     #[test]
     fn uid_file_name_legal_rejects_path_traversal() {
