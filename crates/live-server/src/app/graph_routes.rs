@@ -277,10 +277,14 @@ pub(super) async fn room_graph(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("")
         .to_ascii_lowercase();
-    let (encoding, bytes) = if accept.contains("br") && artifact.br.is_some() {
-        (Some("br"), artifact.br.expect("just checked"))
-    } else if accept.contains("gzip") && artifact.gz.is_some() {
-        (Some("gzip"), artifact.gz.expect("just checked"))
+    let (encoding, bytes) = if accept.contains("br")
+        && let Some(br) = artifact.br
+    {
+        (Some("br"), br)
+    } else if accept.contains("gzip")
+        && let Some(gz) = artifact.gz
+    {
+        (Some("gzip"), gz)
     } else {
         (None, artifact.raw)
     };
