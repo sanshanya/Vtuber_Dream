@@ -1,43 +1,28 @@
-//!（WS 弹幕窗）挂接 e2e：collect_streamer 尾段的
-//! `live_ws_record` 弹幕窗采录全链路验收。
+//! WS 弹幕窗独立录制入口 e2e（删码刀9 后的姿势）：
+//! 直接驱动 `live_server::ws_record::run_ws_record`（不占 Agent run 槽，
+//! 无 POST/registry 面）；mock 分工与语义钉与旧「collect 尾段挂接」时代一致——
+//! wiremock 只答 HTTP（get_info / getDanmuInfo），弹幕网关 = 本机 TCP + accept_async。
 //!
-//! 四钉：
-//! 1. `live_ws_record: 1` + 房间在播（get_info live_status=1）+ 本机 WS mock
-//!    （auth_ok → 2 弹幕 → PREPARING）→ 弹幕窗收窗（end_reason=preparing），
-//!    outcome.ws_window 在位、_room 语料入账 graph（source=live_ws_danmaku）；
-//! 2. `live_ws_record` 缺省（0）→ 不开窗，无 ws_window 键，
-//!    events 含「[WS] 本轮未开弹幕窗（配置关/房间未在播）」；
-//! 3. `live_ws_record: 1` 但房间未在播（get_info live_status=0）→ 不开窗，
-//!    events 含「[WS] 房间未在播」；
-//! 4. 认证拒绝（op=8 code=-101 → AuthFailed）→ 诚实窗 end_reason=auth_failed，
-//!    ws_window 仍在 outcome、run 照常 done、token 绝不进 events。
-//!
-//! mock 分工：wiremock 只答 HTTP（get_info / getDanmuInfo / 采集基线），
-//! 弹幕网关 = 本机 TCP + `accept_async`（真实 WebSocket 握手，与
-//! `live-core/tests/live_ws_session.rs` 同源）。`DanmakuInfo::url()` 对非 443
-//! 端口出 `ws://host:port/sub`，故 listener 必须先绑定拿端口、再挂 getDanmuInfo
-//! （wiremock 模板静态，端口要在 mount 前就定）。
+//! 钉：① 在播 → 开窗采录 → 摘要齐 + _room 语料入账 graph（source=live_ws_danmaku）；
+//!     ② 未在播 → Ok(None)，不碰网关；
+//!     ③ 认证拒绝（op=8 code=-101）→ 诚实窗 end_reason=auth_failed，token 绝不进 足迹/摘要；
+//!     ④ 同窗同 ts 重跑 → 幂等（撞库去重停 2 行），落库 ts = 平台 ts。
 
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-use axum::http::Request;
 use futures_util::{SinkExt, StreamExt};
-use http_body_util::BodyExt;
 use serde_json::{Value, json};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::time::timeout;
 use tokio_tungstenite::WebSocketStream;
 use tokio_tungstenite::accept_async;
 use tokio_tungstenite::tungstenite::protocol::Message;
-use tower::ServiceExt;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 use live_core::live_ws::codec::{RawPacket, decode_packets, encode_packet};
-use live_server::app::{AppState, build_app};
-use live_server::registry::Registry;
 
 mod common;
 
@@ -329,18 +314,14 @@ async fn expect_auth(ws: &mut Ws) {
 }
 
 // ---------------------------------------------------------------------------
-// 通用辅助：fixture / 轮询 / oneshot / run 终局
+// 通用辅助：config 布景 + 驱动器（spawn_blocking 包同步入口）
 // ---------------------------------------------------------------------------
 
-/// `live_ws_record=1` 由调用方决定是否注入（replacen 到 timeout_seconds 行后）。
-fn build_ws_fixture(
-    bilibili_uri: &str,
-    live_ws_record: bool,
-) -> (tempfile::TempDir, PathBuf, axum::Router, Registry) {
-    let tmp = tempfile::tempdir().unwrap();
+/// 布景：临时 out + yaml_template → 加载好的 Config（独立入口无 registry/app 面）。
+fn staged_config(tmp: &tempfile::TempDir) -> live_core::config::Config {
     let out_dir: PathBuf = tmp.path().join("out");
     std::fs::create_dir_all(&out_dir).unwrap();
-    let mut yaml = common::yaml_template(
+    let yaml = common::yaml_template(
         None,
         "m5d-ws",
         "SESSDATA=test",
@@ -352,96 +333,37 @@ fn build_ws_fixture(
         "OUTPUT_DIR",
         &out_dir.display().to_string().replace('\\', "/"),
     );
-    if live_ws_record {
-        yaml = yaml.replacen(
-            "  timeout_seconds: 5",
-            "  timeout_seconds: 5\n  live_ws_record: 1",
-            1,
-        );
-    }
     let config_path = tmp.path().join("config.yaml");
     std::fs::write(&config_path, yaml).unwrap();
-    let registry = Registry::new();
-    let app = build_app(AppState {
-        config_path: config_path.clone(),
-        web_root: tmp.path().join("no-dist"),
-        registry: registry.clone(),
-        bilibili_hosts: Some((bilibili_uri.to_string(), bilibili_uri.to_string())),
-        graph_artifact_lock: Default::default(),
-    });
-    (tmp, config_path, app, registry)
+    live_core::config::load_config(&config_path).expect("config loads")
 }
 
-fn wait_until(deadline: Duration, mut probe: impl FnMut() -> bool) -> bool {
-    let start = Instant::now();
-    loop {
-        if probe() {
-            return true;
-        }
-        if start.elapsed() > deadline {
-            return false;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-}
-
-async fn oneshot(
-    app: &axum::Router,
-    method: &str,
-    path: &str,
-    body: Option<Value>,
-) -> (u16, Value) {
-    let body = body
-        .map(|value| axum::body::Body::from(serde_json::to_vec(&value).unwrap()))
-        .unwrap_or_else(axum::body::Body::empty);
-    let request = Request::builder()
-        .method(method)
-        .uri(path)
-        .header("content-type", "application/json")
-        .body(body)
-        .unwrap();
-    let response = app.clone().oneshot(request).await.unwrap();
-    let status = response.status().as_u16();
-    let bytes = response.into_body().collect().await.unwrap().to_bytes();
-    let value = if bytes.is_empty() {
-        Value::Null
-    } else {
-        serde_json::from_slice(&bytes).unwrap()
-    };
-    (status, value)
-}
-
-fn run_terminal(run_id: &str, registry: &Registry, timeout: Duration) -> Value {
-    let record = registry.get(run_id).expect("run registered");
-    let finished = wait_until(timeout, || {
-        let r = record.lock().expect("record poisoned");
-        r.status == "done" || r.status == "failed"
-    });
-    let snapshot = live_server::registry::run_to_json(&record.lock().expect("record poisoned"));
-    assert!(finished, "run 未在 {:?} 内到终：{snapshot}", timeout);
-    snapshot
-}
-
-/// events 足迹里所有文本行（run 记录的事件是字符串数组）。
-fn event_lines(snapshot: &Value) -> Vec<String> {
-    snapshot["events"]
-        .as_array()
-        .expect("events list")
-        .iter()
-        .filter_map(|row| row.as_str().map(str::to_string))
-        .collect()
+/// 驱动 run_ws_record（同步阻塞面 → spawn_blocking）并收回 emit 足迹。
+async fn drive(
+    config: &live_core::config::Config,
+    bilibili_uri: &str,
+) -> (Result<Option<Value>, String>, Vec<String>) {
+    let config = config.clone();
+    let uri = bilibili_uri.to_string();
+    let rings = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = rings.clone();
+    let result = tokio::task::spawn_blocking(move || {
+        live_server::ws_record::run_ws_record(&config, Some((uri.clone(), uri)), &|message| {
+            sink.lock().expect("rings").push(message.to_string())
+        })
+    })
+    .await
+    .expect("join");
+    let rings = rings.lock().expect("rings").clone();
+    (result, rings)
 }
 
 fn graph_store(out_dir: &Path) -> live_core::graph::Store {
     live_core::graph::Store::open(&out_dir.join("graph").join("perception.sqlite3")).unwrap()
 }
 
-fn read(path: &Path) -> Value {
-    serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap()
-}
-
 // ---------------------------------------------------------------------------
-// 钉 1：live_ws_record=1 + 房间在播 → 弹幕窗收窗、_room 语料入账 graph
+// 钉 1：房间在播 → 弹幕窗收窗、_room 语料入账 graph
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -472,32 +394,14 @@ async fn ws_window_records_danmaku_and_lands_in_graph() {
         })],
     );
 
-    let (_tmp, config_path, app, registry) = build_ws_fixture(&bilibili.uri(), true);
-    let out_dir = live_core::config::load_config(&config_path)
-        .expect("config loads")
-        .output_dir;
-
-    let (status, body) = oneshot(
-        &app,
-        "POST",
-        "/api/runs",
-        Some(json!({"kind": "collect_streamer"})),
-    )
-    .await;
-    assert_eq!(status, 202, "{body}");
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
+    let tmp = tempfile::tempdir().unwrap();
+    let config = staged_config(&tmp);
+    let out_dir = config.output_dir.clone();
+    let (result, _rings) = drive(&config, &bilibili.uri()).await;
     finish_mock(server).await;
 
-    assert_eq!(snapshot["status"], "done", "{snapshot}");
-    assert_eq!(snapshot["kind"], "collect_streamer");
-
-    // outcome.ws_window：2 弹幕、preparing 收窗、session 形状。
-    let ws_window = &snapshot["outcome"]["ws_window"];
-    assert!(
-        ws_window.is_object(),
-        "ws_window 应在 outcome 里：{snapshot}"
-    );
+    let ws_window = result.expect("ws record ok").expect("window opened");
+    let ws_window = &ws_window;
     assert_eq!(ws_window["lines"], json!(2), "{ws_window}");
     assert_eq!(ws_window["end_reason"], json!("preparing"), "{ws_window}");
     assert_eq!(ws_window["counts"]["danmaku"], json!(2), "{ws_window}");
@@ -511,23 +415,22 @@ async fn ws_window_records_danmaku_and_lands_in_graph() {
     );
     assert_eq!(ws_window["unknowns"].as_array().map(Vec::len), Some(0));
 
-    // events 足迹：开窗、收窗、完成三连。
-    let lines = event_lines(&snapshot);
+    // emit 足迹：开窗、收窗、入账完成三连。
     assert!(
-        lines.iter().any(|l| l.contains("[WS] live_ws_record 开启")),
-        "{lines:?}"
+        _rings.iter().any(|l| l.contains("[WS] 探测房间")),
+        "{_rings:?}"
     );
     assert!(
-        lines
+        _rings
             .iter()
             .any(|l| l.contains("end_reason=preparing") && l.contains("线 2 条")),
-        "{lines:?}"
+        "{_rings:?}"
     );
     assert!(
-        lines
+        _rings
             .iter()
-            .any(|l| l.contains("[WS] 弹幕窗采录完成（2 线入账，end_reason=preparing")),
-        "{lines:?}"
+            .any(|l| l.contains("[WS] 弹幕窗线入账完成（2 线）")),
+        "{_rings:?}"
     );
 
     // graph：ws-record run 里 _room 语料，source=live_ws_danmaku。
@@ -547,52 +450,14 @@ async fn ws_window_records_danmaku_and_lands_in_graph() {
         "窗内线应带最终场次窗 rid"
     );
 
-    // 旧 naming「status=complete 已冻结」不破：WS 只在 summary 上增 ws_window 键。
-    assert_eq!(
-        read(&out_dir.join("collection.json"))["status"],
-        json!("complete"),
-        "collection 状态面不得被 WS 尾段改写"
+    // 独立入口不碰 collection.json——采集产物面与 WS 采录解耦。
+    assert!(
+        !out_dir.join("collection.json").exists(),
+        "独立 ws-record 不产生、不触碰 collection.json"
     );
 }
-
 // ---------------------------------------------------------------------------
-// 钉 2：live_ws_record 缺省（0）→ 不开窗、无 ws_window 键
-// ---------------------------------------------------------------------------
-
-#[tokio::test(flavor = "multi_thread")]
-async fn ws_record_off_skips_window_entirely() {
-    let bilibili = MockServer::start().await;
-    mount_bilibili_baseline(&bilibili).await;
-    // 不挂 getDanmuInfo / 不起 WS mock：配置关时 record_ws_window 直接短路。
-
-    let (_tmp, _config_path, app, registry) = build_ws_fixture(&bilibili.uri(), false);
-    let (status, body) = oneshot(
-        &app,
-        "POST",
-        "/api/runs",
-        Some(json!({"kind": "collect_streamer"})),
-    )
-    .await;
-    assert_eq!(status, 202, "{body}");
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
-
-    assert_eq!(snapshot["status"], "done", "{snapshot}");
-    assert!(
-        snapshot["outcome"].get("ws_window").is_none(),
-        "live_ws_record=0 时不得出现 ws_window：{snapshot}"
-    );
-    let lines = event_lines(&snapshot);
-    assert!(
-        lines
-            .iter()
-            .any(|l| l.contains("[WS] 本轮未开弹幕窗（配置关/房间未在播）")),
-        "{lines:?}"
-    );
-}
-
-// ---------------------------------------------------------------------------
-// 钉 3：live_ws_record=1 但房间未在播 → 不开窗、无 ws_window 键
+// 钉 3：房间未在播 → 不开窗、Ok(None)
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
@@ -602,29 +467,18 @@ async fn ws_record_room_not_live_skips_window() {
     mount_room_live_status(&bilibili, 0).await;
     // 未在播 → getDanmuInfo 都不该被调：不挂、不起 WS mock。
 
-    let (_tmp, _config_path, app, registry) = build_ws_fixture(&bilibili.uri(), true);
-    let (status, body) = oneshot(
-        &app,
-        "POST",
-        "/api/runs",
-        Some(json!({"kind": "collect_streamer"})),
-    )
-    .await;
-    assert_eq!(status, 202, "{body}");
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
-
-    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    let tmp = tempfile::tempdir().unwrap();
+    let config = staged_config(&tmp);
+    let (result, rings) = drive(&config, &bilibili.uri()).await;
     assert!(
-        snapshot["outcome"].get("ws_window").is_none(),
-        "房间未在播时不得出现 ws_window：{snapshot}"
+        matches!(result, Ok(None)),
+        "未在播应 Ok(None)（不开窗）：{result:?}"
     );
-    let lines = event_lines(&snapshot);
     assert!(
-        lines
+        rings
             .iter()
-            .any(|l| l.contains("[WS] 房间未在播（live_status=0），跳过弹幕窗采录")),
-        "{lines:?}"
+            .any(|l| l.contains("[WS] 房间未在播（live_status=0），本窗不开")),
+        "{rings:?}"
     );
 }
 
@@ -652,39 +506,28 @@ async fn ws_record_auth_refused_is_honest_window_no_token_leak() {
         })],
     );
 
-    let (_tmp, _config_path, app, registry) = build_ws_fixture(&bilibili.uri(), true);
-    let (status, body) = oneshot(
-        &app,
-        "POST",
-        "/api/runs",
-        Some(json!({"kind": "collect_streamer"})),
-    )
-    .await;
-    assert_eq!(status, 202, "{body}");
-    let run_id = body["run_id"].as_str().unwrap().to_string();
-    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
+    let tmp = tempfile::tempdir().unwrap();
+    let config = staged_config(&tmp);
+    let (result, rings) = drive(&config, &bilibili.uri()).await;
     finish_mock(server).await;
 
-    assert_eq!(snapshot["status"], "done", "{snapshot}");
-    let ws_window = &snapshot["outcome"]["ws_window"];
-    assert!(
-        ws_window.is_object(),
-        "认证拒绝也是诚实窗，ws_window 应在 outcome：{snapshot}"
-    );
+    let window = result.expect("ws record ok").expect("window opened");
+    let ws_window = &window;
+    assert!(ws_window.is_object(), "认证拒绝也是诚实窗");
     assert_eq!(ws_window["end_reason"], json!("auth_failed"), "{ws_window}");
     assert_eq!(ws_window["lines"], json!(0), "{ws_window}");
     assert_eq!(ws_window["unknowns"].as_array().map(Vec::len), Some(0));
 
-    // §11 红线：token 绝不进事件足迹、不进 outcome。
-    let all_text = event_lines(&snapshot).join("\n");
+    // §11 红线：token 绝不进 足迹 / 摘要。
+    let all_text = rings.join("\n");
     assert!(
         !all_text.contains(WS_TEST_TOKEN),
-        "token 不得出现在 events：{all_text}"
+        "token 不得出现在 emit 足迹：{all_text}"
     );
-    let serialized = serde_json::to_string(&snapshot).unwrap();
+    let serialized = serde_json::to_string(&window).unwrap();
     assert!(
         !serialized.contains(WS_TEST_TOKEN),
-        "token 不得出现在 outcome/run 面：{serialized}"
+        "token 不得出现在摘要面：{serialized}"
     );
 }
 
@@ -732,27 +575,17 @@ async fn ws_window_same_platform_ts_rerun_is_idempotent() {
     };
     let server = spawn_mock(listener, vec![make_script(), make_script()]);
 
-    let (_tmp, config_path, app, registry) = build_ws_fixture(&bilibili.uri(), true);
-    let out_dir = live_core::config::load_config(&config_path)
-        .expect("config loads")
-        .output_dir;
+    let tmp = tempfile::tempdir().unwrap();
+    let config = staged_config(&tmp);
+    let out_dir = config.output_dir.clone();
 
     for round in 1..=2 {
-        let (status, body) = oneshot(
-            &app,
-            "POST",
-            "/api/runs",
-            Some(json!({"kind": "collect_streamer"})),
-        )
-        .await;
-        assert_eq!(status, 202, "round {round}: {body}");
-        let run_id = body["run_id"].as_str().unwrap().to_string();
-        let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
-        assert_eq!(snapshot["status"], "done", "round {round}: {snapshot}");
+        let (result, _rings) = drive(&config, &bilibili.uri()).await;
+        let window = result.expect("ws record ok").expect("window opened");
         assert_eq!(
-            snapshot["outcome"]["ws_window"]["lines"],
+            window["lines"],
             json!(2),
-            "round {round} 应各采 2 线：{snapshot}"
+            "round {round} 应各采 2 线：{window}"
         );
     }
     finish_mock(server).await;

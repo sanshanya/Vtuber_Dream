@@ -17,6 +17,7 @@
 cd web && npm ci && npm run build && cd ..
 
 live-audience serve [-c config.yaml] [--port 3781]  # 绑定 127.0.0.1（无鉴权 = 仅本机）
+live-audience ws-record [-c config.yaml]            # WS 弹幕窗独立采录（不占 run 槽：PREPARING 收窗或 12h 保险丝）
 ```
 
 无账号离线预览面板：把 `tests-fixtures/demo/` 的内容铺进 config 的 `output_dir` 后 `serve` 即可
@@ -25,7 +26,7 @@ live-audience serve [-c config.yaml] [--port 3781]  # 绑定 127.0.0.1（无鉴�
 ## HTTP/CLI 面
 
 - 数据端点：`GET /api/rooms`、`/rooms/{uid}/overview|viewers|graph`、`/rooms/{uid}/viewers/{vid}/tree|graph`、`GET /api/config`（cookie/api_key 只回存在性布尔，永不回显原文；写面已删——改配置 = 编辑 config.yaml 重启）、`GET /api/budget`（预算闸现值 + 主钮旁预估：名册/新鲜人数/预估 CNY/ETD——新鲜口径与运行内预算闸同源）、`POST /rooms/{uid}/leads/{lead_id}/approve|reject`（线索审批/拒绝缝，幂等重放）。
-- 触发通道：`POST /api/runs {kind, force?, viewer_uid?}` → `202 {run_id}`（预算闸：配置 `ai.run_budget_cny` 后，预估严格大于预算即阻断——run 落 failed + outcome.budget_block 四数，零 LLM 请求落地）；轮询 `GET /api/runs/{id}` 看状态机 `queued → collecting → episodes → per_viewer_ai → audience → done | failed(partial, budget_block)` 与最近 50 条 events。
+- 触发通道：`POST /api/runs {kind, force?, viewer_uid?}` → `202 {run_id}`（预算闸：配置 `ai.run_budget_cny` 后，预估严格大于预算即阻断——run 落 failed + outcome.budget_block 四数，零 LLM 请求落地）；轮询 `GET /api/runs/{id}` 看状态机 `queued → collecting → episodes → per_viewer_ai → audience → done | failed(partial, budget_block)`）与最近 50 条 events。
   - kind 六值（动作平面）：`full`（采集+AI 连环）、`viewer`（单舰长，须 viewer_uid）、`collect_streamer` / `collect_guards`（事实层采集，跑完采集即终局）、`ai_viewers`（逐舰长 AI，写盘后即终局，不跑整体态势）/ `ai_audience`（整体态势聚合，幂等缓存自动复用已完成舰长感知）。
   - spend_mode 已删除（删码收口）：省钱语义由缓存短路默认正确化——扇出名册全员但行内 `complete_cache(input_hash)` 短路，未变者零 LLM；预估与执行同源（fresh = 输入哈希已变 ∪ 无完整旧结论），不存在「名册上限估计误杀实际零花费 run」的负循环。旧请求面携 spend_mode 键一律 422 讲规则。
   - 校验失败 `422`（kind=viewer 必须有 viewer_uid、与 force 互斥；kind=full 不接受 viewer_uid；四个分层 kind 一律拒绝 viewer_uid 与 force；非布尔 force / 超长 uid 同拒）。

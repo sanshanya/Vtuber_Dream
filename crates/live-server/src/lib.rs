@@ -7,3 +7,4 @@ pub mod app;
 pub mod cytoscape;
 pub mod graph_artifact;
 pub mod registry;
+pub mod ws_record;

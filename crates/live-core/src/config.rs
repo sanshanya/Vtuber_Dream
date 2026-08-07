@@ -53,10 +53,6 @@ pub struct CollectionConfig {
     /// M4.x：单轮 collect 的 leads 消费尝试预算（attempt 计次；0=休眠=默认人工
     /// 审批文化，薄切条款；Rust-only 能力，无 Python 对照键）。
     pub lead_fetch_budget_per_run: i64,
-    /// WS 弹幕窗开关 0|1。0=关（默认，现状一字不动）；1=collect
-    /// 尾段探测到房间在播时进入新增 `recording` 相挂入 WS 会话，窗收拢后统一
-    /// 走既有 episodes 相。域外值拒装（Rust-only，无 Python 对照键）。
-    pub live_ws_record: i64,
 }
 
 #[derive(Debug, Clone)]
@@ -486,15 +482,6 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                 0,
                 Some(0),
             )?,
-            live_ws_record: {
-                let value = integer(collection, "live_ws_record", 0, Some(0))?;
-                if value > 1 {
-                    return Err(ConfigError::new(
-                        "'collection.live_ws_record' must be 0 or 1",
-                    ));
-                }
-                value
-            },
         },
         perception: PerceptionConfig {
             max_evidence_per_viewer: integer(perception, "max_evidence_per_viewer", 0, Some(1000))?,
@@ -656,38 +643,6 @@ mod tests {
         // 缺省 = 0＝休眠（M4.x 默认人工审批文化）
         let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
         assert_eq!(ok.collection.lead_fetch_budget_per_run, 0);
-    }
-
-    /// live_ws_record 开关——默认 0=关（现状一字不动）；合法 1=attach
-    /// 挂接（collect 尾段在播即入 recording 相）；域外值（2/-1/布尔）一律拒装。
-    #[test]
-    fn live_ws_record_default_and_domain_rejects() {
-        let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
-        assert_eq!(
-            ok.collection.live_ws_record, 0,
-            "默认 0=WS 弹幕窗关闭（现状文化）"
-        );
-        let on = EXAMPLE_YAML.replace(
-            "max_video_metadata_items: 120",
-            "max_video_metadata_items: 120\n  live_ws_record: 1",
-        );
-        let ok = load_config(write_temp(&on).path()).unwrap();
-        assert_eq!(ok.collection.live_ws_record, 1, "合法 1=挂接 WS 弹幕窗");
-        for injected in [
-            "  live_ws_record: 2",
-            "  live_ws_record: -1",
-            "  live_ws_record: true",
-        ] {
-            let bad = EXAMPLE_YAML.replace(
-                "max_video_metadata_items: 120",
-                &format!("max_video_metadata_items: 120\n{injected}"),
-            );
-            let err = load_config(write_temp(&bad).path()).unwrap_err();
-            assert!(
-                err.to_string().contains("live_ws_record"),
-                "{injected} 必须拒装：{err}"
-            );
-        }
     }
 
     /// `ai.agent.viewer_token_budget` 默认 200_000；可用键覆写；拒绝负值。

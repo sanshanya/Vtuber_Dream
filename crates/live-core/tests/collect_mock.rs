@@ -219,7 +219,6 @@ fn test_config(root: &Path, budget: i64) -> Config {
             room_comment_request_budget: 3,
             live_replay_danmaku_limit: 2,
             lead_fetch_budget_per_run: 0,
-            live_ws_record: 0,
         },
         perception: PerceptionConfig {
             max_evidence_per_viewer: 1000,

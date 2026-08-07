@@ -6,7 +6,7 @@
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "用法: live-audience <命令>\n  agent-check [-c|--config <config.yaml>]              真实端点探针验收（opt-in：需环境变量 VTD_AGENT_CHECK=1）\n  serve [-c|--config <config.yaml>] [--port <n>]         本地服务（默认 3781）\n  graph-reconcile [-c|--config <config.yaml>]            长期实体「AI 归并」单轮回放";
+const USAGE: &str = "用法: live-audience <命令>\n  agent-check [-c|--config <config.yaml>]              真实端点探针验收（opt-in：需环境变量 VTD_AGENT_CHECK=1）\n  serve [-c|--config <config.yaml>] [--port <n>]         本地服务（默认 3781）\n  graph-reconcile [-c|--config <config.yaml>]            长期实体「AI 归并」单轮回放\n  ws-record [-c|--config <config.yaml>]                  WS 弹幕窗独立采录（不占 run 槽；止：PREPARING/12h 保险丝）";
 
 /// 真实端点验收的显式开关值（AGENTS.md 质量门禁：真实端点必须 opt-in）。只认 "1"。
 pub const AGENT_CHECK_ENV: &str = "VTD_AGENT_CHECK";
@@ -15,6 +15,7 @@ enum Parse {
     AgentCheck { config: PathBuf },
     Serve { config: PathBuf, port: u16 },
     GraphReconcile { config: PathBuf },
+    WsRecord { config: PathBuf },
     Help,
     Usage(String),
 }
@@ -66,7 +67,11 @@ fn parse(args: &[String]) -> Parse {
     if command == "-h" || command == "--help" {
         return Parse::Help;
     }
-    if command != "agent-check" && command != "serve" && command != "graph-reconcile" {
+    if command != "agent-check"
+        && command != "serve"
+        && command != "graph-reconcile"
+        && command != "ws-record"
+    {
         return Parse::Usage(format!("未知命令 {command}"));
     }
     let mut config = PathBuf::from("config.yaml");
@@ -89,6 +94,7 @@ fn parse(args: &[String]) -> Parse {
     match command {
         "agent-check" => Parse::AgentCheck { config },
         "serve" => Parse::Serve { config, port },
+        "ws-record" => Parse::WsRecord { config },
         _ => Parse::GraphReconcile { config },
     }
 }
@@ -141,6 +147,19 @@ fn main() -> ExitCode {
             })
         }
         Parse::Serve { config, port } => serve_command(config, port),
+        Parse::WsRecord { config } => run_json_task(|| {
+            live_core::config::load_config(&config)
+                .map_err(|error| error.to_string())
+                .and_then(|cfg| {
+                    live_server::ws_record::run_ws_record(&cfg, None, &|message| {
+                        eprintln!("{message}")
+                    })
+                })?
+                .map(|window| serde_json::to_value(window).map_err(|error| error.to_string()))
+                .unwrap_or_else(|| {
+                    Ok(serde_json::json!({"status": "skipped", "detail": "房间未在播或未开窗"}))
+                })
+        }),
         Parse::GraphReconcile { config } => run_json_task(|| {
             live_core::config::load_config(&config)
                 .map_err(|error| error.to_string())
