@@ -282,12 +282,20 @@ fn peek_cmd(body: &[u8]) -> Option<String> {
 }
 
 /// 组装 WS 握手请求（cookie 只进 header，绝不出现在任何错误串）。
+///
+/// UA 纪律（2026-08-08 实证）：弹幕网关对「无浏览器感 UA 的升级握手」静默
+/// EOF/RST（本机假 IP、服务器真 IP 同状；blivedm/aiohttp 带浏览器 UA 直过）。
+/// 标准库 tungstenite 不带 UA，须显式注入，否则 2245 面永远 reconnect_exhausted。
 fn build_client_request(cfg: &WsSessionConfig) -> Result<Request<()>, String> {
     let mut req = cfg
         .url
         .as_str()
         .into_client_request()
         .map_err(|e| scrub_text(cfg, &e.to_string()))?;
+    let ua = HeaderValue::from_static(
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36",
+    );
+    req.headers_mut().insert(header::USER_AGENT, ua);
     if !cfg.cookie.is_empty() {
         let hdr = HeaderValue::from_str(cfg.cookie.as_str())
             .map_err(|e| format!("cookie 头无法构形：{e}"))?;
@@ -325,6 +333,10 @@ fn scrub_text(cfg: &WsSessionConfig, raw: &str) -> String {
 /// 一条连接的完整生命周期：握手 → 认证 → 运行（心跳/判死/保险丝）→ 终局/重试。
 async fn run_one_connection(ctx: &mut SessionCtx<'_>) -> Outcome {
     let conn_config = ctx.cfg;
+    // rustls 0.23 纪律：工作区里 aws-lc-rs 与 ring 双 provider 同框（ Cargo.lock 可证）——
+    // 进程级默认 CryptoProvider 不再自动定案，须显式安装（真 WSS 首连在 beijingjump
+    // 实证 panic）。重复安装返回 Err 属预期，静默吞——幂等语义。
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let conn_started = Instant::now();
     let auth_deadline = Duration::from_millis(conn_config.auth_deadline_ms);
     let heartbeat_interval = Duration::from_millis(conn_config.heartbeat_interval_ms);
