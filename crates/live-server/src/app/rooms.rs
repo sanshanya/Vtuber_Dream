@@ -144,7 +144,6 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
                 "approved": count(live_core::leads::LeadStatus::Approved),
                 "consumed": count(live_core::leads::LeadStatus::Consumed),
                 "rejected": count(live_core::leads::LeadStatus::Rejected),
-                "deferred": count(live_core::leads::LeadStatus::Deferred),
             },
             // 人工审批面：pending 明细直出（前端列表渲染；写账序直出，
             // 「响度按 viewer 分组」未做——高层待阅时再议排序，G2-F4 裁向在案）
@@ -152,15 +151,10 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
                 .filter(|r| r.status == live_core::leads::LeadStatus::PendingApproval)
                 .collect::<Vec<_>>(),
             // rejected 明细直出（含拒因留档；前端 rejected 徽标展开可回看
-            // 记录的 chip/note——只读事实面，绝不代行裁决）。
+            // 记录的 note——只读事实面，绝不代行裁决）。
             "rejected": rows.iter()
                 .filter(|r| r.status == live_core::leads::LeadStatus::Rejected)
                 .collect::<Vec<_>>(),
-            // 拒因 chip 白名单下发——前端 chip 面与 reject 端点校验唯一同源
-            // （live-core REJECT_CHIP_REASONS），不落第二份字面。
-            "reject_chip_reasons": live_core::leads::REJECT_CHIP_REASONS,
-            // G2-B：自治位读取面（Leads 页标题行 L1 状态徽标）
-            "autonomy": config.collection.leads_autonomy,
         },
         "delta": delta,
     })))
@@ -353,21 +347,17 @@ pub(super) async fn lead_approve(
 
 /// `lead_id` = 账本行 `dedupe_key`（与 approve 同身份口径）。
 ///
-/// 与 lead_approve 同构（同一账本体 / 同一守卫链 / 同一迁移触点 / 同一错误形态），
-/// 但走状态机另一条单行道 `pending_approval → rejected`（reject_transition
-/// 唯一裁决点）：
-/// - 正常翻转：读行 → 拒因规范化（chips 白名单校验 / note 截长）→ 改状态 +
-///   reject_chips_json / reject_note 两列受控落库（全空 = NULL/NULL 合法空态）；
-/// - 幂等重放：已 rejected 且同参（或空参）→ 200 相同终态，表行不动；
-///   已 rejected 但带相异非空参 → 422（终态留档不可改写，错文讲规则）；
+/// 状态机单行道 `pending_approval → rejected`（reject_transition 唯一裁决点）：
+/// - 正常翻转：读行 → 拒因规范化（reason trim + ≤REJECT_NOTE_CAP 字）→ 改状态 +
+///   reject_note 受控落库（空 reason = 全空合法，落 NULL）；
+/// - 幂等重放：已 rejected → 200 相同终态，表行不动（新携 reason 不覆盖留档——
+///   改判先谈人，不靠端点打架）；
 /// - 不存在（lead_id 未知 / 房间错 / 穿透形 id）→ 404（统一错误形态）；
-/// - 非法迁移（consumed/approved/deferred 源态）→ 422，错文讲规则 + 当前状态；
-/// - chips 出白名单 / 超 REJECT_CHIP_CAP / note 超 REJECT_NOTE_CAP → 422；
-/// - 账本迁移守卫失败（旧 JSONL 含坏行）→ 500 响铃，绝不带病写。
+/// - 非法迁移（consumed/approved 源态）→ 422，错文讲规则 + 当前状态。
 pub(super) async fn lead_reject(
     State(state): State<AppState>,
     Path((uid, lead_id)): Path<(String, String)>,
-    // 体可选——None / 空体 = 全空拒因（合法）。不套 Option<JsonBody<T>>：
+    // 体可选——None / 空体 = 空拒因（合法）。不套 Option<JsonBody<T>>：
     // 它会把坏 JSON 吞成 None（静默放过坏参）；这里拿原始字节自行判别——
     // 空体空参放行，坏 JSON 显式 422（规格外自裁）。
     body: Option<axum::body::Bytes>,
@@ -381,7 +371,7 @@ pub(super) async fn lead_reject(
             &format!("lead {lead_id} 不存在"),
         ));
     }
-    let (chips, note) = parse_reject_params(body)?;
+    let reason = parse_reject_reason(body)?;
     let root = data_root(&state)?;
     // 写面端点：图库缺席则建仓（与 approve 同纪律）。
     let store_path = root.join("graph").join("perception.sqlite3");
@@ -396,40 +386,25 @@ pub(super) async fn lead_reject(
         .map_err(|message| fail(StatusCode::UNPROCESSABLE_ENTITY, &message))?;
     if changed {
         row.status = live_core::leads::LeadStatus::Rejected;
-        row.reject_chips = chips;
-        row.reject_note = note;
+        row.reject_note = reason;
         store.update_lead_row(&row).map_err(internal)?;
-    } else {
-        // 已 rejected 终态：空参（无新信息）或与现档同参 → 幂等重放不写表；
-        // 相异非空参意味改写留档 → 422 讲规则（规格「拒因不可覆盖」）。
-        if !(chips.is_empty() && note.is_empty())
-            && (chips != row.reject_chips || note != row.reject_note)
-        {
-            return Err(fail(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "该行已是 rejected 终态，拒因留档不可覆盖（空参重放可幂等）",
-            ));
-        }
     }
     Ok(Json(json!({
         "dedupe_key": row.dedupe_key,
         "status": live_core::leads::status_name(row.status),
         "changed": changed,
-        "reject_chips": row.reject_chips,
         "reject_note": row.reject_note,
     })))
 }
 
-/// reject 体解析与拒因规范化——体缺省/空体 → 全空拒因；坏 JSON/非对象
-/// → 422；chips 逐项 trim 后必须命中白名单（任一脱靶 → 422，附当前脱靶项）、
-/// 数量 > REJECT_CHIP_CAP → 422；note trim 后 > REJECT_NOTE_CAP 字 → 422。
-/// 返回 (chips, note)：全空 = (Vec::new(), String::new())——写面落 NULL/NULL。
-fn parse_reject_params(body: Option<axum::body::Bytes>) -> AppResult<(Vec<String>, String)> {
+/// reject 体解析——体缺省/空体 → 空拒因；坏 JSON/非对象 → 422；
+/// `reason` 须字符串（trim 后 ≤REJECT_NOTE_CAP 字，空串合法）。
+fn parse_reject_reason(body: Option<axum::body::Bytes>) -> AppResult<String> {
     let Some(bytes) = body else {
-        return Ok((Vec::new(), String::new()));
+        return Ok(String::new());
     };
     if bytes.is_empty() {
-        return Ok((Vec::new(), String::new()));
+        return Ok(String::new());
     }
     let value: Value = serde_json::from_slice(&bytes).map_err(|err| {
         fail(
@@ -440,60 +415,20 @@ fn parse_reject_params(body: Option<axum::body::Bytes>) -> AppResult<(Vec<String
     let Some(object) = value.as_object() else {
         return Err(fail(
             StatusCode::UNPROCESSABLE_ENTITY,
-            "reject 体必须是 JSON 对象（{\"chips\": [...], \"note\": \"...\"}）",
+            "reject 体必须是 JSON 对象（{\"reason\": \"...\"}）",
         ));
     };
-    let chips = match object.get("chips") {
-        None | Some(Value::Null) => Vec::new(),
-        Some(Value::Array(items)) => {
-            if items.len() > live_core::leads::REJECT_CHIP_CAP {
-                return Err(fail(
-                    StatusCode::UNPROCESSABLE_ENTITY,
-                    &format!(
-                        "拒因 chip 最多 {cap} 项",
-                        cap = live_core::leads::REJECT_CHIP_CAP
-                    ),
-                ));
-            }
-            let mut out = Vec::with_capacity(items.len());
-            for item in items {
-                let Some(raw) = item.as_str() else {
-                    return Err(fail(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        "拒因 chips 的每一项必须是字符串",
-                    ));
-                };
-                let chip = raw.trim();
-                if !live_core::leads::REJECT_CHIP_REASONS.contains(&chip) {
-                    return Err(fail(
-                        StatusCode::UNPROCESSABLE_ENTITY,
-                        &format!("拒因「{chip}」不在白名单（{}）", {
-                            live_core::leads::REJECT_CHIP_REASONS.join("、")
-                        }),
-                    ));
-                }
-                out.push(chip.to_string());
-            }
-            out
-        }
-        Some(_) => {
-            return Err(fail(
-                StatusCode::UNPROCESSABLE_ENTITY,
-                "reject 体的 chips 必须是字符串数组",
-            ));
-        }
-    };
-    let note = match object.get("note") {
+    let reason = match object.get("reason") {
         None | Some(Value::Null) => String::new(),
         Some(Value::String(text)) => text.trim().to_string(),
         Some(_) => {
             return Err(fail(
                 StatusCode::UNPROCESSABLE_ENTITY,
-                "reject 体的 note 必须是字符串",
+                "reject 体的 reason 必须是字符串",
             ));
         }
     };
-    if note.chars().count() > live_core::leads::REJECT_NOTE_CAP {
+    if reason.chars().count() > live_core::leads::REJECT_NOTE_CAP {
         return Err(fail(
             StatusCode::UNPROCESSABLE_ENTITY,
             &format!(
@@ -502,5 +437,5 @@ fn parse_reject_params(body: Option<axum::body::Bytes>) -> AppResult<(Vec<String
             ),
         ));
     }
-    Ok((chips, note))
+    Ok(reason)
 }

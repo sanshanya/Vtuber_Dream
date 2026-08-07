@@ -25,3 +25,4 @@ target-probe/
 # 本地 run --demo / serve 运行产物
 /_demo/
 /output/
+.vite/

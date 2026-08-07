@@ -132,11 +132,6 @@ async fn overview_combines_collection_ai_leads_and_baseline_delta() {
     // rejected 明细面恒为数组（demo 无拒账 → 空数组，非缺键）。
     assert!(body["leads"]["rejected"].is_array(), "{body}");
     // 拒因 chip 白名单恒下发（前端 chip 面唯一真源 = 服务端，不落第二份字面）。
-    assert_eq!(
-        body["leads"]["reject_chip_reasons"],
-        serde_json::json!(["太泛", "不对路", "已知道", "做不了"]),
-        "{body}"
-    );
     // G4：单次 complete run → 基线态（前端显示「基线已建」）
     assert_eq!(
         body["delta"]["baseline_only"], true,
@@ -838,28 +833,6 @@ async fn viewer_tree_graph_reject_traversal_vids_404() {
     let (status, _) = get(&fx.app, "/api/rooms/983/viewers/demo-1/tree").await;
     assert_eq!(status, 200, "demo-1 tree 应通行");
 }
-
-/// 补钉：overview 的 leads.autonomy 徽标数据面双布景钉——
-/// 默认 0（人工审批文化）；config 写 leads_autonomy: 1 → 投影 1（徽标跟随）。
-#[tokio::test(flavor = "multi_thread")]
-async fn overview_leads_autonomy_projects_config_flag() {
-    let fx = fixture();
-    let (_, body) = get(&fx.app, "/api/rooms/983/overview").await;
-    assert_eq!(body["leads"]["autonomy"], 0, "默认 L0：{body}");
-
-    let yaml = std::fs::read_to_string(&fx.config_path).unwrap();
-    std::fs::write(
-        &fx.config_path,
-        yaml.replace(
-            "  max_video_metadata_items: 120",
-            "  max_video_metadata_items: 120\n  leads_autonomy: 1",
-        ),
-    )
-    .unwrap();
-    let (_, body2) = get(&fx.app, "/api/rooms/983/overview").await;
-    assert_eq!(body2["leads"]["autonomy"], 1, "L1 徽标跟随：{body2}");
-}
-
 /// 钉（迭代细则 v1 §1）：overview 的 recap 键纪律——
 /// ①缺 ai/recap.json：键存在且 null（前端「复盘尚未生成」的分前，绝不缺键）；
 /// ②落盘后原样透传（四数/命名件/未知行不被消毒）。

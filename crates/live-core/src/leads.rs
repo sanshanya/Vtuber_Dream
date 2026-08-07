@@ -36,13 +36,8 @@ pub const AUDIENCE_VIEWER_ID: &str = "audience";
 pub const LEAD_TYPES: [&str; 4] = ["search", "creator", "video", "room"];
 /// annex 摘要里 latest_consumed 的 locator 展示宽度。
 pub const ANNEX_LOCATOR_CAP: usize = 80;
-/// 拒绝面：拒因 chip 白名单——前端 chip 渲染与 reject 端点校验的唯一
-/// 真源；reject_annex_line 聚合只携带与计数，不代行裁决（平台事实不可被 AI 改写，
-/// 裁决留在人工审批面）。暂定值留档：首批真实使用后校准。
-pub const REJECT_CHIP_REASONS: [&str; 4] = ["太泛", "不对路", "已知道", "做不了"];
-/// 单行拒因 chip 数上限（一拒几句因，不叠瓦）。
-pub const REJECT_CHIP_CAP: usize = 4;
-/// 拒因 note 字数上限（观点留档，不打爆账本行）。
+/// 拒因自由文本上限（观点留档，不打爆账本行）。chip 白名单已删（删码刀6）——
+/// 拒因的终极消费者是 LLM 回喂与人类回读，自然语言本就够用，无需人替 LLM 预分类。
 pub const REJECT_NOTE_CAP: usize = 80;
 /// reject_annex_line 最近注记的展示宽度（规格的「…40字截」）。
 pub const REJECT_ANNEX_NOTE_CHARS: usize = 40;
@@ -54,7 +49,6 @@ pub enum LeadStatus {
     Approved,
     Consumed,
     Rejected,
-    Deferred,
 }
 
 /// 账本行（字段 = M4.x JSONL 冻结契约与 discovery_leads 列集的共同真源）。
@@ -180,7 +174,6 @@ pub fn status_name(status: LeadStatus) -> &'static str {
         LeadStatus::Approved => "approved",
         LeadStatus::Consumed => "consumed",
         LeadStatus::Rejected => "rejected",
-        LeadStatus::Deferred => "deferred",
     }
 }
 
@@ -191,7 +184,6 @@ pub fn status_from_name(name: &str) -> Option<LeadStatus> {
         "approved" => Some(LeadStatus::Approved),
         "consumed" => Some(LeadStatus::Consumed),
         "rejected" => Some(LeadStatus::Rejected),
-        "deferred" => Some(LeadStatus::Deferred),
         _ => None,
     }
 }
@@ -244,13 +236,12 @@ pub fn summary_line(rows: &[LedgerRow], viewer: Option<&str>) -> String {
         None => "[lead_ledger]".to_string(),
     };
     format!(
-        "{head} pending={} approved={} consumed={} rejected={} deferred={} \
+        "{head} pending={} approved={} consumed={} rejected={} \
          by_type={{{by_type}}} yield_total={yield_total} latest_consumed={latest}",
         count(LeadStatus::PendingApproval),
         count(LeadStatus::Approved),
         count(LeadStatus::Consumed),
         count(LeadStatus::Rejected),
-        count(LeadStatus::Deferred),
         latest = serde_json::to_string(&latest).expect("latest 可序列化"),
     )
 }
@@ -353,14 +344,10 @@ pub fn consumed_annex_lines(store: &Store, rows: &[LedgerRow]) -> Result<Vec<Str
     Ok(lines)
 }
 
-/// 拒绝回喂聚合线——`[lead_reject] 上轮被拒 N 条：太泛×1、不对路×2；最近注记「…40字截」`。
+/// 拒绝回喂线：被拒行是平台事实，喂回下轮提示面助 Agent 定向（人拒一条 =
+/// 「此路不通」的最强信号）。零被拒行 → Ok(None)（提示面不注入一字节）。
 ///
-/// - 零被拒行 → Ok(None)：pipeline 零字节不打补丁（与旧版无拒绝态逐字节一致）；
-/// - 计数只折叠白名单内 chip（REJECT_CHIP_REASONS 定义序渲染，非 Unicode 序——
-///   死账面保持白名单序好读），白名单外残留 chip（历史/手编账本）收进尾随计数；
-/// - 最近注记 = 写账序最后一条非空 note，截 REJECT_ANNEX_NOTE_CHARS 字；
-/// - 全空拒因（rejected 但无 chip 无 note）也出线，计数为「无拒因」——被拒仍是
-///   平台事实，喂回下轮预算面（规格：平台事实不可被改写，程序只携带与计数）。
+/// 自由文本形态：最多最近 3 条 `locator：拒因`（无拒因落「无拒因」）。
 pub fn reject_annex_line(store: &Store) -> Result<Option<String>, StoreError> {
     let rows = store.lead_rows()?;
     let rejected: Vec<&LedgerRow> = rows
@@ -370,55 +357,26 @@ pub fn reject_annex_line(store: &Store) -> Result<Option<String>, StoreError> {
     if rejected.is_empty() {
         return Ok(None);
     }
-    let mut counts: Vec<(String, usize)> = REJECT_CHIP_REASONS
-        .iter()
-        .map(|chip| (chip.to_string(), 0_usize))
-        .collect();
-    let mut extras: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
-    for row in &rejected {
-        for chip in &row.reject_chips {
-            match counts.iter_mut().find(|(name, _)| name == chip) {
-                Some((_, n)) => *n += 1,
-                None => *extras.entry(chip.clone()).or_insert(0) += 1,
-            }
-        }
-    }
-    let mut chips_label: Vec<String> = counts
-        .iter()
-        .filter(|(_, n)| *n > 0)
-        .map(|(name, n)| format!("{name}×{n}"))
-        .collect();
-    for (name, n) in &extras {
-        chips_label.push(format!("{name}×{n}"));
-    }
-    let chips_label = if chips_label.is_empty() {
-        "无拒因".to_string()
-    } else {
-        chips_label.join("、")
-    };
-    let recent_note = rejected.iter().rev().find_map(|row| {
+    let mut lines = vec![format!("[lead_reject] 上轮被拒 {} 条：", rejected.len())];
+    for row in rejected.iter().rev().take(3) {
+        let locator = row
+            .locator
+            .chars()
+            .take(ANNEX_LOCATOR_CAP)
+            .collect::<String>();
         let note = row.reject_note.trim();
-        if note.is_empty() {
-            None
+        let note = note
+            .chars()
+            .take(REJECT_ANNEX_NOTE_CHARS)
+            .collect::<String>();
+        let reason = if note.is_empty() {
+            "无拒因".to_string()
         } else {
-            Some(
-                note.chars()
-                    .take(REJECT_ANNEX_NOTE_CHARS)
-                    .collect::<String>(),
-            )
-        }
-    });
-    let line = match recent_note {
-        Some(note) => format!(
-            "[lead_reject] 上轮被拒 {} 条：{chips_label}；最近注记「{note}」",
-            rejected.len()
-        ),
-        None => format!(
-            "[lead_reject] 上轮被拒 {} 条：{chips_label}",
-            rejected.len()
-        ),
-    };
-    Ok(Some(line))
+            note
+        };
+        lines.push(format!("- {locator}：{reason}"));
+    }
+    Ok(Some(lines.join("\n")))
 }
 
 struct AnnexFact {
@@ -585,7 +543,7 @@ mod tests {
     fn empty_ledger_summary_pinned() {
         assert_eq!(
             summary_line(&[], None),
-            "[lead_ledger] pending=0 approved=0 consumed=0 rejected=0 deferred=0 \
+            "[lead_ledger] pending=0 approved=0 consumed=0 rejected=0 \
              by_type={} yield_total=0 latest_consumed=[]"
         );
     }
@@ -604,7 +562,7 @@ mod tests {
         let global = summary_line(&rows, None);
         assert_eq!(
             global,
-            "[lead_ledger] pending=1 approved=1 consumed=1 rejected=0 deferred=0 \
+            "[lead_ledger] pending=1 approved=1 consumed=1 rejected=0 \
              by_type={creator: 1, video: 2} yield_total=5 latest_consumed=[{\"type\":\"video\",\"locator\":\"loc-k1\",\"yield_count\":5}]"
         );
         let scoped = summary_line(&rows, Some("u"));
@@ -612,13 +570,12 @@ mod tests {
             scoped.starts_with("[lead_ledger] viewer=u own_pending=1 | pending=1 approved=1"),
             "{scoped}"
         );
-        // rejected 不进 by_type；deferred 计入
+        // rejected 不进 by_type；approved 照计
         rows[1].status = LeadStatus::Rejected;
-        rows[2].status = LeadStatus::Deferred;
         let line = summary_line(&rows, None);
         assert_eq!(
             line,
-            "[lead_ledger] pending=0 approved=0 consumed=1 rejected=1 deferred=1 \
+            "[lead_ledger] pending=1 approved=0 consumed=1 rejected=1 \
              by_type={creator: 1, video: 1} yield_total=5 latest_consumed=[{\"type\":\"video\",\"locator\":\"loc-k1\",\"yield_count\":5}]"
         );
     }
@@ -679,7 +636,6 @@ mod tests {
             LeadStatus::Approved,
             LeadStatus::Consumed,
             LeadStatus::Rejected,
-            LeadStatus::Deferred,
         ] {
             assert_eq!(status_from_name(status_name(status)), Some(status));
         }
@@ -687,15 +643,11 @@ mod tests {
     }
 
     /// reject 状态机——pending→Ok(true) 落盘；rejected 重放→Ok(false)（幂等
-    /// 终态、表不动）；approved/consumed/deferred 源态 → Err（422 规则错文）。
+    /// 终态、表不动）；approved/consumed 源态 → Err（422 规则错文）。
     /// 与 approve 同构：无倒退路径、错文带当前源态。
     #[test]
     fn reject_transition_over_table() {
-        for status in [
-            LeadStatus::Approved,
-            LeadStatus::Consumed,
-            LeadStatus::Deferred,
-        ] {
+        for status in [LeadStatus::Approved, LeadStatus::Consumed] {
             let err = reject_transition(status).unwrap_err();
             assert!(err.contains("pending_approval → rejected"), "{err}");
             assert!(err.contains(status_name(status)), "错文应带当前源态：{err}");
@@ -706,60 +658,38 @@ mod tests {
         assert_eq!(approve_transition(LeadStatus::Approved), Ok(false));
     }
 
-    /// 白名单与 cap 的字面钉（防误改/防复制错位——前端与服务端共享镜像）。
+    /// 上限常量字面钉（防误改——前端与服务端共享镜像）。
     #[test]
     fn reject_constants_pinned() {
-        assert_eq!(REJECT_CHIP_REASONS, ["太泛", "不对路", "已知道", "做不了"]);
-        assert_eq!(REJECT_CHIP_REASONS.len(), 4);
-        assert_eq!(REJECT_CHIP_CAP, 4);
         assert_eq!(REJECT_NOTE_CAP, 80);
         assert_eq!(REJECT_ANNEX_NOTE_CHARS, 40);
     }
 
-    /// reject_annex_line 聚合形态——白名单定义序计数、非白名单残留尾随、
-    /// 最近注记取写账序末条并截 40 字。
+    /// reject_annex_line 自由文本形态：首行计数 + 最近 3 条 `locator：拒因`
+    /// （无拒因落「无拒因」；拒绝行倒序=写账序近者在前；REJECT_ANNEX_NOTE_CHARS 截字）。
     #[test]
-    fn reject_annex_line_aggregates_in_whitelist_order() {
+    fn reject_annex_line_free_text_recent_first() {
         let store = Store::open(Path::new(":memory:")).expect("store");
         store.begin_run_fixed("run:a", "t0", "model").expect("run");
         let mut r1 = row("k1", "video", LeadStatus::Rejected);
-        r1.reject_chips = vec!["不对路".into(), "太泛".into()];
+        r1.reject_note = "阈值太低，覆盖太宽".into();
         let mut r2 = row("k2", "creator", LeadStatus::Rejected);
-        r2.reject_chips = vec!["太泛".into()];
-        r2.reject_note = "阈值太低，覆盖太宽".into();
-        let mut r3 = row("k3", "search", LeadStatus::Rejected);
-        r3.reject_chips = vec!["历史手编残值".into()];
-        r3.reject_note = "长".repeat(60);
-        let r4 = row("k4", "room", LeadStatus::PendingApproval);
+        r2.reject_note = "长".repeat(60);
+        let r3 = row("k3", "room", LeadStatus::Rejected); // 无拒因形态混入
+        let r4 = row("k4", "room", LeadStatus::PendingApproval); // 非 rejected 不沾线
         store
             .insert_lead_rows(&[&r1, &r2, &r3, &r4], false)
             .expect("insert");
         let line = reject_annex_line(&store).unwrap().expect("有被拒行");
-        // 白名单定义序（太泛在前，不按提交序）；× 用 U+00D7
+        let note = "长".repeat(40);
         assert_eq!(
             line,
-            "[lead_reject] 上轮被拒 3 条：太泛×2、不对路×1、历史手编残值×1；最近注记「长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长」"
-        );
-        // 写账序末条非空注记 = r3（60 字截 40）
-        let note = "长".repeat(40);
-        assert!(line.ends_with(&format!("最近注记「{note}」")), "{line}");
-        // 全空拒因（rejected 无 chip 无 note）→ 出线但计数为「无拒因」
-        let mut r5 = row("k5", "video", LeadStatus::Rejected);
-        r5.reject_note = "   ".into();
-        store.insert_lead_rows(&[&r5], false).expect("insert r5");
-        let line = reject_annex_line(&store).unwrap().unwrap();
-        assert!(
-            line.contains("上轮被拒 4 条：太泛×2、不对路×1、历史手编残值×1"),
+            format!(
+                "[lead_reject] 上轮被拒 3 条：\n- loc-k3：无拒因\n- loc-k2：{note}\n- loc-k1：阈值太低，覆盖太宽"
+            ),
             "{line}"
         );
-        // 全库只有全空被拒行：无拒因形态
-        let only = Store::open(Path::new(":memory:")).expect("store2");
-        // row() 助手的 first_seen_run_id 固定 run:a——开同号 run，免得 FK 空投。
-        only.begin_run_fixed("run:a", "t0", "model").expect("run");
-        only.insert_lead_rows(&[&row("k6", "video", LeadStatus::Rejected)], false)
-            .expect("insert k6");
-        let line = reject_annex_line(&only).unwrap().unwrap();
-        assert_eq!(line, "[lead_reject] 上轮被拒 1 条：无拒因");
+        assert_eq!(line.matches("\n- ").count(), 3, "恰好近 3 条：{line}");
     }
 
     /// 零被拒行 → None（零字节未响应面）且同库两次读逐字节一致（幂等钉）。
@@ -773,14 +703,13 @@ mod tests {
         assert_eq!(reject_annex_line(&store).unwrap(), None);
         assert_eq!(reject_annex_line(&store).unwrap(), None);
         // 造一条 rejected 后再钉两次读逐字节一致
-        let mut rejected = row("k2", "creator", LeadStatus::Rejected);
-        rejected.reject_chips = vec!["做不了".into()];
+        let rejected = row("k2", "creator", LeadStatus::Rejected);
         store
             .insert_lead_rows(&[&rejected], false)
             .expect("insert k2");
         let first = reject_annex_line(&store).unwrap().expect("line");
         let second = reject_annex_line(&store).unwrap().expect("line");
         assert_eq!(first, second);
-        assert_eq!(first, "[lead_reject] 上轮被拒 1 条：做不了×1");
+        assert_eq!(first, "[lead_reject] 上轮被拒 1 条：\n- loc-k2：无拒因");
     }
 }

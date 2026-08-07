@@ -219,7 +219,6 @@ fn test_config(root: &Path, budget: i64) -> Config {
             room_comment_request_budget: 3,
             live_replay_danmaku_limit: 2,
             lead_fetch_budget_per_run: 0,
-            leads_autonomy: 0,
             live_ws_record: 0,
         },
         perception: PerceptionConfig {
@@ -1036,96 +1035,10 @@ fn leads_row(
     }
 }
 
-/// L1 链：pending creator（3001，不在名册 {9001,1001,1002,1003}）+ autonomy=1
-/// + 预算>0 → 尾段先自动批准（落账本记 L1 痕）再照常消费 → consumed + yield；
-/// 同账本的 pending video 谓词拒位（类型不符）原样保留。
+/// 默认即纯人工（自治位已删）：即使预算>0，pending 行也原样保留、零消费
+/// 请求、summary 不面世 leads_consumed——approved 的唯一通道仍是人工审批缝。
 #[tokio::test(flavor = "multi_thread")]
-async fn l1_autonomy_auto_approves_and_consumes_new_creator() {
-    let server = MockServer::start().await;
-    mount_baseline(&server).await;
-    let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path();
-    seed_lead_rows(
-        root,
-        &[
-            leads_row(
-                "creator",
-                "3001",
-                live_core::leads::LeadStatus::PendingApproval,
-            ),
-            leads_row(
-                "video",
-                "BVpending",
-                live_core::leads::LeadStatus::PendingApproval,
-            ),
-        ],
-    );
-
-    let base = server.uri();
-    let mut config = test_config(root, 12);
-    config.collection.lead_fetch_budget_per_run = 1;
-    config.collection.leads_autonomy = 1;
-    let rings = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-    let sink = rings.clone();
-    let summary = tokio::task::spawn_blocking(move || {
-        let mut emit = move |msg: &str| sink.lock().unwrap().push(msg.to_string());
-        let client = BilibiliClient::with_origin(&base, &base, "SESSDATA=test", 0.0, 5.0).unwrap();
-        collect_with_client(client, &config, CollectMode::Guards, &mut emit)
-    })
-    .await
-    .expect("task join")
-    .expect("collect ok");
-
-    // 链闭合：自动批准 → 预算消费 → consumed + yield 落袋
-    assert_eq!(summary["leads_consumed"], 1, "{summary}");
-    let rows = table_rows(root);
-    assert_eq!(rows.len(), 2, "账本行数不变");
-    let creator = rows
-        .iter()
-        .find(|r| r.lead_type == "creator")
-        .expect("creator 行");
-    assert_eq!(
-        creator.status,
-        live_core::leads::LeadStatus::Consumed,
-        "{creator:?}"
-    );
-    assert!(creator.yield_count > 0, "消费带回 yield：{creator:?}");
-    assert!(
-        creator.resolution_note.is_empty(),
-        "消费成功清痕（L1 痕已兑现为消费）：{creator:?}"
-    );
-    // 谓词拒位：video 型 pending 不被 L1 自动批准（类型不符，永远人工域）
-    let video = rows
-        .iter()
-        .find(|r| r.lead_type == "video")
-        .expect("video 行");
-    assert_eq!(
-        video.status,
-        live_core::leads::LeadStatus::PendingApproval,
-        "video 型 pending 不得被 L1 批：{video:?}"
-    );
-    // L1 自动批准有响铃留痕（克隆后即刻放锁——不得持锁跨 await，clippy::await_holding_lock）
-    let rings = rings.lock().unwrap().clone();
-    assert!(
-        rings.iter().any(|m| m.contains("L1")),
-        "L1 自动批准必须响铃：{rings:?}"
-    );
-    // 消费的真实网络面：creator 3001 命中 arc/search（mid=3001）
-    let requests = server.received_requests().await.expect("requests");
-    assert!(
-        requests.iter().any(|r| {
-            r.url.path() == "/x/space/wbi/arc/search"
-                && r.url.query_pairs().any(|(k, v)| k == "mid" && v == "3001")
-        }),
-        "creator 消费必须携带 mid=3001"
-    );
-}
-
-/// L0 一字不动：默认 autonomy=0（不显式设置）即使预算>0，pending 行也原样
-/// 保留、零消费请求、summary 不面世 leads_consumed。表形态下 L0 的「不动」
-/// 指状态机面——一次性 JSONL→表迁移是迁移器职责，与自治位正交（归档照常）。
-#[tokio::test(flavor = "multi_thread")]
-async fn l0_autonomy_default_pending_never_auto_approved() {
+async fn pending_never_auto_consumed_without_manual_approval() {
     let server = MockServer::start().await;
     mount_baseline(&server).await;
     let tmp = tempfile::tempdir().unwrap();

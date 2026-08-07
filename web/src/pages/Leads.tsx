@@ -1,10 +1,9 @@
 /**
  * 线索账本页（定稿导航末位）：自旧 Dashboard 拆出，LeadsBlock 承接呈现。
- * G2-B 审批缝 + 拒绝缝宿主：待审行「批准/拒绝」钮（一击即飞）→
+ * 审批缝 + 拒绝缝宿主：待审行「批准/拒绝」钮（一击即飞）→
  * POST 审批/拒绝缝；404/422 就地 danger；成功后 overview 查询失效重取。
- * 拒绝携带拒因（chips + note）单行直通；组级「全批/全拒」由 LeadsBlock
- * 前端逐行 fan-out 到本页两个 mutation。标题行 L1 自治位徽标读 overview
- * leads.autonomy（0=纯人工 / 1=L1 自动批准+预算消费）。
+ * 拒绝携带单一 reason 自由文本（空合法 = 服务端 NULL 留档）；
+ * 组级「全批」由 LeadsBlock 前端逐行 fan-out 到本页 mutation。
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
@@ -40,10 +39,10 @@ export function Leads({ roomId }: { roomId: string }) {
       void queryClient.invalidateQueries({ queryKey: ["overview", roomId] });
     },
   });
-  // 拒绝缝宿主——拒因行内已选（全空合法 = 服务端 NULL/NULL 留档）。
+  // 拒绝缝宿主——拒因行内自由文本（空合法 = 服务端 NULL 留档）。
   const reject = useMutation({
-    mutationFn: ({ leadId, chips, note }: { leadId: string; chips: string[]; note: string }) =>
-      api.rejectLead(roomId, leadId, { chips, note }),
+    mutationFn: ({ leadId, reason }: { leadId: string; reason: string }) =>
+      api.rejectLead(roomId, leadId, { reason }),
     onMutate: ({ leadId }) => {
       setRejectError(null);
       setBusyRejectId(leadId);
@@ -66,15 +65,10 @@ export function Leads({ roomId }: { roomId: string }) {
       </section>
     );
   }
-  // F3：overview 接口收紧后 pending 变体 data 类型含 undefined（F3 单宽限；他单重做消费面时收回）。
-  const autonomy = overview.data?.leads?.autonomy === 1;
   return (
     <section className="section card">
       <div className="section-title">
         <h2>线索账本</h2>
-        <span className="badge" data-testid="leads-autonomy" title="collection.leads_autonomy：0=纯人工审批；1=collect 尾段自动批准 creator/search 且目标不在册的 pending 线索，并按预算消费">
-          自治 L1：{autonomy ? "开" : "关"}
-        </span>
       </div>
       {approveError && (
         <span className="badge danger" data-testid="lead-approve-error">
@@ -89,7 +83,7 @@ export function Leads({ roomId }: { roomId: string }) {
       <LeadsBlock
         leads={overview.data?.leads ?? {}}
         onApprove={(leadId) => approve.mutate(leadId)}
-        onReject={(leadId, chips, note) => reject.mutate({ leadId, chips, note })}
+        onReject={(leadId, reason) => reject.mutate({ leadId, reason })}
         busyLeadId={busyLeadId}
         busyRejectId={busyRejectId}
       />

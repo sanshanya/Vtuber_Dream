@@ -320,24 +320,17 @@ export const api = {
       `/rooms/${encodeURIComponent(roomId)}/leads/${encodeURIComponent(leadId)}/approve`,
     ),
   /** 拒绝缝：状态机单行道 pending_approval → rejected；拒因体可选——
-   *  chips 白名单唯一真源在 live-core REJECT_CHIP_REASONS（前端 chip 面 = overview
-   *  leads.reject_chip_reasons 下发，不落第二份字面）、note ≤80 字；
-   *  全空拒因合法（服务端 NULL/NULL 留档）。幂等重放语义同 approve。 */
-  rejectLead: (
-    roomId: string,
-    leadId: string,
-    reasons?: { chips?: string[]; note?: string },
-  ) =>
+   *  单 reason ≤80 字（空合法 = 服务端 NULL 留档）；幂等重放同态。 */
+  rejectLead: (roomId: string, leadId: string, body?: { reason?: string }) =>
     request<{
       dedupe_key: string;
       status: string;
       changed: boolean;
-      reject_chips: string[];
-      reject_note: string;
+      reject_note?: string;
     }>(
       "POST",
       `/rooms/${encodeURIComponent(roomId)}/leads/${encodeURIComponent(leadId)}/reject`,
-      reasons,
+      body,
     ),
 };
 

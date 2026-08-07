@@ -37,7 +37,7 @@ live-audience serve [-c config.yaml] [--port 3781]  # 绑定 127.0.0.1（无鉴�
   - 舰长列表页 = 舰长采集＋舰长 AI 分析（空池另附单查引导——单查不清场：只覆写目标一人，其余舰长事实/site/shared 原样）+「信源已更新·待重判」时效徽标（列表行/舰长态势页头/主播页舰长条三处同源）+ 关系列四微件（第几次来/距上次 N 天/身份一句（AI 徽标）/最新动态——缺件一律落「未知」，不编数字不补文案）。
   - 舰长态势页 = Episode 时间线（每行恒落「发布于（平台行为时刻）/采集于（我们看到这条的时刻）」语义徽标其一）+ mention 定位高亮。
   - 直播数据页 = 主播采集（本页数据源；`shared/live_records.json` 场次档案：最后一场 vs 上周均值对比 + 全场次表，记录空则显式空态）。
-  - 线索账本末位：pending 按持有人分组折叠展示，行级「批准/拒绝」一击即飞（拒绝可携拒因 chip 白名单＋≤80 字注记，全空合法）；组级「全批/全拒」逐行 fan-out；已拒绝徽标展开回看拒因。
+  - 线索账本末位：pending 按持有人分组折叠展示，行级「批准/拒绝」一击即飞（拒绝可携单条 reason 自由文本 ≤80 字，空合法）；组级「全批」逐行 fan-out；已拒绝徽标展开回看拒因。
   - 图谱（`#/graph` 直链仍可达，不入主导航）：cytoscape 四层调色；整体图默认折叠视图只展 Viewer/Entity/状态-行动主骨架——参数 `?kinds=A,B` 自定义、`?kinds=all` 逃生门回全量；默认视图经内容寻址物化三通道 gz/br + ETag 304。
   - 「vs 上轮」delta 为底层参考信号保留在 overview payload，不上页面。
 
@@ -68,11 +68,10 @@ npm run build
 
 ## 线索账本（M4.x 薄切）
 
-AI 终局提交中的 `leads[]`（经终局校验白名单：search/creator/video/room）由程序记入**图库 `discovery_leads` 表**（账本 = 表为正本，读面只走表；M4.x 一次性 JSONL 迁移已完成使命退役——旧 `leads.jsonl` 不再特殊，reset 语义不为它背书）。身份为 `(type, locator)` 的内容哈希（dedupe_key 主键即幂等唯一键），重复线索不增行；状态机 `pending_approval → approved → consumed / rejected`（另有 `deferred` 搁置态，不入主链）。人工审批唯一通道：线索账本页的「批准/拒绝」钮（`POST /api/rooms/{room}/leads/{lead_id}/approve|reject`，`lead_id` = 行 `dedupe_key`；幂等——重放返回相同终态不写账本，已拒绝行带相异非空拒因重放 = 422 留档不可改写；不存在=404；非法迁移=422 讲规则）。拒绝可携拒因：chip 白名单（太泛/不对路/已知道/做不了，唯一真源 = overview `leads.reject_chip_reasons` 下发）+ ≤80 字自由注记，全空合法（留档 NULL/NULL）。
+AI 终局提交中的 `leads[]`（经终局校验白名单：search/creator/video/room）由程序记入**图库 `discovery_leads` 表**（账本 = 表为正本，读面只走表；M4.x 一次性 JSONL 迁移已完成使命退役——旧 `leads.jsonl` 不再特殊，reset 语义不为它背书）。身份为 `(type, locator)` 的内容哈希（dedupe_key 主键即幂等唯一键），重复线索不增行；状态机四态 `pending_approval → approved → consumed` 与单行道 `pending_approval → rejected`。人工审批唯一通道：线索账本页的「批准/拒绝」钮（`POST /api/rooms/{room}/leads/{lead_id}/approve|reject`，`lead_id` = 行 `dedupe_key`；幂等——重放返回相同终态不写账本，已拒绝行重放一律 200 相同终态不写表（留档不可被端点改写）；不存在=404；非法迁移=422 讲规则）。拒绝可携拒因 `reason`（自由文本 ≤80 字，空合法 = 留档 NULL）。
 
-- 消费：采集（collect）尾段按 `collection.lead_fetch_budget_per_run`（默认 0＝完全休眠）消费 `approved` 行，成功行记 `yield_count`；>0 会产生额外 B 站请求，同样受 `request_delay_seconds` 限速。
-- 自治位：`collection.leads_autonomy`（0|1，默认 0=纯人工）。置 1（L1）后，collect 尾段在预算消费前先自动批准 pending 行——谓词限 creator/search 型、且 creator 目标 uid 不在本房间既有名册（viewers/*.json ∪ 主播 uid）——账本 resolution_note 记「L1 自动批准」，再照常按预算消费；线索页标题行徽标可读当前位。
-- 回喂：下一轮 AI 提示面上注入一行摘要（计数 + 最新消费），以及拒绝聚合线（`[lead_reject] 上轮被拒 N 条：chip 计数 + 最近注记`；零被拒时不注入一字节），作为定向增长的上下文信号。
+- 消费：采集（collect）尾段按 `collection.lead_fetch_budget_per_run`（默认 0＝完全休眠）消费 `approved` 行，成功行记 `yield_count`；>0 会产生额外 B 站请求，同样受 `request_delay_seconds` 限速。无适配器的类型（room/未知）静默跳过：不耗预算、不翻面，approved 待命。
+- 回喂：下一轮 AI 提示面上注入一行摘要（计数 + 最新消费），以及拒绝回喂线（`[lead_reject] 上轮被拒 N 条：` + 最近三条 `locator：拒因`——自然语言直喂，LLM 自己理解，不为它预分类 chip；零被拒时不注入一字节），作为定向增长的上下文信号。
 
 ## 运行参数（AI 电梯与读面收口）
 

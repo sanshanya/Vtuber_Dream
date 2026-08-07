@@ -45,69 +45,8 @@ pub fn fetch_lead_yield(client: &mut BilibiliClient, row: &LedgerRow) -> Result<
     }
 }
 
-/// G2-B（工作项 3）：L1 自动批准在账本行的留痕字面（「L1 自动」是契约子串）。
-pub const L1_AUTO_NOTE: &str = "L1 自动批准（collection.leads_autonomy=1）";
-
-/// G2-B 自治 L1（collection.leads_autonomy=1 时由 collect 尾段在预算消费前调用）：
-/// 把符合谓词的 pending 行迁 `Approved` 并记 `resolution_note=L1_AUTO_NOTE`，
 /// 随后照常走 `consume_approved_leads` 预算内消费。
 ///
-/// 谓词只碰账本既有字段（lead_type / locator）：
-/// - 类型限 `creator`/`search`（video/room 永远人工域）；
-/// - `creator` 目标 uid（locator 即 uid，validators 冻结数字形）不得在本房间
-///   既有名册（viewers/*.json 文件名 ∪ 主播 uid——采在册者零增量）；`search`
-///   无目标 uid，名册闸天然不适用。
-///
-/// autonomy ≤ 0 → 秒返 0（L0 现状纯人工，一字不动，库不读不写）。
-/// 同族：读库失败响铃返回 0；写回失败响铃（已翻行按实计数）。
-pub fn auto_approve_pending_leads(
-    store: &Store,
-    roster: &std::collections::BTreeSet<String>,
-    autonomy: i64,
-    emit: &mut dyn FnMut(&str),
-) -> usize {
-    if autonomy <= 0 {
-        return 0;
-    }
-    let mut rows = match crate::leads::read_rows(store) {
-        Ok(rows) => rows,
-        Err(err) => {
-            emit(&format!("[LEADS] 账本不可读，L1 自动批准停火：{err}"));
-            return 0;
-        }
-    };
-    if !rows
-        .iter()
-        .any(|row| row.status == LeadStatus::PendingApproval)
-    {
-        return 0;
-    }
-    let mut flipped = 0_usize;
-    for row in rows.iter_mut() {
-        if row.status != LeadStatus::PendingApproval {
-            continue;
-        }
-        let eligible = match row.lead_type.as_str() {
-            "creator" => !roster.contains(row.locator.trim()),
-            "search" => true,
-            _ => false,
-        };
-        if !eligible {
-            continue;
-        }
-        row.status = LeadStatus::Approved;
-        row.resolution_note = L1_AUTO_NOTE.to_string();
-        match store.update_lead_row(row) {
-            Ok(()) => flipped += 1,
-            Err(err) => emit(&format!(
-                "[LEADS] L1 自动批准写回失败（{}）：{err}",
-                row.dedupe_key
-            )),
-        }
-    }
-    flipped
-}
-
 /// 按预算消费账本：只碰 `approved` 行；返回消费成功行数。
 /// fetch 失败 → 行保持 approved 并记 `resolution_note`（下轮重试）；预算 0 → 秒返。
 ///
@@ -150,20 +89,10 @@ pub fn consume_approved_leads(
         if row.status != LeadStatus::Approved {
             continue;
         }
-        match row.lead_type.as_str() {
-            "room" => {
-                row.status = LeadStatus::Deferred;
-                row.resolution_note = "room 型 lead 无适配器映射".into();
-                persist(store, row, emit);
-                continue;
-            }
-            other if !["search", "creator", "video"].contains(&other) => {
-                row.status = LeadStatus::Deferred;
-                row.resolution_note = format!("未知类型 {other}（账本可能被手工编辑）");
-                persist(store, row, emit);
-                continue;
-            }
-            _ => {}
+        // 无适配器映射的类型（room/未知）静默跳过：不耗预算、不翻面、保持
+        // approved 待命——适配器就位之日自然可消费，不为此单设状态（Deferred 已删）。
+        if !["search", "creator", "video"].contains(&row.lead_type.as_str()) {
+            continue;
         }
         if attempts >= budget {
             break;
@@ -316,7 +245,7 @@ mod tests {
 
     /// room/手编坏类型 → deferred 不烧预算。
     #[test]
-    fn deferred_types_burn_no_budget() {
+    fn unmappable_types_burn_no_budget() {
         let store = mem_store();
         seed(
             &store,
@@ -328,10 +257,14 @@ mod tests {
         let n = consume_approved_leads(&store, 1, &mut |_r| Ok(9), &mut |_: &str| {});
         assert_eq!(n, 0);
         let back = leads::read_rows(&store).unwrap();
-        assert_eq!(back[0].status, LeadStatus::Deferred);
-        assert!(back[0].resolution_note.contains("无适配器映射"));
-        assert_eq!(back[1].status, LeadStatus::Deferred);
-        assert!(back[1].resolution_note.contains("未知类型"));
+        // 无映射类型静默待命：状态原样 approved、账面无注记、预算零耗
+        assert_eq!(
+            back,
+            &[
+                row("k1", "room", LeadStatus::Approved),
+                row("k2", "nonsense", LeadStatus::Approved)
+            ]
+        );
     }
 
     /// 预算 0 = 完全休眠（默认文化），账目原样、库不读不写。
@@ -406,102 +339,9 @@ mod tests {
         let line = crate::leads::summary_line(&leads::read_rows(&store).unwrap(), None);
         assert_eq!(
             line,
-            "[lead_ledger] pending=0 approved=0 consumed=1 rejected=0 deferred=0 \
+            "[lead_ledger] pending=0 approved=0 consumed=1 rejected=0 \
              by_type={video: 1} yield_total=1 latest_consumed=[{\"type\":\"video\",\"locator\":\"loc-k1\",\"yield_count\":1}]",
             "{line}"
-        );
-    }
-
-    // -----------------------------------------------------------------------
-    // G2-B（工作项 3）：L1 自治自动批准钉团
-    // -----------------------------------------------------------------------
-
-    fn roster(ids: &[&str]) -> std::collections::BTreeSet<String> {
-        ids.iter().map(ToString::to_string).collect()
-    }
-
-    /// L0 一字不动：autonomy=0 → 秒返 0（预算再大也无动作）。
-    #[test]
-    fn l0_autonomy_zero_sleeps() {
-        let store = mem_store();
-        seed(&store, &[row("k1", "creator", LeadStatus::PendingApproval)]);
-        let n = auto_approve_pending_leads(&store, &roster(&[]), 0, &mut |_: &str| {
-            panic!("L0 不得发任何响铃")
-        });
-        assert_eq!(n, 0);
-        assert_eq!(
-            leads::read_rows(&store).unwrap()[0].status,
-            LeadStatus::PendingApproval
-        );
-    }
-
-    /// L1 正当事：creator（目标 uid 不在册）+ search pending → 迁 Approved +
-    /// resolution_note 记「L1 自动」；approved/rejected/consumed 行不被触碰。
-    /// 重放幂等：无 pending 可批 → 0。
-    #[test]
-    fn l1_auto_approves_eligible_pending_rows_only() {
-        let store = mem_store();
-        seed(
-            &store,
-            &[
-                row("k-new-creator", "creator", LeadStatus::PendingApproval),
-                row("k-search", "search", LeadStatus::PendingApproval),
-                row("k-approved", "video", LeadStatus::Approved),
-                row("k-rejected", "search", LeadStatus::Rejected),
-                row("k-consumed", "creator", LeadStatus::Consumed),
-            ],
-        );
-        let n =
-            auto_approve_pending_leads(&store, &roster(&["1001", "9001"]), 1, &mut |_: &str| {});
-        assert_eq!(n, 2, "creator + search 各迁一条");
-        let back = leads::read_rows(&store).unwrap();
-        for key in ["k-new-creator", "k-search"] {
-            let hit = back.iter().find(|r| r.dedupe_key == key).unwrap();
-            assert_eq!(hit.status, LeadStatus::Approved, "{key}");
-            assert!(
-                hit.resolution_note.contains("L1 自动"),
-                "{key} 须记 L1 自动痕：{hit:?}"
-            );
-        }
-        // 非 pending 行分毫不动（状态机单行道不被 L1 倒车）
-        for (key, status) in [
-            ("k-approved", LeadStatus::Approved),
-            ("k-rejected", LeadStatus::Rejected),
-            ("k-consumed", LeadStatus::Consumed),
-        ] {
-            let hit = back.iter().find(|r| r.dedupe_key == key).unwrap();
-            assert_eq!(hit.status, status, "{key}");
-            assert!(hit.resolution_note.is_empty(), "{key}");
-        }
-        // 重放幂等：再批一轮 = 0 动作
-        let n = auto_approve_pending_leads(&store, &roster(&[]), 1, &mut |_: &str| {});
-        assert_eq!(n, 0);
-    }
-
-    /// L1 谓词拒位：video/room 型 pending 永远人工域；creator 目标 uid 已在册
-    /// （重复采集无增量）同样不批——整账无一人动，不写库。
-    #[test]
-    fn l1_predicate_rejects_video_room_and_in_roster_creator() {
-        let store = mem_store();
-        seed(
-            &store,
-            &[
-                row("k-video", "video", LeadStatus::PendingApproval),
-                row("k-room", "room", LeadStatus::PendingApproval),
-                row("k-existing", "creator", LeadStatus::PendingApproval),
-            ],
-        );
-        let n = auto_approve_pending_leads(
-            &store,
-            &roster(&["loc-k-existing", "9001"]),
-            1,
-            &mut |_: &str| {},
-        );
-        assert_eq!(n, 0, "谓词全拒 → 零动作");
-        let back = leads::read_rows(&store).unwrap();
-        assert!(
-            back.iter().all(|r| r.status == LeadStatus::PendingApproval),
-            "全拒时状态面原样：{back:?}"
         );
     }
 }

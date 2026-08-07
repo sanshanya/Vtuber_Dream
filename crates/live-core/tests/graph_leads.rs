@@ -319,7 +319,6 @@ fn record_skips_existing_keys_at_any_state() {
         LeadStatus::Approved,
         LeadStatus::Consumed,
         LeadStatus::Rejected,
-        LeadStatus::Deferred,
     ] {
         let mut rows = leads::read_rows(&store).unwrap();
         rows[0].status = status;
@@ -382,11 +381,7 @@ fn approve_transition_over_table() {
     assert_eq!(back.status, LeadStatus::Approved);
     // 幂等重放：approve_transition(Approved) = Ok(false)
     assert!(!leads::approve_transition(back.status).unwrap());
-    for status in [
-        LeadStatus::Consumed,
-        LeadStatus::Rejected,
-        LeadStatus::Deferred,
-    ] {
+    for status in [LeadStatus::Consumed, LeadStatus::Rejected] {
         assert!(
             leads::approve_transition(status).is_err(),
             "{status:?} 必须拒"

@@ -68,7 +68,6 @@ fn test_config(root: &Path, uri: &str) -> Config {
             room_comment_request_budget: 0,
             live_replay_danmaku_limit: 1,
             lead_fetch_budget_per_run: 0,
-            leads_autonomy: 0,
             live_ws_record: 0,
         },
         perception: PerceptionConfig {
@@ -629,7 +628,7 @@ async fn reject_annex_line_is_injected_into_prompts() {
             status: leads::LeadStatus::Rejected,
             yield_count: 0,
             resolution_note: String::new(),
-            reject_chips: vec!["太泛".into(), "做不了".into()],
+            reject_chips: Vec::new(),
             reject_note: "主播不玩这品类。".into(),
         };
         store.insert_lead_rows(&[&rejected], true).unwrap();
@@ -652,9 +651,7 @@ async fn reject_annex_line_is_injected_into_prompts() {
         .find(|b| b.starts_with("基于下面的全员索引"))
         .expect("audience prompt");
     assert!(
-        audience_body.contains(
-            "[lead_reject] 上轮被拒 1 条：太泛×1、做不了×1；最近注记「主播不玩这品类。」"
-        ),
+        audience_body.contains("[lead_reject] 上轮被拒 1 条：\n- 异环 实机：主播不玩这品类。"),
         "audience prompt 缺 reject 线：{audience_body}"
     );
     // viewer 提示面同源注入（读库失败吞纳纪律不变——正常态必须有线）。
@@ -663,7 +660,7 @@ async fn reject_annex_line_is_injected_into_prompts() {
         .find(|b| b.starts_with("对下面完整Episode") && b.contains("黄金观众甲"))
         .expect("viewer g1 prompt");
     assert!(
-        g1_body.contains("[lead_reject] 上轮被拒 1 条：太泛×1、做不了×1"),
+        g1_body.contains("[lead_reject] 上轮被拒 1 条：\n- 异环 实机：主播不玩这品类。"),
         "{g1_body}"
     );
 }
