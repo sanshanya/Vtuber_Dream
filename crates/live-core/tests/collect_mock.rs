@@ -764,6 +764,8 @@ async fn single_viewer_does_not_consume_leads() {
         status: live_core::leads::LeadStatus::Approved,
         yield_count: 0,
         resolution_note: String::new(),
+        reject_chips: Vec::new(),
+        reject_note: String::new(),
     };
     let store =
         live_core::graph::store::Store::open(&root.join("graph/perception.sqlite3")).unwrap();
@@ -952,6 +954,8 @@ async fn collect_tail_consumes_approved_leads_and_recounts_requests() {
             status,
             yield_count: 0,
             resolution_note: String::new(),
+            reject_chips: Vec::new(),
+            reject_note: String::new(),
         }
     };
     seed_legacy_jsonl(
@@ -1052,6 +1056,8 @@ fn leads_row(
         status,
         yield_count: 0,
         resolution_note: String::new(),
+        reject_chips: Vec::new(),
+        reject_note: String::new(),
     }
 }
 

@@ -111,6 +111,15 @@ export interface ViewerRow {
   ai_completed: boolean;
   /** Z5c 时效位：true=旧 AI 结论的信源已更新（哈希翻），false=时效内绿灯，null=无参考旧结论。 */
   ai_stale: boolean | null;
+  /** R2 批6 D10 四微件（缺件=null，前端落「未知」微行，绝不补文案/编数字）：
+   *  第几次来（WS 场次窗到访计数；无记录=null 而非 0，没有在播窗数据≠没来过）。 */
+  visit_count?: number | null;
+  /** 距上次 N 天（末次 WS 到场整日数）。 */
+  days_since_last?: number | null;
+  /** 身份一句（AI 感知 profile_summary 截 40 字；呈现必盖 AI 徽标，不入事实色）。 */
+  identity_line?: string | null;
+  /** 最新动态日期（名下条目最新 published_at 的 YYYY-MM-DD）。 */
+  latest_activity_date?: string | null;
 }
 
 /**
@@ -253,6 +262,15 @@ export interface BudgetLastRun {
   spend_mode: string;
 }
 
+/** D8：主钮旁 D3 预估段（服务端 estimate_run_cost_cny 上限口径 + 常量墙钟带宽）。
+ *  全 null = 名册缺/空/未采集——前端落「预估 —」不臆造。 */
+export interface BudgetEstimate {
+  roster_viewers: number | null;
+  normal_cny: number | null;
+  briefing_cny: number | null;
+  etd_minutes: [number, number] | null;
+}
+
 export interface BudgetInfo {
   /** 单次 run 预算（config ai.run_budget_cny）；null = 不设闸。 */
   budget_cny: number | null;
@@ -261,6 +279,8 @@ export interface BudgetInfo {
   month_cost_cny: number;
   month_runs: number;
   last_run: BudgetLastRun | null;
+  /** D8：主钮旁预估（normal_cny/etd_minutes 双空 → 「预估 —」）。 */
+  estimate?: BudgetEstimate | null;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -324,6 +344,28 @@ export const api = {
       "POST",
       `/rooms/${encodeURIComponent(roomId)}/leads/${encodeURIComponent(leadId)}/approve`,
     ),
+  /** D9/R2-批6 拒绝缝：状态机单行道 pending_approval → rejected；拒因体可选——
+   *  chips 白名单唯一真源在 live-core REJECT_CHIP_REASONS（前端 chip 面 = overview
+   *  leads.reject_chip_reasons 下发，不落第二份字面）、note ≤80 字；
+   *  全空拒因合法（服务端 NULL/NULL 留档）。幂等重放语义同 approve。 */
+  rejectLead: (
+    roomId: string,
+    leadId: string,
+    reasons?: { chips?: string[]; note?: string },
+  ) =>
+    request<{
+      dedupe_key: string;
+      status: string;
+      changed: boolean;
+      reject_chips: string[];
+      reject_note: string;
+    }>(
+      "POST",
+      `/rooms/${encodeURIComponent(roomId)}/leads/${encodeURIComponent(leadId)}/reject`,
+      reasons,
+    ),
+  /** R2 批6 D11：存档页（存活 + 周健康 + 里程碑日历——纯事实派生面，零 AI）。 */
+  archive: () => request<ArchiveView>("GET", "/archive"),
 };
 
 /** Z4 动作平面：六 kind 字面冻结（与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源）。 */
@@ -345,4 +387,38 @@ export type RunSpendMode = "incremental" | "briefing_only";
 export function activeRunIdFrom(message: string): string | null {
   const hit = /run（([^）]+)）/.exec(message);
   return hit ? hit[1] : null;
+}
+
+// ---------------------------------------------------------------------------
+// 存档页（R2 批6 D11）：GET /api/archive 面——里程碑日历规则全在服务端
+// (crates/live-server/src/app/archive.rs) 计算成文，前端纯渲染，仅 presence 判别。
+// ---------------------------------------------------------------------------
+
+/** 周健康四数行：复读率 / 核心弹幕团 / 大航海 delta / 涨粉 delta。 */
+export interface ArchiveHealthRow {
+  /** 服务端固定键：repeat_rate | core_danmaku | guard_delta | follower_delta。 */
+  key: string;
+  label: string;
+  /** 服务端成文：已知态为数字文案，未知态一律「未就位」措辞（铁律：不臆造）。 */
+  value_text: string;
+  known: boolean;
+}
+
+/** 里程碑日历行：满月/百天/千粉/百舰/周年。 */
+export interface ArchiveMilestone {
+  /** 服务端固定键：full_moon | hundred_days | thousand_followers | hundred_guards | anniversary。 */
+  key: string;
+  label: string;
+  /** done（已达成）| pending（差 N 天/粉/舰）| unknown（未就位措辞）。 */
+  state: "done" | "pending" | "unknown";
+  detail_text: string;
+}
+
+export interface ArchiveView {
+  /** 存活天数 = 今 − 最早可得锚点；缺失 → null（前端「存活 —（缺乏起始锚点）」，不臆造）。 */
+  alive_days: number | null;
+  /** 存活起始日 ISO；null = 无锚点。 */
+  alive_since: string | null;
+  weekly_health: ArchiveHealthRow[];
+  milestones: ArchiveMilestone[];
 }

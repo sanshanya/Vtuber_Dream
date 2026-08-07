@@ -223,6 +223,8 @@ mod tests {
             status,
             yield_count: 0,
             resolution_note: String::new(),
+            reject_chips: Vec::new(),
+            reject_note: String::new(),
         }
     }
 

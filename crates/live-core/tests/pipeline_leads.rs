@@ -426,6 +426,11 @@ async fn leads_end_to_end_and_rerun_ledger_stable() {
         audience_body.contains("[lead_ledger]") && audience_body.contains("pending=1"),
         "audience prompt 缺账本 annex：{audience_body}"
     );
+    // D9：本轮无 rejected 行 → 拒绝回喂线零面世（旧版字节不变 pin）。
+    assert!(
+        !audience_body.contains("[lead_reject]"),
+        "无被拒行不得注入 reject 线：{audience_body}"
+    );
     // audience 自己的 lead 在同 run 的 annex 中不可见（audience annex 在终局提交前拼装）——
     // 同 run 只能见 viewer 行的贡献；观众与整体两层账被 by_type 全反射于下轮。
     assert!(
@@ -597,5 +602,68 @@ async fn checkpoint_error_rings_progress_and_never_breaks_runs() {
         rings[0].contains("报告刷新演示态失败"),
         "铃必须带登记错误文案：{}",
         rings[0]
+    );
+}
+
+/// D9/R2-批6：reject 回喂线注入——手工置一条已拒行（chips + 注记），管线轮
+/// viewer/audience 提示面必须带 `[lead_reject]` 分析行（白名单序计数 + 最近
+/// 注记截字）；无被拒行的零面世已在 leads_end_to_end 钉过（旧版字节 parity）。
+#[tokio::test(flavor = "multi_thread")]
+async fn reject_annex_line_is_injected_into_prompts() {
+    let (server, tmp, analysis) = setup().await;
+    // 手工置账：一条已拒行（挂 begin_run_fixed 的 FK 锚）。
+    {
+        let store = Store::open(&tmp.path().join("graph/perception.sqlite3")).unwrap();
+        store.begin_run_fixed("run:rej", "t0", "m").unwrap();
+        let rejected = leads::LedgerRow {
+            dedupe_key: "key-rejected".into(),
+            lead_type: "search".into(),
+            locator: "异环 实机".into(),
+            motivation: "m".into(),
+            expected_signal: "s".into(),
+            priority: "high".into(),
+            evidence_ids: vec![],
+            viewer_id: "audience".into(),
+            first_seen_run_id: "run:rej".into(),
+            created_at: "t".into(),
+            status: leads::LeadStatus::Rejected,
+            yield_count: 0,
+            resolution_note: String::new(),
+            reject_chips: vec!["太泛".into(), "做不了".into()],
+            reject_note: "主播不玩这品类。".into(),
+        };
+        store.insert_lead_rows(&[&rejected], true).unwrap();
+        drop(store);
+    }
+    mount_all(&server, tmp.path(), 1).await;
+    let mut knobs = PipelineKnobs::default();
+    run_pipeline(
+        test_config(tmp.path(), &server.uri()),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("run complete");
+    let bodies = prompt_bodies(&server).await;
+    // audience 提示面：reject 线在场的另一端（账本 annex 全权同源）。
+    let audience_body = bodies
+        .iter()
+        .find(|b| b.starts_with("基于下面的全员索引"))
+        .expect("audience prompt");
+    assert!(
+        audience_body.contains(
+            "[lead_reject] 上轮被拒 1 条：太泛×1、做不了×1；最近注记「主播不玩这品类。」"
+        ),
+        "audience prompt 缺 reject 线：{audience_body}"
+    );
+    // viewer 提示面同源注入（读库失败吞纳纪律不变——正常态必须有线）。
+    let g1_body = bodies
+        .iter()
+        .find(|b| b.starts_with("对下面完整Episode") && b.contains("黄金观众甲"))
+        .expect("viewer g1 prompt");
+    assert!(
+        g1_body.contains("[lead_reject] 上轮被拒 1 条：太泛×1、做不了×1"),
+        "{g1_body}"
     );
 }

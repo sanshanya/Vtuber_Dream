@@ -60,7 +60,7 @@ describe("request 错误信道", () => {
 });
 
 describe("Z6 件3/件5 预算面客户端与析取", () => {
-  it("api.budget() → BudgetInfo 全段解析（budget_cny null 透传）", async () => {
+  it("api.budget() → BudgetInfo 全段解析（budget_cny null 透传 + D8 estimate 段）", async () => {
     stubFetch(
       200,
       JSON.stringify({
@@ -76,6 +76,12 @@ describe("Z6 件3/件5 预算面客户端与析取", () => {
           kind: "full",
           spend_mode: "normal",
         },
+        estimate: {
+          roster_viewers: 22,
+          normal_cny: 34.5,
+          briefing_cny: 1.5,
+          etd_minutes: [17, 35],
+        },
       }),
     );
     const info = await api.budget();
@@ -84,6 +90,25 @@ describe("Z6 件3/件5 预算面客户端与析取", () => {
     expect(info.month_cost_cny).toBe(0.35);
     expect(info.month_runs).toBe(3);
     expect(info.last_run?.kind).toBe("full");
+    expect(info.estimate?.normal_cny).toBe(34.5);
+    expect(info.estimate?.etd_minutes).toEqual([17, 35]);
+  });
+
+  it("api.budget() → estimate 段缺席/全 null 透传为缺省（前端「预估 —」读面）", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        budget_cny: 4.0,
+        month: "2026-08",
+        month_cost_cny: 0,
+        month_runs: 0,
+        last_run: null,
+        estimate: { roster_viewers: null, normal_cny: null, briefing_cny: null, etd_minutes: null },
+      }),
+    );
+    const info = await api.budget();
+    expect(info.estimate?.normal_cny).toBeNull();
+    expect(info.estimate?.etd_minutes).toBeNull();
   });
 
   it("budgetBlockOf：完整 budget_block → 六键析出；缺预算块/数字不齐 → null", () => {

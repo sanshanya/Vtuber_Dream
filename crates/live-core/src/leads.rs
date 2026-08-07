@@ -8,8 +8,9 @@
 //!   `dedupe_key`（hash_parts 同源 sha1·16hex），表主键即幂等唯一键——
 //!   同键任意状态再入账 → OR IGNORE 跳行（幂等）。
 //! - 状态机：pending_approval →（审批缝端点 / L1 自治）approved →
-//!   （collect 尾段按预算消费）consumed + yield_count；人工可改 rejected；
-//!   适配器无映射的类型写 deferred。禁倒退路径（approve_transition 唯一裁决点）。
+//!   （collect 尾段按预算消费）consumed + yield_count；人工可改 rejected
+//!   （D9 一击终态，拒因留档）；适配器无映射的类型写 deferred。
+//!   禁倒退路径（approve_transition / reject_transition 唯一裁决点）。
 //! - 迁移：`migrate_jsonl` 把 M4.x 的 `output_dir/leads.jsonl` 一次性导入表
 //!   （守卫解析——坏行响铃不动文件；dedupe_key OR IGNORE 使重导入零新行），
 //!   随后把文件归档为 `leads.jsonl.bak`（不删除，可回滚；再撞名加序号）。
@@ -42,6 +43,16 @@ pub const AUDIENCE_VIEWER_ID: &str = "audience";
 pub const LEAD_TYPES: [&str; 4] = ["search", "creator", "video", "room"];
 /// annex 摘要里 latest_consumed 的 locator 展示宽度。
 pub const ANNEX_LOCATOR_CAP: usize = 80;
+/// D9/R2-批6 拒绝面：拒因 chip 白名单——前端 chip 渲染与 reject 端点校验的唯一
+/// 真源；reject_annex_line 聚合只携带与计数，不代行裁决（平台事实不可被 AI 改写，
+/// 裁决留在人工审批面）。暂定值留档：首批真实使用后校准。
+pub const REJECT_CHIP_REASONS: [&str; 4] = ["太泛", "不对路", "已知道", "做不了"];
+/// D9：单行拒因 chip 数上限（一拒几句因，不叠瓦）。
+pub const REJECT_CHIP_CAP: usize = 4;
+/// D9：拒因 note 字数上限（观点留档，不打爆账本行）。
+pub const REJECT_NOTE_CAP: usize = 80;
+/// D9：reject_annex_line 最近注记的展示宽度（规格的「…40字截」）。
+pub const REJECT_ANNEX_NOTE_CHARS: usize = 40;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -71,6 +82,13 @@ pub struct LedgerRow {
     pub yield_count: i64,
     #[serde(default)]
     pub resolution_note: String,
+    /// D9：拒绝提交的 chip（reject 端点白名单校验后落账）；
+    /// `#[serde(default)]` 兼容旧 .bak/已归档 JSONL 行的缺席形态（空数组）。
+    #[serde(default)]
+    pub reject_chips: Vec<String>,
+    /// D9：拒绝注记（reject 端点自由文本；全空合法 = 空串）。
+    #[serde(default)]
+    pub reject_note: String,
 }
 
 /// `_hash(f"m4x-lead|{type}|{locator}", 16)`：可操作目标即身份，motivation 措辞不入。
@@ -101,6 +119,8 @@ fn pending_row(lead: &Lead, viewer_id: &str, run_id: &str, now: &str) -> LedgerR
         status: LeadStatus::PendingApproval,
         yield_count: 0,
         resolution_note: String::new(),
+        reject_chips: Vec::new(),
+        reject_note: String::new(),
     }
 }
 
@@ -196,6 +216,24 @@ pub fn approve_transition(status: LeadStatus) -> Result<bool, String> {
         LeadStatus::Approved => Ok(false),
         other => Err(format!(
             "状态机只许 pending_approval → approved；\
+             当前状态 {}，不允许此迁移",
+            status_name(other)
+        )),
+    }
+}
+
+/// D9/R2-批6：reject 端点状态机辅助——`pending_approval → rejected` 是拒绝通道
+/// 唯一合法迁移（一击终态：approved/consumed/deferred 源态一律 Err，禁倒退）。
+/// 返回值 = 是否需要落盘改写：
+/// - rejected 重放 → Ok(false)：幂等，终态相同、表不动（reject 端点据此决定
+///   同参/空参返回同态、异参 422——终态不可改写）；
+/// - 其余非 pending 源态 → Err（422 面错文：规则 + 当前源态）。
+pub fn reject_transition(status: LeadStatus) -> Result<bool, String> {
+    match status {
+        LeadStatus::PendingApproval => Ok(true),
+        LeadStatus::Rejected => Ok(false),
+        other => Err(format!(
+            "状态机只许 pending_approval → rejected；\
              当前状态 {}，不允许此迁移",
             status_name(other)
         )),
@@ -382,6 +420,74 @@ pub fn consumed_annex_lines(store: &Store, rows: &[LedgerRow]) -> Result<Vec<Str
     Ok(lines)
 }
 
+/// D9/R2-批6：拒绝回喂聚合线——`[lead_reject] 上轮被拒 N 条：太泛×1、不对路×2；最近注记「…40字截」`。
+///
+/// - 零被拒行 → Ok(None)：pipeline 零字节不打补丁（与旧版无拒绝态逐字节一致）；
+/// - 计数只折叠白名单内 chip（REJECT_CHIP_REASONS 定义序渲染，非 Unicode 序——
+///   死账面保持白名单序好读），白名单外残留 chip（历史/手编账本）收进尾随计数；
+/// - 最近注记 = 写账序最后一条非空 note，截 REJECT_ANNEX_NOTE_CHARS 字；
+/// - 全空拒因（rejected 但无 chip 无 note）也出线，计数为「无拒因」——被拒仍是
+///   平台事实，喂回下轮预算面（规格：平台事实不可被改写，程序只携带与计数）。
+pub fn reject_annex_line(store: &Store) -> Result<Option<String>, StoreError> {
+    let rows = store.lead_rows()?;
+    let rejected: Vec<&LedgerRow> = rows
+        .iter()
+        .filter(|r| r.status == LeadStatus::Rejected)
+        .collect();
+    if rejected.is_empty() {
+        return Ok(None);
+    }
+    let mut counts: Vec<(String, usize)> = REJECT_CHIP_REASONS
+        .iter()
+        .map(|chip| (chip.to_string(), 0_usize))
+        .collect();
+    let mut extras: std::collections::BTreeMap<String, usize> = std::collections::BTreeMap::new();
+    for row in &rejected {
+        for chip in &row.reject_chips {
+            match counts.iter_mut().find(|(name, _)| name == chip) {
+                Some((_, n)) => *n += 1,
+                None => *extras.entry(chip.clone()).or_insert(0) += 1,
+            }
+        }
+    }
+    let mut chips_label: Vec<String> = counts
+        .iter()
+        .filter(|(_, n)| *n > 0)
+        .map(|(name, n)| format!("{name}×{n}"))
+        .collect();
+    for (name, n) in &extras {
+        chips_label.push(format!("{name}×{n}"));
+    }
+    let chips_label = if chips_label.is_empty() {
+        "无拒因".to_string()
+    } else {
+        chips_label.join("、")
+    };
+    let recent_note = rejected.iter().rev().find_map(|row| {
+        let note = row.reject_note.trim();
+        if note.is_empty() {
+            None
+        } else {
+            Some(
+                note.chars()
+                    .take(REJECT_ANNEX_NOTE_CHARS)
+                    .collect::<String>(),
+            )
+        }
+    });
+    let line = match recent_note {
+        Some(note) => format!(
+            "[lead_reject] 上轮被拒 {} 条：{chips_label}；最近注记「{note}」",
+            rejected.len()
+        ),
+        None => format!(
+            "[lead_reject] 上轮被拒 {} 条：{chips_label}",
+            rejected.len()
+        ),
+    };
+    Ok(Some(line))
+}
+
 struct AnnexFact {
     viewer_id: String,
     snippet: String,
@@ -474,6 +580,8 @@ mod tests {
             status,
             yield_count: 0,
             resolution_note: String::new(),
+            reject_chips: Vec::new(),
+            reject_note: String::new(),
         }
     }
 
@@ -526,6 +634,8 @@ mod tests {
             "status",
             "yield_count",
             "resolution_note",
+            "reject_chips",
+            "reject_note",
         ];
         let positions: Vec<usize> = keys
             .iter()
@@ -650,5 +760,103 @@ mod tests {
             assert_eq!(status_from_name(status_name(status)), Some(status));
         }
         assert_eq!(status_from_name("nonsense"), None);
+    }
+
+    /// D9：reject 状态机——pending→Ok(true) 落盘；rejected 重放→Ok(false)（幂等
+    /// 终态、表不动）；approved/consumed/deferred 源态 → Err（422 规则错文）。
+    /// 与 approve 同构：无倒退路径、错文带当前源态。
+    #[test]
+    fn reject_transition_over_table() {
+        for status in [
+            LeadStatus::Approved,
+            LeadStatus::Consumed,
+            LeadStatus::Deferred,
+        ] {
+            let err = reject_transition(status).unwrap_err();
+            assert!(err.contains("pending_approval → rejected"), "{err}");
+            assert!(err.contains(status_name(status)), "错文应带当前源态：{err}");
+        }
+        assert_eq!(reject_transition(LeadStatus::PendingApproval), Ok(true));
+        assert_eq!(reject_transition(LeadStatus::Rejected), Ok(false));
+        // 幂等面：rejected 重放与 approve 的 approved 重放同构
+        assert_eq!(approve_transition(LeadStatus::Approved), Ok(false));
+    }
+
+    /// D9：白名单与 cap 的字面钉（防误改/防复制错位——前端与服务端共享镜像）。
+    #[test]
+    fn reject_constants_pinned() {
+        assert_eq!(REJECT_CHIP_REASONS, ["太泛", "不对路", "已知道", "做不了"]);
+        assert_eq!(REJECT_CHIP_REASONS.len(), 4);
+        assert_eq!(REJECT_CHIP_CAP, 4);
+        assert_eq!(REJECT_NOTE_CAP, 80);
+        assert_eq!(REJECT_ANNEX_NOTE_CHARS, 40);
+    }
+
+    /// D9：reject_annex_line 聚合形态——白名单定义序计数、非白名单残留尾随、
+    /// 最近注记取写账序末条并截 40 字。
+    #[test]
+    fn reject_annex_line_aggregates_in_whitelist_order() {
+        let store = Store::open(Path::new(":memory:")).expect("store");
+        store.begin_run_fixed("run:a", "t0", "model").expect("run");
+        let mut r1 = row("k1", "video", LeadStatus::Rejected);
+        r1.reject_chips = vec!["不对路".into(), "太泛".into()];
+        let mut r2 = row("k2", "creator", LeadStatus::Rejected);
+        r2.reject_chips = vec!["太泛".into()];
+        r2.reject_note = "阈值太低，覆盖太宽".into();
+        let mut r3 = row("k3", "search", LeadStatus::Rejected);
+        r3.reject_chips = vec!["历史手编残值".into()];
+        r3.reject_note = "长".repeat(60);
+        let r4 = row("k4", "room", LeadStatus::PendingApproval);
+        store
+            .insert_lead_rows(&[&r1, &r2, &r3, &r4], false)
+            .expect("insert");
+        let line = reject_annex_line(&store).unwrap().expect("有被拒行");
+        // 白名单定义序（太泛在前，忽略 r1 的提交序）；× 用 U+00D7
+        assert_eq!(
+            line,
+            "[lead_reject] 上轮被拒 3 条：太泛×2、不对路×1、历史手编残值×1；最近注记「长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长长」"
+        );
+        // 写账序末条非空注记 = r3（60 字截 40）
+        let note = "长".repeat(40);
+        assert!(line.ends_with(&format!("最近注记「{note}」")), "{line}");
+        // 全空拒因（rejected 无 chip 无 note）→ 出线但计数为「无拒因」
+        let mut r5 = row("k5", "video", LeadStatus::Rejected);
+        r5.reject_note = "   ".into();
+        store.insert_lead_rows(&[&r5], false).expect("insert r5");
+        let line = reject_annex_line(&store).unwrap().unwrap();
+        assert!(
+            line.contains("上轮被拒 4 条：太泛×2、不对路×1、历史手编残值×1"),
+            "{line}"
+        );
+        // 全库只有全空被拒行：无拒因形态
+        let only = Store::open(Path::new(":memory:")).expect("store2");
+        // row() 助手的 first_seen_run_id 固定 run:a——开同号 run，免得 FK 空投。
+        only.begin_run_fixed("run:a", "t0", "model").expect("run");
+        only.insert_lead_rows(&[&row("k6", "video", LeadStatus::Rejected)], false)
+            .expect("insert k6");
+        let line = reject_annex_line(&only).unwrap().unwrap();
+        assert_eq!(line, "[lead_reject] 上轮被拒 1 条：无拒因");
+    }
+
+    /// D9：零被拒行 → None（零字节未响应面）且同库两次读逐字节一致（幂等钉）。
+    #[test]
+    fn reject_annex_line_none_and_byte_identical() {
+        let store = Store::open(Path::new(":memory:")).expect("store");
+        store.begin_run_fixed("run:a", "t0", "model").expect("run");
+        store
+            .insert_lead_rows(&[&row("k1", "video", LeadStatus::PendingApproval)], false)
+            .expect("insert");
+        assert_eq!(reject_annex_line(&store).unwrap(), None);
+        assert_eq!(reject_annex_line(&store).unwrap(), None);
+        // 造一条 rejected 后再钉两次读逐字节一致
+        let mut rejected = row("k2", "creator", LeadStatus::Rejected);
+        rejected.reject_chips = vec!["做不了".into()];
+        store
+            .insert_lead_rows(&[&rejected], false)
+            .expect("insert k2");
+        let first = reject_annex_line(&store).unwrap().expect("line");
+        let second = reject_annex_line(&store).unwrap().expect("line");
+        assert_eq!(first, second);
+        assert_eq!(first, "[lead_reject] 上轮被拒 1 条：做不了×1");
     }
 }

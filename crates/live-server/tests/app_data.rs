@@ -136,6 +136,14 @@ async fn overview_combines_collection_ai_leads_and_baseline_delta() {
     // 线索簿：demo 合成通道不带 leads → 空集合与空 summary
     assert_eq!(body["leads"]["totals"]["pending_approval"], 0);
     assert!(body["leads"]["pending"].is_array());
+    // D9：rejected 明细面恒为数组（demo 无拒账 → 空数组，非缺键）。
+    assert!(body["leads"]["rejected"].is_array(), "{body}");
+    // D9：拒因 chip 白名单恒下发（前端 chip 面唯一真源 = 服务端，不落第二份字面）。
+    assert_eq!(
+        body["leads"]["reject_chip_reasons"],
+        serde_json::json!(["太泛", "不对路", "已知道", "做不了"]),
+        "{body}"
+    );
     // G4：单次 complete run → 基线态（前端显示「基线已建」）
     assert_eq!(
         body["delta"]["baseline_only"], true,

@@ -71,3 +71,58 @@ describe("ViewerTree 时效位徽标（Z5c）", () => {
     expect(screen.queryByTestId("ai-stale-badge-tree")).toBeNull();
   });
 });
+
+describe("ViewerTree Episode 时间戳语义徽标（R2 批6 D7）", () => {
+  it("双行混排：published 行落「发布于」、缺 published 行落「采集于」，tooltip 文案各自钉", async () => {
+    renderTree({
+      episodes: [
+        {
+          episode_id: "e-pub",
+          source: "bangumi",
+          event_type: "ep",
+          published_at: "2026-08-03T03:06:16+00:00",
+          observed_at: "2026-08-03T10:00:00+00:00",
+          title: "平台给了行为时刻的行",
+        },
+        {
+          episode_id: "e-only-obs",
+          source: "bangumi",
+          event_type: "ep",
+          observed_at: "2026-08-03T03:06:16+00:00",
+          title: "平台没给只留采集时刻的行",
+        },
+      ],
+      mentions: [],
+    });
+    await waitFor(() => expect(screen.getByTestId("episode-ts-e-pub")).toBeTruthy());
+    const published = screen.getByTestId("episode-ts-e-pub");
+    const collected = screen.getByTestId("episode-ts-e-only-obs");
+    // 徽标各自落位（恒落其一：两徽标不互串）。
+    expect(published.textContent).toContain("发布于");
+    expect(published.textContent).not.toContain("采集于");
+    expect(collected.textContent).toContain("采集于");
+    expect(collected.textContent).not.toContain("发布于");
+    // tooltip 文案钉（D7 验收原文）。
+    expect(published.getAttribute("title")).toBe("发布于=平台显示的行为时刻");
+    expect(collected.getAttribute("title")).toBe("采集于=我们看到这条的时刻（非行为时刻）");
+  });
+
+  it("published_at 为空串 → 视为平台没给，回落「采集于」", async () => {
+    renderTree({
+      episodes: [
+        {
+          episode_id: "e-empty",
+          source: "bangumi",
+          event_type: "ep",
+          published_at: "",
+          observed_at: "2026-08-03T03:06:16+00:00",
+        },
+      ],
+      mentions: [],
+    });
+    await waitFor(() => expect(screen.getByTestId("episode-ts-e-empty")).toBeTruthy());
+    const badge = screen.getByTestId("episode-ts-e-empty");
+    expect(badge.textContent).toContain("采集于");
+    expect(badge.getAttribute("title")).toBe("采集于=我们看到这条的时刻（非行为时刻）");
+  });
+});

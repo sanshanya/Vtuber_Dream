@@ -155,6 +155,14 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
             "pending": rows.iter()
                 .filter(|r| r.status == live_core::leads::LeadStatus::PendingApproval)
                 .collect::<Vec<_>>(),
+            // D9：rejected 明细直出（含拒因留档；前端 rejected 徽标展开可回看
+            // 记录的 chip/note——只读事实面，绝不代行裁决）。
+            "rejected": rows.iter()
+                .filter(|r| r.status == live_core::leads::LeadStatus::Rejected)
+                .collect::<Vec<_>>(),
+            // D9：拒因 chip 白名单下发——前端 chip 面与 reject 端点校验唯一同源
+            // （live-core REJECT_CHIP_REASONS），不落第二份字面。
+            "reject_chip_reasons": live_core::leads::REJECT_CHIP_REASONS,
             // G2-B：自治位读取面（Leads 页标题行 L1 状态徽标）
             "autonomy": config.collection.leads_autonomy,
         },
@@ -169,6 +177,9 @@ pub(super) async fn room_viewers(
     let config = load_config(&state)?;
     room_guard(&config, &uid)?;
     let root = data_root(&state)?;
+    // R2 批6 D10（舰长卡→关系卡）：四微件的数据口（graph 在才开库的只读面）。
+    let store = open_graph(&root);
+    let today_secs = live_core::episodes::now_unix_secs();
     let viewers_dir = root.join("viewers");
     let mut viewers: Vec<Value> = Vec::new();
     let mut entries: Vec<PathBuf> = std::fs::read_dir(&viewers_dir)
@@ -194,6 +205,10 @@ pub(super) async fn room_viewers(
                 .join("viewers")
                 .join(format!("{uid}.json")),
         );
+        // R2 批6 D10：出勤面每行一查（COUNT DISTINCT + MAX 双聚合一路返回）。
+        let presence = store
+            .as_ref()
+            .and_then(|s| live_core::graph::query::room_presence(s, &uid).ok());
         viewers.push(json!({
             "uid": uid,
             "name": viewer["viewer"]["name"].as_str()
@@ -213,6 +228,27 @@ pub(super) async fn room_viewers(
             "ai_stale": cached
                 .as_ref()
                 .and_then(|c| live_core::agent::pipeline::viewer_perception_stale(&config, &viewer, c)),
+            // R2 批6 D10 四微件（缺件 = null，前端落「未知」微行，绝不补文案/编数字）：
+            // ① 第几次来 = WS 场次窗到访计数（无库/无记录 → null ≠ 0 次）；
+            "visit_count": presence
+                .and_then(|(visits, _)| (visits > 0).then_some(visits)),
+            // ② 距上次 N 天 = 末次 WS 到场的整日数（负数不下泄，挡未来 ts）。
+            "days_since_last": presence
+                .and_then(|(_, last_ts)| last_ts.map(|ts| ((today_secs - ts) / 86_400).max(0))),
+            // ③ 身份一句 = AI 感知 profile_summary 首 40 字（AI 语义徽标由前端盖）。
+            "identity_line": cached
+                .as_ref()
+                .filter(|c| c["status"] == "complete")
+                .and_then(|c| c["analysis"]["profile_summary"].as_str())
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .map(|line| line.chars().take(40).collect::<String>()),
+            // ④ 最新动态日期 = 名下条目最新 published_at 的日期段（ISO 前 10 字符）。
+            "latest_activity_date": store
+                .as_ref()
+                .and_then(|s| live_core::graph::query::latest_published_at(s, &uid).ok())
+                .flatten()
+                .map(|iso| iso.chars().take(10).collect::<String>()),
         }));
     }
     Ok(Json(json!(viewers)))
@@ -314,4 +350,163 @@ pub(super) async fn lead_approve(
         // 为幂等重放留可观测位：终态（dedupe_key/status）恒定，仅动作位分野。
         "changed": changed,
     })))
+}
+
+// ---------------------------------------------------------------------------
+// leads 拒绝缝（D9/R2-批6）：POST /api/rooms/:uid/leads/:lead_id/reject
+// ---------------------------------------------------------------------------
+
+/// `lead_id` = 账本行 `dedupe_key`（与 approve 同身份口径）。
+///
+/// 与 lead_approve 同构（同一账本体 / 同一守卫链 / 同一迁移触点 / 同一错误形态），
+/// 但走状态机另一条单行道 `pending_approval → rejected`（reject_transition
+/// 唯一裁决点）：
+/// - 正常翻转：读行 → 拒因规范化（chips 白名单校验 / note 截长）→ 改状态 +
+///   reject_chips_json / reject_note 两列受控落库（全空 = NULL/NULL 合法空态）；
+/// - 幂等重放：已 rejected 且同参（或空参）→ 200 相同终态，表行不动；
+///   已 rejected 但带相异非空参 → 422（终态留档不可改写，错文讲规则）；
+/// - 不存在（lead_id 未知 / 房间错 / 穿透形 id）→ 404（D3 错误形态）；
+/// - 非法迁移（consumed/approved/deferred 源态）→ 422，错文讲规则 + 当前状态；
+/// - chips 出白名单 / 超 REJECT_CHIP_CAP / note 超 REJECT_NOTE_CAP → 422；
+/// - MXA-1 延伸：账本迁移守卫失败（旧 JSONL 含坏行）→ 500 响铃，绝不带病写。
+pub(super) async fn lead_reject(
+    State(state): State<AppState>,
+    Path((uid, lead_id)): Path<(String, String)>,
+    // D9：体可选——None / 空体 = 全空拒因（合法）。不套 Option<JsonBody<T>>：
+    // 它会把坏 JSON 吞成 None（静默放过坏参）；这里拿原始字节自行判别——
+    // 空体空参放行，坏 JSON 显式 422（规格外自裁）。
+    body: Option<axum::body::Bytes>,
+) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    // 路径消毒与 viewer uid 同口径（%2F 解码后的穿透形在此截断，404 与不存在同形）。
+    if !uid_charset_legal(&lead_id, MAX_VID_PATH_CHARS) {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            &format!("lead {lead_id} 不存在"),
+        ));
+    }
+    let (chips, note) = parse_reject_params(body)?;
+    let root = data_root(&state)?;
+    // 写面端点：图库缺席则建仓（与 approve 同纪律）。
+    let store_path = root.join("graph").join("perception.sqlite3");
+    let store = live_core::graph::store::Store::open(&store_path).map_err(internal)?;
+    live_core::leads::migrate_jsonl(&store, &root).map_err(internal)?;
+    let Some(mut row) = store.lead_row(&lead_id).map_err(internal)? else {
+        return Err(fail(
+            StatusCode::NOT_FOUND,
+            &format!("lead {lead_id} 不存在"),
+        ));
+    };
+    let changed = live_core::leads::reject_transition(row.status)
+        .map_err(|message| fail(StatusCode::UNPROCESSABLE_ENTITY, &message))?;
+    if changed {
+        row.status = live_core::leads::LeadStatus::Rejected;
+        row.reject_chips = chips;
+        row.reject_note = note;
+        store.update_lead_row(&row).map_err(internal)?;
+    } else {
+        // 已 rejected 终态：空参（无新信息）或与现档同参 → 幂等重放不写表；
+        // 相异非空参意味改写留档 → 422 讲规则（D9 规格「拒因不可覆盖」）。
+        if !(chips.is_empty() && note.is_empty())
+            && (chips != row.reject_chips || note != row.reject_note)
+        {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "该行已是 rejected 终态，拒因留档不可覆盖（空参重放可幂等）",
+            ));
+        }
+    }
+    Ok(Json(json!({
+        "dedupe_key": row.dedupe_key,
+        "status": live_core::leads::status_name(row.status),
+        "changed": changed,
+        "reject_chips": row.reject_chips,
+        "reject_note": row.reject_note,
+    })))
+}
+
+/// D9：reject 体解析与拒因规范化——体缺省/空体 → 全空拒因；坏 JSON/非对象
+/// → 422；chips 逐项 trim 后必须命中白名单（任一脱靶 → 422，附当前脱靶项）、
+/// 数量 > REJECT_CHIP_CAP → 422；note trim 后 > REJECT_NOTE_CAP 字 → 422。
+/// 返回 (chips, note)：全空 = (Vec::new(), String::new())——写面落 NULL/NULL。
+fn parse_reject_params(body: Option<axum::body::Bytes>) -> AppResult<(Vec<String>, String)> {
+    let Some(bytes) = body else {
+        return Ok((Vec::new(), String::new()));
+    };
+    if bytes.is_empty() {
+        return Ok((Vec::new(), String::new()));
+    }
+    let value: Value = serde_json::from_slice(&bytes).map_err(|err| {
+        fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &format!("reject 体不是合法 JSON 对象：{err}"),
+        )
+    })?;
+    let Some(object) = value.as_object() else {
+        return Err(fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "reject 体必须是 JSON 对象（{\"chips\": [...], \"note\": \"...\"}）",
+        ));
+    };
+    let chips = match object.get("chips") {
+        None | Some(Value::Null) => Vec::new(),
+        Some(Value::Array(items)) => {
+            if items.len() > live_core::leads::REJECT_CHIP_CAP {
+                return Err(fail(
+                    StatusCode::UNPROCESSABLE_ENTITY,
+                    &format!(
+                        "拒因 chip 最多 {cap} 项",
+                        cap = live_core::leads::REJECT_CHIP_CAP
+                    ),
+                ));
+            }
+            let mut out = Vec::with_capacity(items.len());
+            for item in items {
+                let Some(raw) = item.as_str() else {
+                    return Err(fail(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        "拒因 chips 的每一项必须是字符串",
+                    ));
+                };
+                let chip = raw.trim();
+                if !live_core::leads::REJECT_CHIP_REASONS.contains(&chip) {
+                    return Err(fail(
+                        StatusCode::UNPROCESSABLE_ENTITY,
+                        &format!("拒因「{chip}」不在白名单（{}）", {
+                            live_core::leads::REJECT_CHIP_REASONS.join("、")
+                        }),
+                    ));
+                }
+                out.push(chip.to_string());
+            }
+            out
+        }
+        Some(_) => {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "reject 体的 chips 必须是字符串数组",
+            ));
+        }
+    };
+    let note = match object.get("note") {
+        None | Some(Value::Null) => String::new(),
+        Some(Value::String(text)) => text.trim().to_string(),
+        Some(_) => {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "reject 体的 note 必须是字符串",
+            ));
+        }
+    };
+    if note.chars().count() > live_core::leads::REJECT_NOTE_CAP {
+        return Err(fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &format!(
+                "拒因注记最多 {cap} 字",
+                cap = live_core::leads::REJECT_NOTE_CAP
+            ),
+        ));
+    }
+    Ok((chips, note))
 }

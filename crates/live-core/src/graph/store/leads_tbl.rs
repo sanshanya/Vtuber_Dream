@@ -19,6 +19,27 @@ fn evidence_ids_json(row: &LedgerRow) -> Result<String> {
         .map_err(|err| super::StoreError::Repo(format!("evidence_ids 不可序列化：{err}")))
 }
 
+/// D9：拒绝 chip 落列口径——空数组 → NULL（全空合法空态）；非空 → JSON 数组文本。
+/// insert/update 双写点同修一份（与 evidence_ids 同构）。
+fn reject_chips_json(row: &LedgerRow) -> Result<Option<String>> {
+    if row.reject_chips.is_empty() {
+        return Ok(None);
+    }
+    serde_json::to_string(&row.reject_chips)
+        .map(Some)
+        .map_err(|err| super::StoreError::Repo(format!("reject_chips 不可序列化：{err}")))
+}
+
+/// D9：拒绝注记落列口径——空串 → NULL（与 chip 同构：全空合法空态）。
+/// 端点已对 note 做 trim 归一（纯空白注记视同无注记），此处只管空串。
+fn reject_note_sql(row: &LedgerRow) -> Option<&str> {
+    if row.reject_note.is_empty() {
+        None
+    } else {
+        Some(row.reject_note.as_str())
+    }
+}
+
 impl Store {
     /// 入账。返回实际入库行数（OR IGNORE 臂下同键行不计）。
     pub fn insert_lead_rows(&self, rows: &[&LedgerRow], strict: bool) -> Result<usize> {
@@ -27,8 +48,8 @@ impl Store {
             "{verb} INTO discovery_leads(\
                dedupe_key,lead_type,locator,motivation,expected_signal,priority,\
                evidence_ids_json,viewer_id,first_seen_run_id,created_at,status,\
-               yield_count,resolution_note) \
-             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)"
+               yield_count,resolution_note,reject_chips_json,reject_note) \
+             VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
         );
         let mut inserted = 0_usize;
         for row in rows {
@@ -49,6 +70,8 @@ impl Store {
                     status_name(row.status),
                     row.yield_count,
                     row.resolution_note,
+                    reject_chips_json(row)?,
+                    reject_note_sql(row),
                 ],
             )?;
         }
@@ -68,6 +91,18 @@ impl Store {
                 format!("未知线索状态 {status_text}").into(),
             )
         })?;
+        // D9：reject_chips_json 可 NULL（无拒因）；NULL → 空数组。
+        let reject_chips_json: Option<String> = row.get(13)?;
+        let reject_chips = match reject_chips_json {
+            Some(text) => serde_json::from_str(&text).map_err(|err| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    13,
+                    rusqlite::types::Type::Text,
+                    Box::new(err),
+                )
+            })?,
+            None => Vec::new(),
+        };
         Ok(LedgerRow {
             dedupe_key: row.get(0)?,
             lead_type: row.get(1)?,
@@ -82,13 +117,15 @@ impl Store {
             status,
             yield_count: row.get(11)?,
             resolution_note: row.get(12)?,
+            reject_chips,
+            reject_note: row.get::<_, Option<String>>(14)?.unwrap_or_default(),
         })
     }
 
     const LEAD_SELECT: &'static str = "SELECT \
          dedupe_key,lead_type,locator,motivation,expected_signal,priority,\
          evidence_ids_json,viewer_id,first_seen_run_id,created_at,status,\
-         yield_count,resolution_note FROM discovery_leads";
+         yield_count,resolution_note,reject_chips_json,reject_note FROM discovery_leads";
 
     /// 全账（写账序）。读面唯一入口——JSONL 读面的同构物。
     pub fn lead_rows(&self) -> Result<Vec<LedgerRow>> {
@@ -118,7 +155,8 @@ impl Store {
         let changed = self.conn.execute(
             "UPDATE discovery_leads SET lead_type=?,locator=?,motivation=?,expected_signal=?,\
              priority=?,evidence_ids_json=?,viewer_id=?,first_seen_run_id=?,created_at=?,\
-             status=?,yield_count=?,resolution_note=? WHERE dedupe_key=?",
+             status=?,yield_count=?,resolution_note=?,reject_chips_json=?,reject_note=? \
+             WHERE dedupe_key=?",
             params![
                 row.lead_type,
                 row.locator,
@@ -132,6 +170,8 @@ impl Store {
                 status_name(row.status),
                 row.yield_count,
                 row.resolution_note,
+                reject_chips_json(row)?,
+                reject_note_sql(row),
                 row.dedupe_key,
             ],
         )?;

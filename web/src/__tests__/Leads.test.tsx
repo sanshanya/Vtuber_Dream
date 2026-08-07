@@ -18,6 +18,8 @@ import { Leads } from "../pages/Leads";
 interface FetchCall {
   method: string;
   path: string;
+  /** POST 体原样（D9 拒因断言用；未带体为空串）。 */
+  body?: string;
 }
 
 interface FetchPlan {
@@ -29,7 +31,11 @@ function stubFetchPlan(plan: FetchPlan, calls: FetchCall[]) {
     "fetch",
     vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
-      calls.push({ method: init?.method ?? "GET", path });
+      calls.push({
+        method: init?.method ?? "GET",
+        path,
+        body: init?.body == null ? "" : String(init.body),
+      });
       const queue = plan[path];
       const next =
         queue && queue.length > 0
@@ -321,5 +327,199 @@ describe("FE-F2：LeadsBlock 呈现与在飞护栏", () => {
     releasePost!();
     await waitFor(() => expect((button as HTMLButtonElement).disabled).toBe(false));
     expect(calls.filter((c) => c.method === "POST" && c.path === APPROVE_URL).length).toBe(1);
+  });
+});
+
+/**
+ * D9/R2-批6 追加钉团：
+ * - 行级「拒绝」钮一击即飞、无 dialog（window.confirm 零调用）；全空拒因合法提交
+ *   （POST 体 {"chips":[],"note":""} → 服务端 NULL/NULL 留档）。
+ * - 行内拒因区 = 四 chip 白名单 + 一条注记；选中后提交 → POST 体携带 chips/note。
+ * - pending 按持有人（viewer_id）分组、组默认折叠（<details> 无 open 属性）——
+ *   DOM 在场：闭合组内行级钮仍可被查询与一击。
+ * - 组级「全批/全拒」前端逐行 fan-out：一股作气、逐行 POST（无批量服务端面）。
+ * - rejected 明细直出：徽标即 <details>，展开回看记录 chip/note（只读事实面）。
+ */
+describe("D9：拒绝面与持有人分组", () => {
+  const REJECT_URL = "/api/rooms/983/leads/abc123def4567890/reject";
+  // chip 白名单 = 服务端 overview 下发（唯一真源）；fixture 统一带此键——
+  // 前端本地已无任何白名单字面。
+  const overviewFor = (leads: Record<string, unknown>) => ({
+    [OVERVIEW_URL]: [
+      {
+        status: 200,
+        body: overviewBody({
+          leads: {
+            reject_chip_reasons: ["太泛", "不对路", "已知道", "做不了"],
+            ...leads,
+          },
+        }),
+      },
+    ],
+  });
+
+  it("行级「拒绝」一击即飞、无 dialog；全空拒因合法提交", async () => {
+    const calls: FetchCall[] = [];
+    const confirmSpy = vi.spyOn(window, "confirm").mockImplementation(() => true);
+    stubFetchPlan(
+      {
+        ...overviewFor({
+          totals: { pending_approval: 1, approved: 0, consumed: 0, rejected: 0, deferred: 0 },
+          autonomy: 0,
+          pending: PENDING,
+        }),
+        [REJECT_URL]: [
+          {
+            status: 200,
+            body: JSON.stringify({
+              dedupe_key: "abc123def4567890",
+              status: "rejected",
+              changed: true,
+              reject_chips: [],
+              reject_note: "",
+            }),
+          },
+        ],
+      },
+      calls,
+    );
+    renderLeads(calls);
+    // D9：组默认折叠——闭合态其内容仍在 DOM 中，行级钮可查询可一击。
+    const group = await screen.findByTestId("lead-group-audience");
+    expect(group.hasAttribute("open")).toBe(false);
+    fireEvent.click(await screen.findByTestId("lead-reject-abc123def4567890"));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.path === REJECT_URL)).toBe(true),
+    );
+    // 无 dialog：window.confirm 全程零调用。
+    expect(confirmSpy).not.toHaveBeenCalled();
+    const post = calls.find((c) => c.method === "POST" && c.path === REJECT_URL)!;
+    expect(JSON.parse(post.body!)).toEqual({ chips: [], note: "" });
+    confirmSpy.mockRestore();
+  });
+
+  it("行内拒因区：chip 白名单 + 注记选中后提交 → POST 体携带", async () => {
+    const calls: FetchCall[] = [];
+    stubFetchPlan(
+      {
+        ...overviewFor({
+          totals: { pending_approval: 1, approved: 0, consumed: 0, rejected: 0, deferred: 0 },
+          autonomy: 0,
+          pending: PENDING,
+        }),
+        [REJECT_URL]: [
+          {
+            status: 200,
+            body: JSON.stringify({
+              dedupe_key: "abc123def4567890",
+              status: "rejected",
+              changed: true,
+              reject_chips: ["太泛"],
+              reject_note: "主播不玩这品类",
+            }),
+          },
+        ],
+      },
+      calls,
+    );
+    renderLeads(calls);
+    const chip = await screen.findByTestId("lead-reject-chip-abc123def4567890-太泛");
+    fireEvent.click(chip);
+    fireEvent.change(screen.getByTestId("lead-reject-note-abc123def4567890"), {
+      target: { value: "主播不玩这品类" },
+    });
+    fireEvent.click(screen.getByTestId("lead-reject-abc123def4567890"));
+    await waitFor(() =>
+      expect(calls.some((c) => c.method === "POST" && c.path === REJECT_URL)).toBe(true),
+    );
+    const post = calls.find((c) => c.method === "POST" && c.path === REJECT_URL)!;
+    expect(JSON.parse(post.body!)).toEqual({ chips: ["太泛"], note: "主播不玩这品类" });
+  });
+
+  it("组级「全批」前端逐行 fan-out：一股作气按行发 POST", async () => {
+    const calls: FetchCall[] = [];
+    const groupRows = Array.from({ length: 10 }, (_, i) => ({
+      dedupe_key: `row-${i}`,
+      type: "creator",
+      locator: `L-${i}`,
+      viewer_id: "audience",
+      motivation: `批量第 ${i} 条`,
+    }));
+    const plan: FetchPlan = overviewFor({
+      totals: { pending_approval: 10, approved: 0, consumed: 0, rejected: 0, deferred: 0 },
+      autonomy: 0,
+      pending: groupRows,
+    });
+    groupRows.forEach((r) => {
+      plan[`/api/rooms/983/leads/${r.dedupe_key}/approve`] = [
+        { status: 200, body: JSON.stringify({ dedupe_key: r.dedupe_key, status: "approved", changed: true }) },
+      ];
+    });
+    stubFetchPlan(plan, calls);
+    renderLeads(calls);
+    fireEvent.click(await screen.findByTestId("lead-approve-all-audience"));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === "POST" && c.path.endsWith("/approve")).length).toBe(10),
+    );
+  });
+
+  it("组级「全拒」前端逐行 fan-out：每股空拒因（全空合法）", async () => {
+    const calls: FetchCall[] = [];
+    const groupRows = Array.from({ length: 10 }, (_, i) => ({
+      dedupe_key: `row-${i}`,
+      type: "creator",
+      locator: `L-${i}`,
+      viewer_id: "momo",
+      motivation: `批量第 ${i} 条`,
+    }));
+    const plan: FetchPlan = overviewFor({
+      totals: { pending_approval: 10, approved: 0, consumed: 0, rejected: 0, deferred: 0 },
+      autonomy: 0,
+      pending: groupRows,
+    });
+    groupRows.forEach((r) => {
+      plan[`/api/rooms/983/leads/${r.dedupe_key}/reject`] = [
+        { status: 200, body: JSON.stringify({ dedupe_key: r.dedupe_key, status: "rejected", changed: true, reject_chips: [], reject_note: "" }) },
+      ];
+    });
+    stubFetchPlan(plan, calls);
+    renderLeads(calls);
+    fireEvent.click(await screen.findByTestId("lead-reject-all-momo"));
+    await waitFor(() =>
+      expect(calls.filter((c) => c.method === "POST" && c.path.endsWith("/reject")).length).toBe(10),
+    );
+    const posts = calls.filter((c) => c.method === "POST" && c.path.endsWith("/reject"));
+    expect(posts.every((c) => JSON.parse(c.body!) && JSON.parse(c.body!).chips.length === 0)).toBe(true);
+  });
+
+  it("rejected 明细直出：徽标展开回看记录拒因（只读事实面）", async () => {
+    const calls: FetchCall[] = [];
+    stubFetchPlan(
+      {
+        ...overviewFor({
+          totals: { pending_approval: 0, approved: 0, consumed: 0, rejected: 1, deferred: 0 },
+          autonomy: 0,
+          pending: [],
+          rejected: [
+            {
+              dedupe_key: "rej-1",
+              type: "creator",
+              locator: "异环 实机",
+              viewer_id: "audience",
+              reject_chips: ["太泛", "做不了"],
+              reject_note: "主播不玩这品类",
+            },
+          ],
+        }),
+      },
+      calls,
+    );
+    renderLeads(calls);
+    const badge = await screen.findByTestId("leads-rejected");
+    expect(badge.textContent).toContain("已拒绝 1");
+    // 记录拒因入 DOM（展开与否都在场——只读事实面可回看）。
+    expect(badge.textContent).toContain("太泛");
+    expect(badge.textContent).toContain("做不了");
+    expect(badge.textContent).toContain("主播不玩这品类");
   });
 });

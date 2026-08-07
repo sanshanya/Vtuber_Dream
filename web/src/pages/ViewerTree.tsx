@@ -77,7 +77,25 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
               <div className="badges">
                 <span className="badge fact">{episode.source ?? "?"}</span>
                 <span className="badge">{episode.event_type ?? "?"}</span>
-                <span className="badge">{fmtTime(episode.observed_at)}</span>
+                {/* D7 时间戳语义徽标：平台给了 published_at 就用行为时刻（发布于）；
+                    缺/空回落到 observed_at（采集于=我们看到这条的时刻），恒落其一不猜。 */}
+                {episode.published_at && episode.published_at.trim() !== "" ? (
+                  <span
+                    className="badge episode-ts"
+                    data-testid={`episode-ts-${episode.episode_id}`}
+                    title="发布于=平台显示的行为时刻"
+                  >
+                    发布于 {fmtTime(episode.published_at)}
+                  </span>
+                ) : (
+                  <span
+                    className="badge episode-ts"
+                    data-testid={`episode-ts-${episode.episode_id}`}
+                    title="采集于=我们看到这条的时刻（非行为时刻）"
+                  >
+                    采集于 {fmtTime(episode.observed_at)}
+                  </span>
+                )}
               </div>
               {episode.title && (
                 <div>

@@ -374,3 +374,90 @@ fn list_entities_paginates_stably_and_clamps_bounds() {
     assert_eq!(list_entities(&store, -5, 10).unwrap()["offset"], 0);
     assert_eq!(list_entities(&store, 0, 999).unwrap()["limit"], 100);
 }
+
+// ---------------------------------------------------------------------------
+// D10 出勤面钉：room_presence 按 WS 场次窗计到访 + latest_published_at 取最新
+// ---------------------------------------------------------------------------
+
+#[test]
+fn room_presence_counts_sessions_and_last_ts() {
+    use live_core::live_ws::episodes::{WsRecorder, ingest_ws_window};
+    use live_core::live_ws::message::WsEvent;
+    use live_core::live_ws::session::SessionEnd;
+
+    let store = mem_store();
+    // 两个场次窗（rid 由窗起点定义）：u-7 两窗都说话；u-9 只在第一窗。
+    // ts 用平台 ts（info[9] 形态）——跨窗同一行撞库不重复计（同窗内去重见 D1-2B 钉团）。
+    let mk_window = |attach: i64, lines: &[(&str, &str, i64)]| {
+        let mut rec = WsRecorder::attach(77, attach, 1).unwrap();
+        for (uid, text, ts) in lines {
+            rec.on_event(
+                &WsEvent::Danmaku {
+                    uid: uid.to_string(),
+                    uname: uid.to_string(),
+                    text: text.to_string(),
+                    ts: Some(*ts),
+                },
+                attach + 1,
+            );
+        }
+        rec.on_event(&WsEvent::Preparing { round: 1 }, attach + 2);
+        rec.finish(&SessionEnd::Closed, attach + 2)
+    };
+    store.begin_run_fixed("run-a", FIXED_NOW, "m").unwrap();
+    ingest_ws_window(
+        &store,
+        "run-a",
+        &mk_window(
+            1_000_000,
+            &[("u-7", "来啦", 1_700_000_000), ("u-9", "早", 1_700_000_010)],
+        ),
+    )
+    .unwrap();
+    store.begin_run_fixed("run-b", FIXED_NOW, "m").unwrap();
+    ingest_ws_window(
+        &store,
+        "run-b",
+        &mk_window(1_100_000, &[("u-7", "又来", 1_700_001_000)]),
+    )
+    .unwrap();
+
+    let (visits, last_ts) =
+        live_core::graph::query::room_presence(&store, "u-7").expect("presence");
+    assert_eq!(visits, 2, "两窗两访（按 session.rid 计数）");
+    assert_eq!(last_ts, Some(1_700_001_000));
+    let (visits9, _) = live_core::graph::query::room_presence(&store, "u-9").expect("presence");
+    assert_eq!(visits9, 1);
+    let (visits0, last0) =
+        live_core::graph::query::room_presence(&store, "u-ghost").expect("presence");
+    assert_eq!((visits0, last0), (0, None), "无记录 = 未知，不是 0 次语义");
+}
+
+#[test]
+fn latest_published_at_picks_max_iso() {
+    let store = mem_store();
+    store.begin_run_fixed(RUN_A, FIXED_NOW, "m").unwrap();
+    let sub = one_entity_submission(
+        "v",
+        "环世界",
+        &["环"],
+        &[("m1", "环宝", 0, 2)],
+        Some(0.5),
+        0.8,
+    );
+    apply_viewer_submission(
+        &store,
+        RUN_A,
+        "观众V",
+        &[episode_for("v", "环宝 环世界")],
+        &sub,
+    )
+    .unwrap();
+    let latest = live_core::graph::query::latest_published_at(&store, "v").expect("latest");
+    assert!(
+        latest.as_deref().is_some_and(|ts| !ts.is_empty()),
+        " seeded row: {latest:?}"
+    );
+    let none = live_core::graph::query::latest_published_at(&store, "无人").expect("latest");
+    assert!(none.is_none());
+}

@@ -699,3 +699,77 @@ fn append_history_line_write_failure_only_rings() {
     assert_eq!(rung.len(), 1, "写失败必须响铃：{rung:?}");
     assert!(rung[0].contains("[LEDGER]"), "响铃须带账本前缀：{rung:?}");
 }
+
+// D8：主钮旁预估段（GET /api/budget 的 estimate）——名册口径钉团。
+// ---------------------------------------------------------------------------
+
+/// D8 钉（a）：collection.json 缺件 → estimate 四字段全 null（前端「预估 —」）。
+#[tokio::test(flavor = "multi_thread")]
+async fn budget_get_estimate_all_null_when_collection_missing() {
+    let fx = fixture(None);
+    let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
+    assert_eq!(status, 200, "{body}");
+    let estimate = &body["estimate"];
+    assert_eq!(
+        *estimate,
+        json!({"roster_viewers": null, "normal_cny": null, "briefing_cny": null, "etd_minutes": null}),
+        "{estimate}"
+    );
+}
+
+/// D8 钉（b）：viewer_count=22 → normal_cny≈34.5（闸同公式上限口径）、
+/// briefing_cny=1.5（恰 audience 平段）、etd 区间 = 常量带宽上取整到分钟。
+#[tokio::test(flavor = "multi_thread")]
+async fn budget_get_estimate_pins_22_viewer_roster() {
+    let fx = fixture(None);
+    let out = fx.config_path.parent().unwrap().join("out/collection.json");
+    std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+    std::fs::write(
+        &out,
+        json!({"status": "complete", "viewer_count": 22}).to_string(),
+    )
+    .unwrap();
+    let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
+    assert_eq!(status, 200, "{body}");
+    let estimate = &body["estimate"];
+    assert_eq!(estimate["roster_viewers"], 22, "{estimate}");
+    let normal = estimate["normal_cny"].as_f64().unwrap();
+    assert!(
+        (normal - 34.5).abs() < 1e-9,
+        "22 人全量预估应≈34.5：{estimate}"
+    );
+    assert_eq!(
+        estimate["briefing_cny"].as_f64().unwrap(),
+        1.5,
+        "{estimate}"
+    );
+    let etd = estimate["etd_minutes"].as_array().unwrap();
+    assert_eq!(etd.len(), 2, "{estimate}");
+    let lo = etd[0].as_u64().unwrap();
+    let hi = etd[1].as_u64().unwrap();
+    // 常量带宽：22×(40..90)s + 90s 底 → 970s..2070s → 上取整 17..35 分钟。
+    assert_eq!(lo, 17, "{estimate}");
+    assert_eq!(hi, 35, "{estimate}");
+    assert!(lo <= hi, "{estimate}");
+}
+
+/// D8 钉（c）：viewer_count=0（名册空）与缺 viewer_count 键 → 都是全 null（不臆造
+/// 空名册的「全量」预估；前端「预估 —」字面即此面）。
+#[tokio::test(flavor = "multi_thread")]
+async fn budget_get_estimate_all_null_when_roster_empty_or_key_missing() {
+    for collection in [
+        json!({"status": "complete", "viewer_count": 0}),
+        json!({"status": "complete"}),
+    ] {
+        let fx = fixture(None);
+        let out = fx.config_path.parent().unwrap().join("out/collection.json");
+        std::fs::create_dir_all(out.parent().unwrap()).unwrap();
+        std::fs::write(&out, collection.to_string()).unwrap();
+        let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
+        assert_eq!(status, 200, "{body}");
+        let estimate = &body["estimate"];
+        assert!(estimate["normal_cny"].is_null(), "{estimate}");
+        assert!(estimate["briefing_cny"].is_null(), "{estimate}");
+        assert!(estimate["etd_minutes"].is_null(), "{estimate}");
+    }
+}

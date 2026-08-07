@@ -5,7 +5,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 
-import { api, isApiError } from "../api";
+import { api, isApiError, type BudgetEstimate } from "../api";
 import { AiStaleBadge } from "../components/AiStaleBadge";
 import { BriefingCard, type EpisodeIndexEntry } from "../components/BriefingCard";
 import { Avatar } from "../components/Avatar";
@@ -14,6 +14,54 @@ import { RunButton } from "../components/RunButton";
 import { RecapCard } from "../components/RecapCard";
 import { StreamerCard } from "../components/StreamerCard";
 import { estimateCostCny, fmtCny, fmtInt, fmtTime, type UsageRow } from "../format";
+
+/** D8 主钮旁预估行（/api/budget estimate 段渲染）：normal_cny 与 etd 双在场才出
+ *  数字行；任一缺 → 「预估 —」（名册缺/空/未采集 = 服务端全 null 的同义面）。 */
+function RunEstimateLine({ estimate }: { estimate: BudgetEstimate | null | undefined }) {
+  const normal = estimate?.normal_cny ?? null;
+  const etd = estimate?.etd_minutes ?? null;
+  const lo = Array.isArray(etd) && typeof etd[0] === "number" ? etd[0] : null;
+  const hi = Array.isArray(etd) && typeof etd[1] === "number" ? etd[1] : null;
+  const ok =
+    typeof normal === "number" &&
+    Number.isFinite(normal) &&
+    typeof lo === "number" &&
+    typeof hi === "number" &&
+    Number.isFinite(lo) &&
+    Number.isFinite(hi);
+  return (
+    <span className="run-estimate muted small" data-testid="run-estimate">
+      {ok
+        ? `预估 ≈${fmtCny(normal)}（上限口径）· 约 ${lo}~${hi} 分钟`
+        : "预估 —"}
+    </span>
+  );
+}
+
+/** D8「分层跑」次级菜单：ai_audience 从平铺位移入本菜单，引导文案原样保留
+ *  （采集动作的钮在各自页侧——哪个页面数据由哪个动作产出，菜单只做导航）。 */
+function TieredRunsMenu() {
+  return (
+    <details className="tiered-runs" data-testid="tiered-runs">
+      <summary>分层跑（采集 / AI 分 kind，按需补跑）</summary>
+      <div className="tiered-runs-body">
+        <KindRunButton
+          kind="ai_audience"
+          note="认知层：不复采。基于现有各舰长感知（幂等缓存，已完成的自动复用）重推整体态势与行动建议——舰长感知齐时秒级收。"
+        />
+        <p className="muted small tiered-guide">
+          主播采集 → <a href="#/live">直播数据页</a>（重抓 profile/投稿/回放，本页数据源）
+        </p>
+        <p className="muted small tiered-guide">
+          舰长采集 → <a href="#/viewers">舰长列表页</a>（重拉大航海名单 + 每人近态）
+        </p>
+        <p className="muted small tiered-guide">
+          舰长 AI 分析 → <a href="#/viewers">舰长列表页</a>（逐舰长感知，哈希失效驱动）
+        </p>
+      </div>
+    </details>
+  );
+}
 
 export function Streamer({ roomId }: { roomId: string }) {
   const overview = useQuery({
@@ -26,6 +74,12 @@ export function Streamer({ roomId }: { roomId: string }) {
     queryKey: ["viewers", roomId],
     queryFn: () => api.viewers(roomId),
     enabled: overview.data !== undefined && !overview.isError,
+  });
+  // D8：主钮旁预估行——/api/budget 的 estimate 段（RunTracker 终态失效会连它一起刷新）。
+  // 失败/空态不走错误面：无预估也只是「预估 —」。
+  const budget = useQuery({
+    queryKey: ["budget"],
+    queryFn: () => api.budget(),
   });
 
   if (overview.isLoading) {
@@ -48,6 +102,8 @@ export function Streamer({ roomId }: { roomId: string }) {
         <h3>感知动作</h3>
         <div className="action-bar" data-testid="room-actions">
           <RunButton viewerCount={null} />
+          <RunEstimateLine estimate={budget.data?.estimate ?? null} />
+          <TieredRunsMenu />
         </div>
       </section>
     );
@@ -94,9 +150,9 @@ export function Streamer({ roomId }: { roomId: string }) {
         nameOf={new Map((viewers.data ?? []).map((row) => [row.uid, row.name ?? row.uid]))}
       />
 
-      {/* Z4d 动作落页：本页住「全量感知」（敏感谨慎钮，双段确认）与「主播 AI 分析」
-          （认知层聚合，不重采）。采集面动作：主播采集在「直播数据」页、舰长采集在
-          「舰长列表」页——钮随身段（哪个页面消费哪个产物）。 */}
+      {/* Z4d 动作落页：本页住「全量感知」（敏感谨慎钮，双段确认）与「分层跑」次级菜单
+          （D8：主播 AI 分析从平铺位移入菜单；采集面动作仍在各自页侧——主播采集在
+          「直播数据」页、舰长采集与舰长 AI 在「舰长列表」页，菜单内只做引导）。 */}
       <section className="section card" data-testid="room-actions">
         <div className="section-title">
           <h2>感知动作</h2>
@@ -108,10 +164,8 @@ export function Streamer({ roomId }: { roomId: string }) {
               typeof collection.viewer_count === "number" ? collection.viewer_count : null
             }
           />
-          <KindRunButton
-            kind="ai_audience"
-            note="认知层：不复采。基于现有各舰长感知（幂等缓存，已完成的自动复用）重推整体态势与行动建议——舰长感知齐时秒级收。"
-          />
+          <RunEstimateLine estimate={budget.data?.estimate ?? null} />
+          <TieredRunsMenu />
         </div>
       </section>
 

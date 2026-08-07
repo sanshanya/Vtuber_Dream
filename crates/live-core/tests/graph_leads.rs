@@ -56,6 +56,8 @@ fn row(key: &str, lead_type: &str, status: LeadStatus) -> LedgerRow {
         status,
         yield_count: 0,
         resolution_note: String::new(),
+        reject_chips: Vec::new(),
+        reject_note: String::new(),
     }
 }
 
@@ -86,7 +88,7 @@ fn v7_fresh_schema_has_discovery_leads_and_episode_lead_id() {
     // 本钉只钉「不低于 7」的下界，不与后续 bump 互相锁死。
     // 编译期断言（inline const）：常量比较恒真会触 assertions_on_constants，
     // 故须在 const 块内评估——回退 <7 直接编译不过，运行时零成本。
-    const { assert!(GRAPH_SCHEMA_VERSION >= 7) }
+    const { assert!(GRAPH_SCHEMA_VERSION >= 9) }
     let store = mem_store();
     let leads_cols: Vec<String> = store
         .conn
@@ -110,6 +112,8 @@ fn v7_fresh_schema_has_discovery_leads_and_episode_lead_id() {
         "status",
         "yield_count",
         "resolution_note",
+        "reject_chips_json",
+        "reject_note",
     ] {
         assert!(
             leads_cols.iter().any(|c| c == col),
@@ -220,8 +224,23 @@ fn v6_db_upgrades_in_place_and_preserves_data() {
         .unwrap();
     assert_eq!(
         version, GRAPH_SCHEMA_VERSION,
-        "升级后 user_version 必须 = 7"
+        "升级后 user_version 必须 = GRAPH_SCHEMA_VERSION"
     );
+    // D9：v6→v9 连锁段就绪——拒因两列在升级库上可按 NULL 态写出/读回
+    let rejects_cols: Vec<String> = store
+        .conn
+        .prepare("PRAGMA table_info(discovery_leads)")
+        .unwrap()
+        .query_map([], |r| r.get::<_, String>(1))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    for col in ["reject_chips_json", "reject_note"] {
+        assert!(
+            rejects_cols.iter().any(|c| c == col),
+            "v6 连锁升级后 discovery_leads 缺列 {col}: {rejects_cols:?}"
+        );
+    }
     // 原数据完好
     let node_name: String = store
         .conn
@@ -594,6 +613,8 @@ fn p0_3_annex_zero_new_byte_identical_and_link_pinnable() {
         status: LeadStatus::Consumed,
         yield_count: 2,
         resolution_note: String::new(),
+        reject_chips: Vec::new(),
+        reject_note: String::new(),
     };
     let pending = row("k-pend", "viewer", LeadStatus::PendingApproval);
     store
@@ -739,4 +760,121 @@ fn p0_3_annex_total_chars_cap_and_line_boundary_cut() {
         "annex 总长度不得超过段包，实测 {}",
         annex.chars().count()
     );
+}
+
+// ---------------------------------------------------------------------------
+// D9/R2-批6：reject 留档——chips/note 列读写、NULL=全空合法态、旧 JSONL 兼容
+// ---------------------------------------------------------------------------
+
+/// insert/update 双写点 + 读回：chips 走 JSON 文本列、note 走宽松文本列；
+/// 全空拒因 → 两列 NULL（不是空串/空数组）——规格的「全空合法：NULL/NULL」。
+#[test]
+fn reject_fields_roundtrip_and_null_all_empty() {
+    let store = mem_store();
+    let mut rejected = row("k1", "video", LeadStatus::Rejected);
+    rejected.reject_chips = vec!["太泛".into(), "做不了".into()];
+    rejected.reject_note = "重复提出，暂缓".into();
+    store.insert_lead_rows(&[&rejected], false).unwrap();
+    let all_empty = row("k2", "creator", LeadStatus::Rejected);
+    store.insert_lead_rows(&[&all_empty], false).unwrap();
+
+    let rows: Vec<_> = store
+        .conn
+        .prepare("SELECT dedupe_key, reject_chips_json, reject_note FROM discovery_leads")
+        .unwrap()
+        .query_map([], |r| {
+            Ok((
+                r.get::<_, String>(0)?,
+                r.get::<_, Option<String>>(1)?,
+                r.get::<_, Option<String>>(2)?,
+            ))
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let by_key = |key: &str| rows.iter().find(|(k, _, _)| k == key).unwrap();
+    let (_, chips_json, note) = by_key("k1");
+    assert_eq!(chips_json.as_deref(), Some("[\"太泛\",\"做不了\"]"));
+    assert_eq!(note.as_deref(), Some("重复提出，暂缓"));
+    assert_eq!(by_key("k2").1, None, "全空拒因 chip 面必须落 NULL");
+    assert_eq!(by_key("k2").2, None, "全空拒因注记面必须落 NULL");
+
+    // 读回面：None → 空数组/空串（LedgerRow 形态与 serde default 面同源）
+    let k1 = leads::read_rows(&store)
+        .unwrap()
+        .iter()
+        .find(|r| r.dedupe_key == "k1")
+        .unwrap()
+        .clone();
+    assert_eq!(
+        k1.reject_chips,
+        vec!["太泛".to_string(), "做不了".to_string()]
+    );
+    assert_eq!(k1.reject_note, "重复提出，暂缓");
+    let k2 = leads::read_rows(&store)
+        .unwrap()
+        .iter()
+        .find(|r| r.dedupe_key == "k2")
+        .unwrap()
+        .clone();
+    assert_eq!(k2.reject_chips, Vec::<String>::new());
+    assert_eq!(k2.reject_note, "");
+
+    // update 写回点同口径：改拒因再读回全等；清空 → 回到 NULL 空态
+    let mut updated = k1.clone();
+    updated.reject_chips = vec![]; // 清空回到合法全空
+    updated.reject_note = String::new();
+    store.update_lead_row(&updated).unwrap();
+    let (chips_json, note) = {
+        let mut stmt = store
+            .conn
+            .prepare(
+                "SELECT reject_chips_json, reject_note FROM discovery_leads WHERE dedupe_key='k1'",
+            )
+            .unwrap();
+        stmt.query_row([], |row| {
+            Ok((
+                row.get::<_, Option<String>>(0)?,
+                row.get::<_, Option<String>>(1)?,
+            ))
+        })
+        .unwrap()
+    };
+    assert_eq!(chips_json, None, "update 清空后 chip 列回 NULL");
+    assert_eq!(note, None, "update 清空后注记列回 NULL");
+}
+
+/// 旧 .bak JSONL（v8 冻结契约：无 reject 字段）仍可解析/迁移——serde default
+/// 兼容面：缺键 → 空数组 + 空串（后续 reject 端点可正常写回）。
+#[test]
+fn legacy_jsonl_without_reject_fields_still_parses() {
+    let store = mem_store();
+    let dir = tmp_dir("legacy-reject");
+    // 手写 v8 期契约文本（无 reject_chips/reject_note 键）
+    let legacy_line = r#"{"dedupe_key":"k-legacy","type":"video","locator":"BV1","motivation":"m","expected_signal":"s","priority":"high","evidence_ids":["e1"],"viewer_id":"u","first_seen_run_id":"run:a","created_at":"t","status":"pending_approval","yield_count":0,"resolution_note":""}"#;
+    std::fs::write(leads::ledger_path(&dir), format!("{legacy_line}\n")).unwrap();
+    let imported = leads::migrate_jsonl(&store, &dir).unwrap();
+    assert_eq!(imported, 1);
+    let row = leads::read_rows(&store)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(row.dedupe_key, "k-legacy");
+    assert_eq!(row.reject_chips, Vec::<String>::new(), "缺键 → 空拒因数组");
+    assert_eq!(row.reject_note, "", "缺键 → 空注记");
+    // reject 写回路径对旧行可通（一拒写账+记全字段，键不变）
+    let mut row = row;
+    row.status = LeadStatus::Rejected;
+    row.reject_chips = vec!["太泛".into()];
+    row.reject_note = "旧账新判".into();
+    store.update_lead_row(&row).unwrap();
+    let again = leads::read_rows(&store)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap();
+    assert_eq!(again.status, LeadStatus::Rejected);
+    assert_eq!(again.reject_chips, vec!["太泛".to_string()]);
+    assert_eq!(again.reject_note, "旧账新判");
 }

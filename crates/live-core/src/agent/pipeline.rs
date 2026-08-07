@@ -621,6 +621,12 @@ fn ledger_annex(store: &Store, viewer: Option<&str>, prompt: String) -> String {
         prompt.push('\n');
         prompt.push_str(&lines.join("\n"));
     }
+    // D9/R2-批6：拒绝回喂聚合线（零被拒 → None：旧版逐字节不变；rejected 只
+    // 折叠白名单 chip 计数 + 最近注记截字——平台事实不可被 AI 改写，仅携带）。
+    if let Ok(Some(line)) = leads::reject_annex_line(store) {
+        prompt.push('\n');
+        prompt.push_str(&line);
+    }
     prompt
 }
 

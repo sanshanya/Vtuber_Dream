@@ -21,10 +21,16 @@
 //! 2. v7→v8 纯增量就地升级（graph_runs 补两列），沿用升格通道；
 //!    v6 连锁两段（v6→v7→v8），v6 以下仍吃“删除重跑”政策。
 //!
+//! schema v9（D9/R2-批6 leads 审批增强）：discovery_leads 增 `reject_chips_json`
+//! 与 `reject_note` 两列（拒绝留档面——reject 端点一击写账）；
+//! 1. v8→v9 纯增量就地升级（补两列），沿用列存在性探测通道；所有 NULL 为
+//!    「无拒因」的合法空态（全空允许），列不带 DEFAULT；
+//! 2. v6 连锁变长三段（v6→v7→v8→v9），v6 以下仍吃“删除重跑”政策。
+//!
 //! 幂等语义与 v5 一致：节点属性合并保鲜、活跃边查重-合并、evidence 合并且去重保序、
 //! confidence 取 max、first_seen 不变。
 //!
-//! 文件拆分：本文件 = schema v8 / 连接与事务 / 运行段 / 共享辅助；
+//! 文件拆分：本文件 = schema v9 / 连接与事务 / 运行段 / 共享辅助；
 //! nodes.rs / edges.rs / entities.rs / mentions.rs / leads_tbl.rs / maintenance.rs
 //! 各自一类受控写入。
 
@@ -45,8 +51,8 @@ use crate::episodes::json_canon;
 pub use maintenance::{MAINTENANCE_RUN_MODEL, MaintenanceError, MergeOutcome, SplitOutcome};
 pub use mentions::mention_id_of;
 
-pub const GRAPH_SCHEMA_VERSION: i64 = 8;
-/// 最低可就地升级的源版本（v6 连锁两段到 v8；纯增量迁移）；更低的版本仍吃「删除重跑」政策。
+pub const GRAPH_SCHEMA_VERSION: i64 = 9;
+/// 最低可就地升级的源版本（v6 连锁三段到 v9；纯增量迁移）；更低的版本仍吃「删除重跑」政策。
 pub const GRAPH_SCHEMA_VERSION_MIGRATABLE: i64 = 6;
 /// Python GRAPH_QUERY_LIMIT：任何查询返回上限。
 pub const GRAPH_QUERY_LIMIT: i64 = 500;
@@ -164,6 +170,8 @@ CREATE TABLE IF NOT EXISTS episodes (
 -- G2（design §9.2 行 254）：M4.x leads.jsonl 账本的表形态——字段照抄 LedgerRow
 -- （evidence_ids 落 JSON 文本列），dedupe_key 主键即幂等唯一键，
 -- first_seen_run_id 真外键钉溯源锚点；status 面是 leads::status_name 的蛇形字面。
+-- D9：reject_chips_json/reject_note 为拒绝留档面——chip 落 JSON 数组文本列
+-- （无拒因 → NULL），note 预留宽松文本（无注记 → NULL）；全空即 NULL/NULL 合法态。
 CREATE TABLE IF NOT EXISTS discovery_leads (
     dedupe_key TEXT PRIMARY KEY,
     lead_type TEXT NOT NULL,
@@ -177,7 +185,9 @@ CREATE TABLE IF NOT EXISTS discovery_leads (
     created_at TEXT NOT NULL,
     status TEXT NOT NULL,
     yield_count INTEGER NOT NULL DEFAULT 0,
-    resolution_note TEXT NOT NULL DEFAULT ''
+    resolution_note TEXT NOT NULL DEFAULT '',
+    reject_chips_json TEXT,
+    reject_note TEXT
 );
 
 CREATE TABLE IF NOT EXISTS mentions (
@@ -234,6 +244,7 @@ CREATE INDEX IF NOT EXISTS idx_graph_runs_kind ON graph_runs(kind, completed_at)
 
 /// v6→v7 就地升级的迁移段（SCHEMA_SQL 的增量面；新库两种路径殊途同归——
 /// 本迁移用 IF NOT EXISTS / 列存在性探测保证两段 SQL 叠加幂等）。
+/// 列面与 SCHEMA_SQL 同形（含 D9 的两列——老库走探测段补列，殊途同归）。
 const MIGRATE_V6_TO_V7_SQL: &str = r#"
 CREATE TABLE IF NOT EXISTS discovery_leads (
     dedupe_key TEXT PRIMARY KEY,
@@ -248,7 +259,9 @@ CREATE TABLE IF NOT EXISTS discovery_leads (
     created_at TEXT NOT NULL,
     status TEXT NOT NULL,
     yield_count INTEGER NOT NULL DEFAULT 0,
-    resolution_note TEXT NOT NULL DEFAULT ''
+    resolution_note TEXT NOT NULL DEFAULT '',
+    reject_chips_json TEXT,
+    reject_note TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_discovery_leads_status ON discovery_leads(status, first_seen_run_id);
 "#;
@@ -343,9 +356,11 @@ impl Store {
     }
 
     /// 连锁就地升级：v6→v7（discovery_leads 建表 + episodes 补 lead_id）→
-    /// v8（graph_runs 补 kind/detail_json）。各段均幂等（IF NOT EXISTS + 列探测），
-    /// v6 源库两段连跑殊途同归；纯增量、不动既有行——「删除重跑」政策对纯增量
-    /// 版本升格让位（数据零成本保全）。
+    /// v8（graph_runs 补 kind/detail_json）→ v9（discovery_leads 补拒因两列）。
+    /// 各段均幂等（IF NOT EXISTS + 列探测），v6 源库多段连跑殊途同归；
+    /// 纯增量、不动既有行——「删除重跑」政策对纯增量版本升格让位（数据零成本保全）。
+    /// 任一 ALTER 失败即整体报错停火（Store::open 直接失败，半成品不落盘——
+    /// WAL + 事务保证重跑从清洁起点再走）。
     fn migrate_to_current(&self) -> Result<()> {
         self.conn.execute_batch(MIGRATE_V6_TO_V7_SQL)?;
         for (table, column, alter) in [
@@ -363,6 +378,18 @@ impl Store {
                 "graph_runs",
                 "detail_json",
                 "ALTER TABLE graph_runs ADD COLUMN detail_json TEXT",
+            ),
+            // D9：v8→v9 段 = discovery_leads 拒绝留档两列（NULL=合法空态，不带 DEFAULT，
+            // 与 SCHEMA_SQL/MIGRATE_V6_TO_V7_SQL 的 DDL 面完全一致）。
+            (
+                "discovery_leads",
+                "reject_chips_json",
+                "ALTER TABLE discovery_leads ADD COLUMN reject_chips_json TEXT",
+            ),
+            (
+                "discovery_leads",
+                "reject_note",
+                "ALTER TABLE discovery_leads ADD COLUMN reject_note TEXT",
             ),
         ] {
             let exists: Option<i64> = self

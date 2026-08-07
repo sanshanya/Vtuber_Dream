@@ -12,6 +12,11 @@ use super::{AppResult, AppState, JsonBody, fail, load_config};
 
 /// D9：PUT 单值长度上限。
 pub const MAX_PUT_VALUE_CHARS: usize = 4096;
+/// D8：主钮旁预估的墙钟粗估常量（秒）。纯体验提示非承诺——实测数据出现后校准：
+/// 单人含 AI 段墙钟的 lo/hi 带宽，加 audience 段固定 90s 底（22 人 → 17~35 分钟）。
+pub const PER_VIEWER_WALL_SECS_LO: u64 = 40;
+pub const PER_VIEWER_WALL_SECS_HI: u64 = 90;
+pub const AUDIENCE_WALL_SECS_BASE: u64 = 90;
 /// D6：允许的写入键白名单（(顶层段, 键)）——此后扩展需要同名加键 + 测试。
 pub const WRITABLE_CONFIG_KEYS: [(&str, &str); 5] = [
     ("bilibili", "cookie"),
@@ -240,6 +245,10 @@ pub(super) async fn config_put(
 /// 月界 = ts 前 7 字符 "YYYY-MM"（ISO 时间戳 +00:00，前缀比较即 UTC 月界，
 /// 与中国时区 +8 的「自然月」不同，刻意选 UTC——账本口径前后端一致不动摇）；
 /// 文件缺失/全坏 → 全零 + last_run=null。`budget_cny` = config 预算（None → null）。
+///
+/// D8 追加：`estimate` 段 = 主钮旁 D3 预估（normal_cny 走 budget::estimate_run_cost_cny
+/// 上限口径、briefing_cny 恰 audience 平段、etd_minutes 为常量带宽→分钟）；名册
+/// 缺/空 → 四个字段全 null（前端「预估 —」不臆造）。
 pub(super) async fn budget_get(State(state): State<AppState>) -> AppResult<Json<Value>> {
     let config = load_config(&state)?;
     let records: Vec<Value> = std::fs::read_to_string(config.output_dir.join("history.jsonl"))
@@ -274,11 +283,40 @@ pub(super) async fn budget_get(State(state): State<AppState>) -> AppResult<Json<
             "spend_mode": record["spend_mode"],
         })
     });
+    // D8：主钮旁预估 = 名册口径（collection.json 的 viewer_count）+ 闸同公式上限价 +
+    // 墙钟粗估带宽。名册缺文件/非数/为空 → estimate 全 null（前端落「预估 —」不臆造）。
+    let roster_viewers = live_core::storage::read_json(&config.output_dir.join("collection.json"))
+        .ok()
+        .flatten()
+        .and_then(|collection| collection["viewer_count"].as_i64());
+    let estimate = match roster_viewers {
+        Some(count) if count > 0 => {
+            let normal_cny = live_core::agent::budget::estimate_run_cost_cny(count as usize, true);
+            let briefing_cny = live_core::agent::budget::estimate_run_cost_cny(0, true);
+            // 分钟数向上取整，避免把「余下的不足一分钟」低估成已完成。
+            let secs_to_min = |secs: u64| secs.div_ceil(60);
+            let lo = secs_to_min(count as u64 * PER_VIEWER_WALL_SECS_LO + AUDIENCE_WALL_SECS_BASE);
+            let hi = secs_to_min(count as u64 * PER_VIEWER_WALL_SECS_HI + AUDIENCE_WALL_SECS_BASE);
+            json!({
+                "roster_viewers": count,
+                "normal_cny": normal_cny,
+                "briefing_cny": briefing_cny,
+                "etd_minutes": [lo, hi],
+            })
+        }
+        _ => json!({
+            "roster_viewers": null,
+            "normal_cny": null,
+            "briefing_cny": null,
+            "etd_minutes": null,
+        }),
+    };
     Ok(Json(json!({
         "budget_cny": config.ai.run_budget_cny,
         "month": month,
         "month_cost_cny": month_cost_cny,
         "month_runs": month_runs,
         "last_run": last_run,
+        "estimate": estimate,
     })))
 }

@@ -273,3 +273,50 @@ table.data-table td{vertical-align:middle}
    （禁 display:none/visibility:hidden，二者会连焦点与读屏一起灭）。 */
 .graph-a11y{position:absolute;width:1px;height:1px;margin:-1px;padding:0;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap;border:0;list-style:none}
 .graph-a11y li:focus{outline:2px solid var(--accent);outline-offset:1px}
+
+/* ---- R2 批6 D7/D8 追加段：时间戳语义徽标 + 分层跑菜单 + 主钮旁预估 ---- */
+/* D7：Episode 行时间戳徽标（发布于/采集于）与常规 badge 同形，不另造强调。 */
+.episode-ts{white-space:nowrap}
+/* D8「分层跑」次级菜单：details/disclosure 小家——summary 是触发面，body 竖排。
+   .action-bar 内与主钮同列，默认收起不抢「主钮唯一」的焦点。 */
+.tiered-runs{border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2);margin-top:2px}
+.tiered-runs summary{cursor:pointer;padding:8px 12px;font-weight:600;color:var(--text)}
+.tiered-runs summary:hover{color:var(--accent)}
+.tiered-runs[open] summary{border-bottom:1px dashed var(--line)}
+.tiered-runs-body{display:flex;flex-direction:column;gap:8px;padding:10px 12px}
+.tiered-runs-body .tiered-guide{margin:0;line-height:1.6}
+.tiered-guide a{color:var(--accent);text-decoration:none}
+.tiered-guide a:hover{text-decoration:underline}
+/* D8：主钮旁预估行——一行小字（上限口径 + 墙钟带宽），缺席落「预估 —」不臆造。 */
+.run-estimate{line-height:1.6}
+/* R2 批6 D10：舰长卡→关系卡四微件的微行 */
+.micro-line{font-size:var(--fs-xs);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
+/* ---- R2 批6 D11 追加段：存档页（存活 + 周健康 + 里程碑日历） ---- */
+/* 存活天数：数字自豪位（27px 在 display 白名单 stat 档内），副注灰行不压迫数字。 */
+.archive-alive-days{font-size:27px;font-weight:700;line-height:1.2}
+.archive-health dd.muted{font-style:italic}
+/* 里程碑日历：行内状态色左边条——done 绿（已达成）/ pending 琥珀（还差）/
+   unknown 灰（未就位措辞，行内字也压灰以示非实据），同 briefing-card 左条语法。 */
+.archive-milestones{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
+.archive-milestone{display:flex;align-items:baseline;gap:12px;padding:8px 12px;border:1px solid var(--line);border-left-width:4px;border-radius:var(--r-md);background:var(--panel2)}
+.archive-milestone strong{white-space:nowrap}
+.archive-milestone span{color:var(--text)}
+.archive-milestone.done{border-left-color:var(--good)}
+.archive-milestone.pending{border-left-color:var(--warn)}
+.archive-milestone.unknown{border-left-color:var(--line)}
+.archive-milestone.unknown span{color:var(--muted)}
+/* D9/R2-批6：线索拒绝面——pending 持有人分组折叠、行内拒因区、rejected 明细徽标 */
+.lead-groups{display:flex;flex-direction:column;gap:8px;margin-top:8px}
+.lead-group{border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2)}
+.lead-group-summary{cursor:pointer;padding:6px 10px;font-weight:600;color:var(--text);display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+.lead-group[open] .lead-group-summary{border-bottom:1px solid var(--line)}
+.lead-group .delta-list{margin:4px 0;padding:4px 10px 8px}
+.lead-reasons{margin-top:4px}
+.lead-reasons>summary{cursor:pointer;display:inline-block;font-size:var(--fs-xs);color:var(--muted);margin-left:8px}
+.lead-reasons-body{margin:4px 0 2px 8px;display:flex;flex-wrap:wrap;gap:6px;align-items:center}
+.lead-reasons-body .badge.on{border-color:var(--warn);background:var(--warn);color:#fff}
+.lead-note{flex:1 1 180px;min-width:140px;padding:2px 8px;border:1px solid var(--line);border-radius:999px;font-size:var(--fs-xs);background:var(--panel)}
+.rejected-list{margin:4px 8px 8px;padding:0;list-style:none;font-size:var(--fs-sm)}
+.rejected-list li{margin:2px 0}
+details.badge>summary{list-style:none}
+details.badge>summary::-webkit-details-marker{display:none}

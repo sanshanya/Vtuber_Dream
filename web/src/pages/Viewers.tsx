@@ -99,6 +99,8 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
             <th>uid</th>
             <th>采集于</th>
             <th>Perception</th>
+            {/* R2 批6 D10（舰长卡→关系卡）：四微件整列。 */}
+            <th>关系</th>
             <th>入口</th>
           </tr>
         </thead>
@@ -131,6 +133,28 @@ function ViewerTable({ rows }: { rows: ViewerRow[] }) {
                 </span>
                 {/* Z5c 时效位：旧结论保留作参考但信源已翻 → 亮标不重删（重跑才落新结论）。 */}
                 {row.ai_stale === true && <AiStaleBadge testId="ai-stale-badge" />}
+              </td>
+              {/* R2 批6 D10：四微件——缺件落「未知」微行（设计钉同款狠法：无数据
+                  是有信息的状态，不补文案、两态可辨）。身份一句盖 AI 徽标不入事实色。 */}
+              <td data-testid={`relation-widgets-${row.uid}`}>
+                <div className="micro-line">
+                  {row.visit_count != null ? `第 ${row.visit_count} 次来` : <span className="muted small">第几次来：未知</span>}
+                </div>
+                <div className="micro-line">
+                  {row.days_since_last != null ? `距上次 ${row.days_since_last} 天` : <span className="muted small">距上次：未知</span>}
+                </div>
+                <div className="micro-line" data-testid={`identity-line-${row.uid}`}>
+                  {row.identity_line ? (
+                    <>
+                      <span className="badge ai">AI</span> {row.identity_line}
+                    </>
+                  ) : (
+                    <span className="muted small">身份一句：未知</span>
+                  )}
+                </div>
+                <div className="micro-line">
+                  {row.latest_activity_date != null ? `最新动态 ${row.latest_activity_date}` : <span className="muted small">最新动态：未知</span>}
+                </div>
               </td>
               <td>
                 <a href={`#/viewers/${encodeURIComponent(row.uid)}/tree`}>舰长态势</a> ·{" "}

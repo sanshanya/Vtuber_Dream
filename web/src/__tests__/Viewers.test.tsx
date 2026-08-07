@@ -82,6 +82,45 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("Viewers D10 关系四微件（R2 批6：缺件=未知微行 + 身份一句盖 AI 徽标）", () => {
+  it("全件在场：第几次来/距上次/身份一句（AI 徽标）/最新动态四位落形", async () => {
+    stubFetch(
+      JSON.stringify([
+        viewerRow({
+          visit_count: 3,
+          days_since_last: 2,
+          identity_line: "异环铁粉，每次开播必打卡",
+          latest_activity_date: "2026-08-05",
+        }),
+      ]),
+    );
+    renderViewers();
+    const cell = await screen.findByTestId("relation-widgets-1001");
+    expect(cell.textContent).toContain("第 3 次来");
+    expect(cell.textContent).toContain("距上次 2 天");
+    expect(cell.textContent).toContain("异环铁粉，每次开播必打卡");
+    expect(cell.textContent).toContain("最新动态 2026-08-05");
+    const identity = screen.getByTestId("identity-line-1001");
+    expect(identity.querySelector(".badge.ai")).not.toBeNull();
+  });
+
+  it("部分缺件：缺件落「未知」微行、在场件不连坐；无 AI 徽标可漏", async () => {
+    stubFetch(
+      JSON.stringify([
+        viewerRow({ visit_count: null, days_since_last: null, identity_line: null, latest_activity_date: null }),
+      ]),
+    );
+    renderViewers();
+    const cell = await screen.findByTestId("relation-widgets-1001");
+    expect(cell.textContent).toContain("第几次来：未知");
+    expect(cell.textContent).toContain("距上次：未知");
+    expect(cell.textContent).toContain("身份一句：未知");
+    expect(cell.textContent).toContain("最新动态：未知");
+    const identity = screen.getByTestId("identity-line-1001");
+    expect(identity.querySelector(".badge.ai")).toBeNull();
+  });
+});
+
 describe("Viewers 时效位徽标（Z5c）", () => {
   it("ai_stale=true → 亮「信源已更新·待重判」，且状态徽标本体保留", async () => {
     stubFetch(JSON.stringify([viewerRow({ uid: "1001", ai_stale: true })]));

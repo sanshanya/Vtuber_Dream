@@ -8,7 +8,7 @@
  *   同葬；synthetic 析取的存活面=页脚徽标，App.test 钉着）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { cleanup, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { RunTrackerProvider } from "../components/RunTracker";
@@ -321,5 +321,99 @@ describe("Streamer 舰长 strip 时效位徽标（Z5c）", () => {
     renderStreamer();
     await waitFor(() => expect(screen.getByText("无旧丙")).toBeTruthy());
     expect(screen.queryByTestId("ai-stale-badge-strip")).toBeNull();
+  });
+});
+
+describe("Streamer 感知动作收敛与主钮旁预估（R2 批6 D8）", () => {
+  const base = {
+    room_id: "1790370612",
+    streamer_uid: "3546595083683995",
+    collection: { status: "complete", finished_at: "2026-08-05T00:00:00+00:00", viewer_count: 22 },
+    ai: { status: "complete" },
+  };
+  const estimateBody = {
+    roster_viewers: 22,
+    normal_cny: 34.5,
+    briefing_cny: 1.5,
+    etd_minutes: [17, 35],
+  };
+
+  it("首页主钮唯一性：room-actions 内 primary 按钮计数==1，且是「触发全量感知」", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: base },
+      viewers: { status: 200, body: [] },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByTestId("run-estimate")).toBeTruthy());
+    const actions = screen.getByTestId("room-actions");
+    const primaries = actions.querySelectorAll("button.primary");
+    expect(primaries.length).toBe(1);
+    expect(primaries[0]?.textContent).toContain("触发全量感知");
+  });
+
+  it("分层跑次级菜单：收纳 ai_audience 触发钮 + 三个页面引导项", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: base },
+      viewers: { status: 200, body: [] },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByTestId("tiered-runs")).toBeTruthy());
+    const tiered = screen.getByTestId("tiered-runs");
+    // BriefingCard 内还有同标签的 ai_audience 触发钮——菜单内的必须在本容器断言。
+    expect(within(tiered).getByRole("button", { name: "主播 AI 分析" })).toBeTruthy();
+    expect(tiered.querySelectorAll(".tiered-guide").length).toBe(3);
+    const guideHrefs = Array.from(tiered.querySelectorAll<HTMLAnchorElement>(".tiered-guide a")).map(
+      (a) => a.getAttribute("href"),
+    );
+    expect(guideHrefs).toEqual(["#/live", "#/viewers", "#/viewers"]);
+  });
+
+  it("主钮旁预估行数字钉：normal_cny/etd 在场 → 「预估 ≈¥34.50（上限口径）· 约 17~35 分钟」", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: base },
+      viewers: { status: 200, body: [] },
+      budget: {
+        status: 200,
+        body: {
+          budget_cny: null,
+          month: "2026-08",
+          month_cost_cny: 0,
+          month_runs: 0,
+          last_run: null,
+          estimate: estimateBody,
+        },
+      },
+    });
+    renderStreamer();
+    await waitFor(() =>
+      expect(screen.getByTestId("run-estimate").textContent).toBe(
+        "预估 ≈¥34.50（上限口径）· 约 17~35 分钟",
+      ),
+    );
+  });
+
+  it("主钮旁预估行空态：服务端估计全 null → 「预估 —」不臆造", async () => {
+    stubFetchMap({
+      overview: { status: 200, body: base },
+      viewers: { status: 200, body: [] },
+      budget: {
+        status: 200,
+        body: {
+          budget_cny: null,
+          month: "2026-08",
+          month_cost_cny: 0,
+          month_runs: 0,
+          last_run: null,
+          estimate: {
+            roster_viewers: null,
+            normal_cny: null,
+            briefing_cny: null,
+            etd_minutes: null,
+          },
+        },
+      },
+    });
+    renderStreamer();
+    await waitFor(() => expect(screen.getByTestId("run-estimate").textContent).toBe("预估 —"));
   });
 });

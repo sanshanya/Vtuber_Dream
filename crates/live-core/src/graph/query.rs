@@ -682,3 +682,48 @@ fn pair_key(row: &Map<String, Value>) -> String {
         row.get("target_id").and_then(Value::as_str).unwrap_or("")
     )
 }
+
+/// D10（O-2 列表面：舰长卡→关系卡）出勤二数：`(场次到访计数, 末次到场 unix_ts)`。
+///
+/// 口径：只认 `_room` 语料三条 live_ws_* 轨（D1 场次窗是「她来播的时候他在」的
+/// 唯一主源；回放弹幕轨道是历史重放，不算「来」）。无 WS 记录 → (0, None)——
+/// 前端落「未知」而不是 0（没有在播窗的数据 ≠ 从没来过）。
+pub fn room_presence(store: &Store, uid: &str) -> Result<(i64, Option<i64>)> {
+    let row = select_all(
+        store,
+        "SELECT COUNT(DISTINCT json_extract(platform_facts_json,'$.session.rid')) AS visits, \
+                MAX(CAST(json_extract(platform_facts_json,'$.ts') AS INTEGER)) AS last_ts \
+         FROM episodes \
+         WHERE viewer_id = '_room' \
+           AND source IN ('live_ws_danmaku','live_ws_sc','live_ws_entry') \
+           AND json_extract(platform_facts_json,'$.sender_uid_mid') = ?",
+        vec![uid.to_string().into()],
+    )?;
+    let visits = row
+        .first()
+        .and_then(|r| r.get("visits"))
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let last_ts = row
+        .first()
+        .and_then(|r| r.get("last_ts"))
+        .and_then(Value::as_i64);
+    Ok((visits, last_ts))
+}
+
+/// D10：该观众名下最新条目的发布日期（published_at 恒 ISO 或缺失——MAX 字序即
+/// 时序，舱内统一 now_iso 纪律下成立；全缺 → None）。
+pub fn latest_published_at(store: &Store, viewer_id: &str) -> Result<Option<String>> {
+    let row = select_all(
+        store,
+        "SELECT MAX(published_at) AS latest FROM episodes \
+         WHERE viewer_id = ? AND published_at != ''",
+        vec![viewer_id.to_string().into()],
+    )?;
+    Ok(row
+        .first()
+        .and_then(|r| r.get("latest"))
+        .and_then(Value::as_str)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string))
+}
