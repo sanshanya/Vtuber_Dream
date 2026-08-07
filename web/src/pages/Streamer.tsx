@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { api, isApiError, type BudgetEstimate } from "../api";
 import { AiStaleBadge } from "../components/AiStaleBadge";
 import { BriefingCard, type EpisodeIndexEntry } from "../components/BriefingCard";
+import { OpportunitiesCard } from "../components/OpportunitiesCard";
 import { Avatar } from "../components/Avatar";
 import { KindRunButton } from "../components/KindRunButton";
 import { RunButton } from "../components/RunButton";
@@ -149,6 +150,10 @@ export function Streamer({ roomId }: { roomId: string }) {
         episodeIndex={(data.episode_index ?? {}) as Record<string, EpisodeIndexEntry>}
         nameOf={new Map((viewers.data ?? []).map((row) => [row.uid, row.name ?? row.uid]))}
       />
+
+      {/* 内容机会卡居三——简报说「该干嘛」，机会卡说「怎么排」（周级动作建议，
+          同源 situation 的 content_opportunities；未生成态交简报卡具名，不单说）。 */}
+      <OpportunitiesCard situationStatus={situation.status} analysis={analysis} />
 
       {/* 动作落页：本页住「全量感知」（敏感谨慎钮，双段确认）与「分层跑」次级菜单
           （主播 AI 分析从平铺位移入菜单；采集面动作仍在各自页侧——主播采集在
