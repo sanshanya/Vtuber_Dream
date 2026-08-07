@@ -25,7 +25,7 @@ live-audience demo [-c config.yaml] [--output dir]       # 只构建合成 Demo 
 
 ## HTTP/CLI 面
 
-- 数据端点：`GET /api/rooms`、`/rooms/{uid}/overview|viewers|graph`、`/rooms/{uid}/viewers/{vid}/tree|graph`、`GET/PUT /api/config`（cookie/api_key 只回存在性布尔，永不回显原文；PUT 走白名单 5 键 + 显式字符串类型 + 原子写盘，非法一律 422 原文件不动）、`GET /api/budget`（本月实耗聚合 + 上次 run 回执 + 主钮旁花费/时长预估）、`GET /api/archive`（存档页数据面：存活天数/周健康/里程碑日历，纯事实派生零 AI）、`POST /rooms/{uid}/leads/{lead_id}/approve|reject`（线索审批/拒绝缝，幂等重放）。
+- 数据端点：`GET /api/rooms`、`/rooms/{uid}/overview|viewers|graph`、`/rooms/{uid}/viewers/{vid}/tree|graph`、`GET/PUT /api/config`（cookie/api_key 只回存在性布尔，永不回显原文；PUT 走白名单 5 键 + 显式字符串类型 + 原子写盘，非法一律 422 原文件不动）、`GET /api/budget`（本月实耗聚合 + 上次 run 回执 + 主钮旁花费/时长预估）、`POST /rooms/{uid}/leads/{lead_id}/approve|reject`（线索审批/拒绝缝，幂等重放）。
 - 触发通道：`POST /api/runs {kind, force?, viewer_uid?, spend_mode?}` → `202 {run_id}`（预算闸：配置 `ai.run_budget_cny` 后，预估花费严格大于预算即 409 阻断，零 LLM 请求落地；`budget.json` 放行/阻断同落账）；轮询 `GET /api/runs/{id}` 看状态机 `queued → collecting → episodes → per_viewer_ai → audience → done | failed(partial, budget_block)` 与最近 50 条 events。
   - kind 六值（动作平面）：`full`（采集+AI 连环）、`viewer`（单舰长，须 viewer_uid）、`collect_streamer` / `collect_guards`（事实层采集，跑完采集即终局）、`ai_viewers`（逐舰长 AI，写盘后即终局，不跑整体态势）/ `ai_audience`（整体态势聚合，幂等缓存自动复用已完成舰长感知）。
   - spend_mode 三值：缺省 `normal`（名册全员上限口径）；`incremental`（只重估已有完整旧结论且输入哈希已变者）；`briefing_only`（跳过舰长扇出，仅整体态势聚合）。
@@ -34,13 +34,12 @@ live-audience demo [-c config.yaml] [--output dir]       # 只构建合成 Demo 
   - 请求体超 64KiB 等抽取层拒绝 → 状态码保留 + `{error}` JSON 信封（含 413）。
   - demo 模式下 `POST /api/runs` 返回静态合成快照（幂等：重复触发返回同一 run_id）。
 - 重采保 AI：`ai/`（认知层缓存）与 `graph/ history/`（长期记忆）三面均永不被采集推倒——采集只重建事实面（viewers/site/shared + 顶层 JSON）；事实面快照仍照旧归档进 `history/snapshots`。旧 AI 结论保留作参考：舰长行带**时效位** `ai_stale`（true=该舰长信源已更新·待重判，哈希翻面即亮、重判即灭；false=时效内；null=无参考旧结论）。失效唯凭 per-舰长 `input_hash`——哈希件刻意摘除观察时刻类过程时间戳（episode `observed_at`、summary 请求数/耗时、`platform_snapshot.captured_at`）：事实相同的两次采集必同哈希，重采 + 重跑 AI 的成本下限 = 零。
-- 面板（`web/`）：hero = 应用品牌 + 主导航（主播介绍/舰长列表/直播数据/线索账本/存档/设置）+ 当前房间 pill（房间=主播，单房间原型）+ 只读 run 状态徽标（含 partial 标记与 events 流）；**动作不落 hero，落页面**（钮随身段——哪个页面消费哪个产物，钮就住哪个页面）：
+- 面板（`web/`）：hero = 应用品牌 + 主导航（主播介绍/舰长列表/直播数据/线索账本/设置）+ 当前房间 pill（房间=主播，单房间原型）+ 只读 run 状态徽标（含 partial 标记与 events 流）；**动作不落 hero，落页面**（钮随身段——哪个页面消费哪个产物，钮就住哪个页面）：
   - 主播介绍页（首屏）：制片人复盘卡居首卡（上一场次复盘，只读 fact 层）；主播卡（头像/签名/平台事实徽标）；**制片人简报卡**（AI 推断层）：situation 终局 `front_brief` 句句带出处（refs chip 可点跳归属观众个人树），三态 = 未生成空缺位（含一键重跑）/ 沉默渠（「本轮证据不足以成简报」= AI 宁缺毋滥的有效结论）/ 就绪（带覆盖时段与生成时间戳），任一舰长信源变则亮 stale 徽标；感知动作区 = 「触发全量感知」唯一主钮（敏感谨慎钮：inline 两段确认，直陈花费上界/409 互斥）+ 钮旁 `预估 ≈¥…（上限口径）· 约 N~M 分钟` 行（名册缺/空落「预估 —」）+「分层跑」次级菜单（主播 AI 分析/三种采集面动作的各页引导）。
   - 舰长列表页 = 舰长采集＋舰长 AI 分析（空池另附单查引导——单查不清场：只覆写目标一人，其余舰长事实/site/shared 原样）+「信源已更新·待重判」时效徽标（列表行/舰长态势页头/主播页舰长条三处同源）+ 关系列四微件（第几次来/距上次 N 天/身份一句（AI 徽标）/最新动态——缺件一律落「未知」，不编数字不补文案）。
   - 舰长态势页 = Episode 时间线（每行恒落「发布于（平台行为时刻）/采集于（我们看到这条的时刻）」语义徽标其一）+ mention 定位高亮。
   - 直播数据页 = 主播采集（本页数据源；`shared/live_records.json` 场次档案：最后一场 vs 上周均值对比 + 全场次表，记录空则显式空态）。
   - 线索账本末位：pending 按持有人分组折叠展示，行级「批准/拒绝」一击即飞（拒绝可携拒因 chip 白名单＋≤80 字注记，全空合法）；组级「全批/全拒」逐行 fan-out；已拒绝徽标展开回看拒因。
-  - 存档页（主导航槽位）：存活天数（历史快照/图库最早场次/直播档案四源取最早锚）、周健康四数（复读率/核心弹幕团/大航海 delta/涨粉 delta）、里程碑日历（满月/百天/周年/千粉/百舰，done/pending/unknown 三态）——纯事实派生零 AI，缺件一律「未就位」不臆造。
   - 图谱（`#/graph` 直链仍可达，不入主导航）：cytoscape 四层调色；整体图默认折叠视图只展 Viewer/Entity/状态-行动主骨架——参数 `?kinds=A,B` 自定义、`?kinds=all` 逃生门回全量；默认视图经内容寻址物化三通道 gz/br + ETag 304。
   - 设置（白名单写入回显，含单次 run 预算 `ai.run_budget_cny`）。
   - 「vs 上轮」delta 为底层参考信号保留在 overview payload，不上页面。

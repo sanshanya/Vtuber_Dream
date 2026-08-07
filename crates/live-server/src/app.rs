@@ -23,14 +23,12 @@ use tower_http::services::ServeDir;
 
 use crate::registry::Registry;
 
-mod archive;
 mod config_routes;
 mod graph_routes;
 mod maintenance;
 mod rooms;
 mod runs;
 
-pub use archive::build_archive_payload;
 pub use config_routes::{MAX_PUT_VALUE_CHARS, WRITABLE_CONFIG_KEYS};
 pub use runs::MAX_VIEWER_UID_CHARS;
 
@@ -161,7 +159,6 @@ pub fn build_app(state: AppState) -> Router {
             get(config_routes::config_get).put(config_routes::config_put),
         )
         .route("/budget", get(config_routes::budget_get))
-        .route("/archive", get(archive::archive_get))
         .route("/runs", axum::routing::post(runs::runs_post))
         .route("/runs/:id", get(runs::run_get))
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))

@@ -364,8 +364,6 @@ export const api = {
       `/rooms/${encodeURIComponent(roomId)}/leads/${encodeURIComponent(leadId)}/reject`,
       reasons,
     ),
-  /** 存档页（存活 + 周健康 + 里程碑日历——纯事实派生面，零 AI）。 */
-  archive: () => request<ArchiveView>("GET", "/archive"),
 };
 
 /** 动作平面：六 kind 字面冻结（与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源）。 */
@@ -389,36 +387,3 @@ export function activeRunIdFrom(message: string): string | null {
   return hit ? hit[1] : null;
 }
 
-// ---------------------------------------------------------------------------
-// 存档页：GET /api/archive 面——里程碑日历规则全在服务端
-// (crates/live-server/src/app/archive.rs) 计算成文，前端纯渲染，仅 presence 判别。
-// ---------------------------------------------------------------------------
-
-/** 周健康四数行：复读率 / 核心弹幕团 / 大航海 delta / 涨粉 delta。 */
-export interface ArchiveHealthRow {
-  /** 服务端固定键：repeat_rate | core_danmaku | guard_delta | follower_delta。 */
-  key: string;
-  label: string;
-  /** 服务端成文：已知态为数字文案，未知态一律「未就位」措辞（铁律：不臆造）。 */
-  value_text: string;
-  known: boolean;
-}
-
-/** 里程碑日历行：满月/百天/千粉/百舰/周年。 */
-export interface ArchiveMilestone {
-  /** 服务端固定键：full_moon | hundred_days | thousand_followers | hundred_guards | anniversary。 */
-  key: string;
-  label: string;
-  /** done（已达成）| pending（差 N 天/粉/舰）| unknown（未就位措辞）。 */
-  state: "done" | "pending" | "unknown";
-  detail_text: string;
-}
-
-export interface ArchiveView {
-  /** 存活天数 = 今 − 最早可得锚点；缺失 → null（前端「存活 —（缺乏起始锚点）」，不臆造）。 */
-  alive_days: number | null;
-  /** 存活起始日 ISO；null = 无锚点。 */
-  alive_since: string | null;
-  weekly_health: ArchiveHealthRow[];
-  milestones: ArchiveMilestone[];
-}

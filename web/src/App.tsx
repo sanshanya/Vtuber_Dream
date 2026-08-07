@@ -25,9 +25,6 @@ const Settings = lazy(() =>
 const GraphPage = lazy(() =>
   import("./pages/GraphPage").then((module) => ({ default: module.GraphPage })),
 );
-const ArchivePage = lazy(() =>
-  import("./pages/ArchivePage").then((module) => ({ default: module.ArchivePage })),
-);
 
 /**
  * footer synthetic 徽标的析取口径（单源）：collection/ai/situation
@@ -42,9 +39,8 @@ export function isSyntheticRun(overview: OverviewView | undefined): boolean {
   );
 }
 
-/** 页面键 → 组件实体装配（ROUTES 数据表在 router.tsx；八页全懒，
- *  Suspense 边界唯一，挂在 <main> 出口——见 App 返回体）。
- *  archive 不在 PageId 联合（router.tsx 未列入）——路由分支见 App() 内段首选判。 */
+/** 页面键 → 组件实体装配（ROUTES 数据表在 router.tsx；七页全懒，
+ *  Suspense 边界唯一，挂在 <main> 出口——见 App 返回体）。 */
 function renderPage(page: PageId, params: string[], roomId: string) {
   switch (page) {
     case "streamer":
@@ -95,10 +91,6 @@ export default function App() {
   } else if (!roomId) {
     // 查询成功但空数组不得悬挂「正在连接」——显式空态。
     page = <div className="notice">服务端未配置任何房间（/api/rooms 返回空）。</div>;
-  } else if (segments[0] === "archive") {
-    // 裁决：存档页承接原「图谱」导航槽位；router.tsx 的
-    // PageId/ROUTES 未列入 archive（TS2678 禁区）——段首选判不吞 matchRoute 判据。
-    page = <ArchivePage />;
   } else if (route === null) {
     page = (
       <div className="notice">
@@ -120,14 +112,13 @@ export default function App() {
               黄箭头行 = 房间名=主播名 + 只读 run 状态徽标）。 */}
           <h1>虚梦 · Vtuber Dream</h1>
           {/* 定稿序 + 裁决：主播介绍（首页）→ 舰长列表 → 直播数据 →
-              线索账本 → 存档 → 设置。图谱退出主导航（#/graph 原路由仍可达，
-              仅不再陈列入口）——存档槽位即原图谱槽位。 */}
+              线索账本 → 设置。图谱退出主导航（#/graph 原路由仍可达，
+              仅不再陈列入口）。 */}
           <nav className="nav">
             <a href="#/">主播介绍</a>
             <a href="#/viewers">舰长列表</a>
             <a href="#/live">直播数据</a>
             <a href="#/leads">线索账本</a>
-            <a href="#/archive">存档</a>
             <a href="#/settings">设置</a>
           </nav>
         </div>

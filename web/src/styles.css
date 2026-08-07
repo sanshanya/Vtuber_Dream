@@ -289,18 +289,6 @@ table.data-table td{vertical-align:middle}
 .micro-line{font-size:var(--fs-xs);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
 /* ---- 追加段：存档页（存活 + 周健康 + 里程碑日历） ---- */
 /* 存活天数：数字自豪位（27px 在 display 白名单 stat 档内），副注灰行不压迫数字。 */
-.archive-alive-days{font-size:27px;font-weight:700;line-height:1.2}
-.archive-health dd.muted{font-style:italic}
-/* 里程碑日历：行内状态色左边条——done 绿（已达成）/ pending 琥珀（还差）/
-   unknown 灰（未就位措辞，行内字也压灰以示非实据），同 briefing-card 左条语法。 */
-.archive-milestones{list-style:none;margin:8px 0 0;padding:0;display:flex;flex-direction:column;gap:8px}
-.archive-milestone{display:flex;align-items:baseline;gap:12px;padding:8px 12px;border:1px solid var(--line);border-left-width:4px;border-radius:var(--r-md);background:var(--panel2)}
-.archive-milestone strong{white-space:nowrap}
-.archive-milestone span{color:var(--text)}
-.archive-milestone.done{border-left-color:var(--good)}
-.archive-milestone.pending{border-left-color:var(--warn)}
-.archive-milestone.unknown{border-left-color:var(--line)}
-.archive-milestone.unknown span{color:var(--muted)}
 /* 线索拒绝面——pending 持有人分组折叠、行内拒因区、rejected 明细徽标 */
 .lead-groups{display:flex;flex-direction:column;gap:8px;margin-top:8px}
 .lead-group{border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2)}

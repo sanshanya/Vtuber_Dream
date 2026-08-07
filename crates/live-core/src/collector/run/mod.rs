@@ -487,7 +487,6 @@ fn collect_inner(
     let streamer = collect_streamer(client, config, &metadata_cache);
     storage::write_json(&config.output_dir.join("streamer.json"), &streamer)
         .map_err(CollectError::Storage)?;
-    append_follower_snapshot(&config.output_dir, &streamer, &mut *emit);
 
     // 房间级语料（M2-B2c：评论区浅存在 + 回放列表/弹幕，独立记账，不进深采池）
     let cit = collect_room_comments(client, config)?;
@@ -549,81 +548,9 @@ fn collect_inner(
     }))
 }
 
-/// 主播粉丝数快照随行落账 `{output}/history/
-/// follower_snapshots.jsonl`，一行 `{ts, followers}`。等值不追加——快照的意义
-/// 是拐点时序，等值行纯噪；delta 读面 = 末行 vs 首条异值行（存档页）。
-/// 写失败响铃不绊采集（快照是派生账，事实面 streamer.json 已落盘）。
-fn append_follower_snapshot(
-    output_dir: &std::path::Path,
-    streamer: &Value,
-    emit: &mut dyn FnMut(&str),
-) {
-    let Some(followers) = streamer["profile"]["followers"].as_i64() else {
-        return;
-    };
-    let dir = output_dir.join("history");
-    if let Err(err) = std::fs::create_dir_all(&dir) {
-        emit(&format!("[B-B4] 粉丝数快照建目录失败：{err}"));
-        return;
-    }
-    let path = dir.join("follower_snapshots.jsonl");
-    if let Ok(text) = std::fs::read_to_string(&path)
-        && let Some(last) = text.lines().rev().find(|line| !line.trim().is_empty())
-        && serde_json::from_str::<Value>(last)
-            .ok()
-            .and_then(|line| line["followers"].as_i64())
-            == Some(followers)
-    {
-        return;
-    }
-    let line = json!({"ts": now_iso(), "followers": followers});
-    let append = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&path)
-        .and_then(|mut file| {
-            use std::io::Write;
-            writeln!(file, "{line}")
-        });
-    if let Err(err) = append {
-        emit(&format!(
-            "[B-B4] 粉丝数快照写入失败（事实面不受影响）：{err}"
-        ));
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn snapshot_lines(dir: &std::path::Path) -> Vec<Value> {
-        let text = std::fs::read_to_string(dir.join("history").join("follower_snapshots.jsonl"))
-            .expect("快照文件存在");
-        text.lines()
-            .filter(|line| !line.trim().is_empty())
-            .map(|line| serde_json::from_str::<Value>(line).expect("行 JSON"))
-            .collect()
-    }
-
-    #[test]
-    fn follower_snapshot_appends_only_on_change_and_rings_nothing() {
-        let dir = tempfile::tempdir().unwrap();
-        let streamer = |n| json!({"profile": {"followers": n}});
-        let mut silent = Vec::new();
-        let mut emit = |msg: &str| silent.push(msg.to_string());
-
-        // 首值入账；等值不追加（纯噪）；异值追加；followers 缺位 → 安静不记。
-        append_follower_snapshot(dir.path(), &streamer(1000), &mut emit);
-        append_follower_snapshot(dir.path(), &streamer(1000), &mut emit);
-        append_follower_snapshot(dir.path(), &streamer(1002), &mut emit);
-        append_follower_snapshot(dir.path(), &json!({"profile": {}}), &mut emit);
-        let lines = snapshot_lines(dir.path());
-        assert_eq!(lines.len(), 2, "{lines:?}");
-        assert_eq!(lines[0]["followers"], json!(1000));
-        assert_eq!(lines[1]["followers"], json!(1002));
-        assert!(lines[0]["ts"].as_str().is_some_and(|ts| !ts.is_empty()));
-        assert!(silent.is_empty(), "正常路径零响铃：{silent:?}");
-    }
 
     #[test]
     fn or_chain_treats_numeric_zero_as_falsy() {
