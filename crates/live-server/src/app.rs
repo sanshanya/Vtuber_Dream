@@ -154,6 +154,7 @@ pub fn build_app(state: AppState) -> Router {
             "/config",
             get(config_routes::config_get).put(config_routes::config_put),
         )
+        .route("/budget", get(config_routes::budget_get))
         .route("/runs", axum::routing::post(runs::runs_post))
         .route("/runs/:id", get(runs::run_get))
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))

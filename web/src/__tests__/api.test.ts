@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, isApiError } from "../api";
+import { ApiError, api, budgetBlockOf, isApiError } from "../api";
 
 function stubFetch(status: number, body: string) {
   const fake = {
@@ -56,5 +56,52 @@ describe("request 错误信道", () => {
   it("空体成功响应 → null 载荷（不得炸 parse）", async () => {
     stubFetch(200, "");
     expect(await api.rooms()).toBeNull();
+  });
+});
+
+describe("Z6 件3/件5 预算面客户端与析取", () => {
+  it("api.budget() → BudgetInfo 全段解析（budget_cny null 透传）", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        budget_cny: null,
+        month: "2026-08",
+        month_cost_cny: 0.35,
+        month_runs: 3,
+        last_run: {
+          run_id: "r-1",
+          ts: "2026-08-05T00:00:00+00:00",
+          cost_cny: 3.0,
+          status: "failed",
+          kind: "full",
+          spend_mode: "normal",
+        },
+      }),
+    );
+    const info = await api.budget();
+    expect(info.month).toBe("2026-08");
+    expect(info.budget_cny).toBeNull();
+    expect(info.month_cost_cny).toBe(0.35);
+    expect(info.month_runs).toBe(3);
+    expect(info.last_run?.kind).toBe("full");
+  });
+
+  it("budgetBlockOf：完整 budget_block → 六键析出；缺预算块/数字不齐 → null", () => {
+    const block = {
+      spend_mode: "normal",
+      estimated_cny: 3.0,
+      budget_cny: 0.01,
+      fresh_viewers: 1,
+      total_viewers: 1,
+      hint: "两选重发：spend_mode=incremental 只更新变化者 / briefing_only 只推简报",
+    };
+    expect(budgetBlockOf({ budget_block: block })).toEqual(block);
+    // 无 budget_block → null（其他 failed 体不误触卡）。
+    expect(budgetBlockOf({ error: "采集 404" })).toBeNull();
+    expect(budgetBlockOf(null)).toBeNull();
+    // 数字不齐（estimated 非有限）→ null，不宣布阻断。
+    expect(
+      budgetBlockOf({ budget_block: { ...block, estimated_cny: "3.0" } }),
+    ).toBeNull();
   });
 });

@@ -52,6 +52,52 @@ export interface RunRecordView {
   events: string[];
 }
 
+/** Z6 件2：终局 outcome.budget_block 阻断面——服务端固定六键；前端只做
+ *  presence 判别读取，数字不齐/缺键不臆造（renderer 见 BudgetBlockCard）。 */
+export interface BudgetBlock {
+  spend_mode: string;
+  estimated_cny: number;
+  budget_cny: number;
+  fresh_viewers: number;
+  total_viewers: number;
+  hint: string;
+}
+
+/** 从 run outcome 析取预算阻断面；无 budget_block 或四数字任一非有限 → null（不渲染卡）。 */
+export function budgetBlockOf(outcome: unknown): BudgetBlock | null {
+  if (typeof outcome !== "object" || outcome === null || !("budget_block" in outcome)) {
+    return null;
+  }
+  const raw = (outcome as { budget_block?: unknown }).budget_block;
+  if (typeof raw !== "object" || raw === null) {
+    return null;
+  }
+  const o = raw as Record<string, unknown>;
+  const finite = (value: unknown): number | null =>
+    typeof value === "number" && Number.isFinite(value) ? value : null;
+  const str = (value: unknown): string => (typeof value === "string" ? value : "");
+  const estimated_cny = finite(o.estimated_cny);
+  const budget_cny = finite(o.budget_cny);
+  const fresh_viewers = finite(o.fresh_viewers);
+  const total_viewers = finite(o.total_viewers);
+  if (
+    estimated_cny === null ||
+    budget_cny === null ||
+    fresh_viewers === null ||
+    total_viewers === null
+  ) {
+    return null;
+  }
+  return {
+    spend_mode: str(o.spend_mode),
+    estimated_cny,
+    budget_cny,
+    fresh_viewers,
+    total_viewers,
+    hint: str(o.hint),
+  };
+}
+
 export interface ViewerRow {
   uid: string;
   name: string | null;
@@ -189,9 +235,31 @@ export interface ConfigView {
     base_url: string;
     model: string;
     api_key_present: boolean;
+    /** Z6 件5：第 5 白名单键回显；null = 未设闸（输入框留空 = 保持）。 */
+    run_budget_cny: number | null;
     [key: string]: unknown;
   };
   writable_keys: string[];
+}
+
+/** Z6 件3：GET /api/budget 响应面 = history.jsonl 的月度聚合（UTC 月界）。 */
+export interface BudgetLastRun {
+  run_id: string;
+  ts: string;
+  cost_cny: number;
+  status: string;
+  kind: string;
+  spend_mode: string;
+}
+
+export interface BudgetInfo {
+  /** 单次 run 预算（config ai.run_budget_cny）；null = 不设闸。 */
+  budget_cny: number | null;
+  /** "YYYY-MM"（UTC 前缀，账本口径与后端 UTC 月界一致）。 */
+  month: string;
+  month_cost_cny: number;
+  month_runs: number;
+  last_run: BudgetLastRun | null;
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -241,8 +309,14 @@ export const api = {
   config: () => request<ConfigView>("GET", "/config"),
   putConfig: (body: unknown) => request<{ status: string; keys?: number }>("PUT", "/config", body),
   run: (id: string) => request<RunRecordView>("GET", `/runs/${encodeURIComponent(id)}`),
-  startRun: (body: { kind: RunKind; force?: boolean; viewer_uid?: string }) =>
-    request<{ run_id: string }>("POST", "/runs", body),
+  /** Z6 件5：spend_mode 只对带单人感知段的 kind 合法（= /api/runs 校验同源）。 */
+  startRun: (body: {
+    kind: RunKind;
+    force?: boolean;
+    viewer_uid?: string;
+    spend_mode?: RunSpendMode;
+  }) => request<{ run_id: string }>("POST", "/runs", body),
+  budget: () => request<BudgetInfo>("GET", "/budget"),
   /** G2-B 审批缝：状态机单行道 pending_approval → approved（幂等；404 未知 / 422 非法迁移）。 */
   approveLead: (roomId: string, leadId: string) =>
     request<{ dedupe_key: string; status: string; changed: boolean }>(
@@ -262,6 +336,9 @@ export const RUN_KIND_LABELS = {
 } as const;
 
 export type RunKind = keyof typeof RUN_KIND_LABELS;
+
+/** Z6 件5：spend_mode 字面（= registry SpendMode 的 incremental/briefing_only 两发射极）。 */
+export type RunSpendMode = "incremental" | "briefing_only";
 
 /** 服务端 409 错文「已有进行中的 run（{id}），…」的在飞 id 抽取（nil → 纯报错面）。 */
 export function activeRunIdFrom(message: string): string | null {

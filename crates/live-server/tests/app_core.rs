@@ -466,7 +466,8 @@ fn named_security_knobs_and_state_machine_litera_pin() {
             ("bilibili", "cookie"),
             ("ai", "api_key"),
             ("ai", "base_url"),
-            ("ai", "model")
+            ("ai", "model"),
+            ("ai", "run_budget_cny")
         ]
     );
     assert_eq!(
@@ -483,4 +484,218 @@ fn named_security_knobs_and_state_machine_litera_pin() {
         ]
     );
     assert_eq!(live_server::registry::RUN_KINDS, ["full", "viewer"]);
+}
+
+// ---------------------------------------------------------------------------
+// Z6 件3：history.jsonl 实耗账 + GET /api/budget
+// ---------------------------------------------------------------------------
+
+/// ts 前 7 字符 = "YYYY-MM"（UTC 月界，代码里 `&now_iso()[..7]` 即此口径）。
+/// 给出与当前 UTC 月相邻的上一月号，供「跨两月」钉造数据。
+fn previous_month(now: &str) -> String {
+    let year: i32 = now[0..4].parse().expect("year");
+    let month: u32 = now[5..7].parse().expect("month");
+    if month == 1 {
+        format!("{}-12", year - 1)
+    } else {
+        format!("{}-{:02}", year, month - 1)
+    }
+}
+
+/// Z6 件3 钉（a）：读到坏行跳过、只按 UTC 月界聚合 cost，last_run 取最后有效行。
+#[tokio::test(flavor = "multi_thread")]
+async fn budget_get_monthly_sum_tolerates_bad_lines_and_crosses_months() {
+    let fx = fixture(None);
+    let now = live_core::episodes::now_iso();
+    let current = now[..7].to_string();
+    let before = previous_month(&now);
+    let ledger = fx.config_path.parent().unwrap().join("out/history.jsonl");
+    std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+    // 三行跨两月 + 一行坏数据（顺序刻意混杂：坏行在中间，证明不影响后续行）。
+    std::fs::write(
+        &ledger,
+        format!(
+            "{c1}\n{bad}\n{c2}\n{p}\n{c3}\n",
+            c1 = json!({"ts": format!("{current}-01T00:00:00+00:00"), "run_id": "r1", "kind": "full",
+                        "spend_mode": "normal", "status": "done", "usage": {"llm_requests": 1, "input_tokens": 100, "output_tokens": 10, "total_tokens": 110}, "cost_cny": 0.28}),
+            bad = "这一行不是 JSON，必须被容忍跳过",
+            c2 = json!({"ts": format!("{current}-15T12:00:00+00:00"), "run_id": "r2", "kind": "viewer",
+                        "spend_mode": "briefing_only", "status": "done", "usage": {"llm_requests": 1, "input_tokens": 200, "output_tokens": 20, "total_tokens": 220}, "cost_cny": 0.56}),
+            p = json!({"ts": format!("{before}-28T23:59:59+00:00"), "run_id": "r3", "kind": "full",
+                       "spend_mode": "incremental", "status": "done", "usage": {"llm_requests": 1, "input_tokens": 300, "output_tokens": 30, "total_tokens": 330}, "cost_cny": 0.84}),
+            c3 = json!({"ts": format!("{current}-20T08:00:00+00:00"), "run_id": "r4", "kind": "ai_viewers",
+                        "spend_mode": "incremental", "status": "done", "cost_cny": 0.3}),
+        ),
+    )
+    .unwrap();
+    let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["month"], current);
+    // 本月三行 = 0.28 + 0.56 + 0.3，上月 0.84 不计；坏行不绊也不计。
+    assert_eq!(body["month_cost_cny"], 1.14);
+    assert_eq!(body["month_runs"], 3);
+    let last = &body["last_run"];
+    assert_eq!(last["run_id"], "r4", "{last}");
+    assert_eq!(
+        last["ts"].as_str().unwrap(),
+        &format!("{current}-20T08:00:00+00:00")
+    );
+    assert_eq!(last["cost_cny"], 0.3);
+    assert_eq!(last["status"], "done");
+    assert_eq!(last["kind"], "ai_viewers");
+    assert_eq!(last["spend_mode"], "incremental");
+}
+
+/// Z6 件3 钉（b）：无 budget 行 → null；有 budget 行 → Some（前端「未设预算」分支）。
+#[tokio::test(flavor = "multi_thread")]
+async fn budget_get_exposes_null_then_some_budget_cny() {
+    let fx = fixture(None);
+    let now = live_core::episodes::now_iso();
+    let current = now[..7].to_string();
+    let ledger = fx.config_path.parent().unwrap().join("out/history.jsonl");
+    // 未造账本：文件缺失 → 全零 + last_run null（前端首屏空态）。
+    let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body["budget_cny"].is_null(), "{body}");
+    assert_eq!(body["month"], current);
+    assert_eq!(body["month_cost_cny"], 0.0);
+    assert_eq!(body["month_runs"], 0);
+    assert!(body["last_run"].is_null(), "{body}");
+    // 有账本也先 null（模板默认无 run_budget_cny 行）。
+    std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+    std::fs::write(
+        &ledger,
+        format!(
+            "{}\n",
+            json!({"ts": format!("{current}-01T00:00:00+00:00"), "run_id": "rx", "kind": "full",
+                   "spend_mode": "normal", "status": "done", "usage": {"llm_requests": 1, "input_tokens": 100, "output_tokens": 10, "total_tokens": 110}, "cost_cny": 0.28})
+        ),
+    )
+    .unwrap();
+    let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
+    assert_eq!(status, 200, "{body}");
+    assert!(body["budget_cny"].is_null(), "模板无预算行 → null：{body}");
+    assert_eq!(body["month_cost_cny"], 0.28);
+    // 写入预算行后回读 Some。
+    let yaml = std::fs::read_to_string(&fx.config_path).unwrap();
+    std::fs::write(
+        &fx.config_path,
+        yaml.replace(
+            "  api: chat_completions",
+            "  api: chat_completions\n  run_budget_cny: \"2.00\"",
+        ),
+    )
+    .unwrap();
+    let (status, body) = oneshot(&fx.app, "GET", "/api/budget", None).await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["budget_cny"], 2.0, "{body}");
+}
+
+/// Z6 件3 钉（c）：collect_* 无 ai/state.json → usage 四零 + cost 0——
+/// 账本诚实记账的最朴素姿势（不臆造任何 AI 消耗）。
+#[test]
+fn append_history_line_for_collect_kind_records_zero_usage() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    std::fs::create_dir_all(&out).unwrap(); // 无 ai/state.json：collect_* 从不写认知层
+    let emitted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let ring = emitted.clone();
+    live_server::registry::append_history_line(
+        &out,
+        "run-collect",
+        "collect_guards",
+        live_core::agent::budget::SpendMode::Normal,
+        "done",
+        &move |message| ring.lock().expect("ring").push(message.to_string()),
+    );
+    let line = std::fs::read_to_string(out.join("history.jsonl")).unwrap();
+    let record: Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(record["kind"], "collect_guards");
+    assert_eq!(record["status"], "done");
+    assert_eq!(
+        record["usage"],
+        json!({"llm_requests": 0, "input_tokens": 0, "output_tokens": 0, "total_tokens": 0}),
+        "collect_* 账本须诚实记零：{record}"
+    );
+    assert_eq!(record["cost_cny"], 0.0, "{record}");
+    assert!(
+        emitted.lock().expect("ring").is_empty(),
+        "正常记账不响铃：{:?}",
+        emitted.lock().expect("ring")
+    );
+}
+
+/// Z6 件3 钉（c-2）：有 ai/state.json 的 run 按 usage 记 cost_cny（成本公式复算），
+/// 且 usage 只取契约五键（丢弃 tool_calls）。
+#[test]
+fn append_history_line_reads_state_usage_and_drops_tool_calls() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    let ai = out.join("ai");
+    std::fs::create_dir_all(&ai).unwrap();
+    std::fs::write(
+        ai.join("state.json"),
+        r#"{"status":"done","usage":{"llm_requests":3,"tool_calls":9,
+           "input_tokens":1250,"output_tokens":500,"total_tokens":1750}}"#,
+    )
+    .unwrap();
+    let emitted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let ring = emitted.clone();
+    live_server::registry::append_history_line(
+        &out,
+        "run-full",
+        "full",
+        live_core::agent::budget::SpendMode::IncrementalOnly,
+        "done",
+        &move |message| ring.lock().expect("ring").push(message.to_string()),
+    );
+    let line = std::fs::read_to_string(out.join("history.jsonl")).unwrap();
+    let record: Value = serde_json::from_str(line.trim()).unwrap();
+    assert_eq!(
+        record["usage"],
+        json!({"llm_requests": 3, "input_tokens": 1250, "output_tokens": 500, "total_tokens": 1750}),
+        "usage 只取契约四键：{record}"
+    );
+    assert_eq!(
+        record["usage"].get("tool_calls"),
+        None,
+        "tool_calls 不得入账本：{record}"
+    );
+    // cost_cny = (1250*2 + 500*8)/1e6 = (2500+4000)/1e6 = 0.0065。
+    assert_eq!(record["cost_cny"], 0.0065, "{record}");
+    assert_eq!(record["spend_mode"], "incremental", "{record}");
+    assert!(
+        emitted.lock().expect("ring").is_empty(),
+        "正常记账不响铃：{:?}",
+        emitted.lock().expect("ring")
+    );
+}
+
+/// Z6 件3 记账失败面：history.jsonl 写失败只响铃不改终态。
+/// append_history_line 用只读目录模拟写失败（OpenOptions append 必然 Err）。
+#[test]
+fn append_history_line_write_failure_only_rings() {
+    let tmp = tempfile::tempdir().unwrap();
+    let out = tmp.path().join("out");
+    std::fs::create_dir_all(&out).unwrap();
+    // 目录以同名文件占位 → OpenOptions append 打不开（路径存在但非目录）。
+    std::fs::write(out.join("history.jsonl"), "I am a file, not a dir").unwrap();
+    let emitted = std::sync::Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let ring = emitted.clone();
+    // 在 history.jsonl 同路径旁放一个同名「目录」不可能；改为把 history.jsonl 做成
+    // 目录名，OpenOptions 以 append=true 打目录必然 Err——等价模拟写失败。
+    // （write 前先毁掉刚才的文件占位，recreate 成目录。）
+    std::fs::remove_file(out.join("history.jsonl")).unwrap();
+    std::fs::create_dir(out.join("history.jsonl")).unwrap();
+    live_server::registry::append_history_line(
+        &out,
+        "run-x",
+        "full",
+        live_core::agent::budget::SpendMode::Normal,
+        "failed",
+        &move |message| ring.lock().expect("ring").push(message.to_string()),
+    );
+    let rung = emitted.lock().expect("ring");
+    assert_eq!(rung.len(), 1, "写失败必须响铃：{rung:?}");
+    assert!(rung[0].contains("[LEDGER]"), "响铃须带账本前缀：{rung:?}");
 }

@@ -1381,3 +1381,155 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
     );
     assert_eq!(overview["collection"]["leads_consumed"], 1, "{overview}");
 }
+
+// ---------------------------------------------------------------------------
+// Z6 件4 e2e：预算闸阻断卡（wiremock 双面 + oneshot）三相位
+// ---------------------------------------------------------------------------
+
+/// R2 批4 D3 预算闸端到端：kind=full 单观众 1003（additional_viewer_ids 种子；
+/// fresh=1/total=1 → 预估 = 1×¥1.5 人均 + ¥1.5 audience 平段 = ¥3.0）——
+/// 相位一：budget=0.01 → 阻断 failed，outcome.budget_block 数字面齐备，AI 面零请求；
+/// 相位二：同预算 + briefing_only → 仍阻断（block.spend_mode=briefing_only 随行记账）；
+/// 相位三：预算提到 4.00 + briefing_only → 放行到底 done（audience 一次提交即可）。
+#[tokio::test(flavor = "multi_thread")]
+async fn budget_gate_blocks_then_briefing_only_passes_to_done() {
+    let bilibili = MockServer::start().await;
+    mount_bilibili_baseline(&bilibili).await;
+    let llm = MockServer::start().await;
+    let cell: Cell = Arc::new((Mutex::new(HashMap::new()), Condvar::new()));
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(DynamicSubmit {
+            cell: cell.clone(),
+            model: "budget-e2e".to_string(),
+            fail_audience: false,
+        })
+        .mount(&llm)
+        .await;
+
+    let (_tmp, config_path, app, registry) = build_zip_fixture(&bilibili.uri(), Some(&llm.uri()));
+
+    // 布景①：给 Guards 采集面一个附加观众种子（空名单 full 会拒采）——
+    // 与 g2 冒烟同款换行；yaml_template 默认空名单。
+    let yaml = std::fs::read_to_string(&config_path).unwrap();
+    std::fs::write(
+        &config_path,
+        yaml.replace(
+            "additional_viewer_ids: []",
+            "additional_viewer_ids: [\"1003\"]",
+        ),
+    )
+    .unwrap();
+    // 布景②：预算注入——yaml_template 无 run_budget_cny 行（line-level 重写没锚，故直接嵌）。
+    let yaml = std::fs::read_to_string(&config_path).unwrap();
+    assert!(yaml.contains("  api: chat_completions\n"), "{yaml}");
+    let pinned = yaml.replace(
+        "  api: chat_completions",
+        "  api: chat_completions\n  run_budget_cny: \"0.01\"",
+    );
+    std::fs::write(&config_path, pinned).unwrap();
+
+    // ── 相位一：0.01 预算 + full → 阻断 failed ──
+    let (status, body) = oneshot(&app, "POST", "/api/runs", Some(json!({"kind": "full"}))).await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
+    assert_eq!(snapshot["status"], "failed", "{snapshot}");
+    assert_eq!(snapshot["partial"], false, "{snapshot}");
+    let block = snapshot["outcome"]["budget_block"].clone();
+    assert!(block.is_object(), "outcome 应携 budget_block：{snapshot}");
+    assert_eq!(block["spend_mode"], "normal", "{block}");
+    assert_eq!(block["estimated_cny"], 3.0, "{block}");
+    assert_eq!(block["budget_cny"], 0.01, "{block}");
+    assert_eq!(block["fresh_viewers"], 1, "{block}");
+    assert_eq!(block["total_viewers"], 1, "{block}");
+    assert!(
+        block["hint"].as_str().unwrap().contains("incremental"),
+        "{block}"
+    );
+    let events: Vec<&str> = snapshot["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        events
+            .iter()
+            .any(|e| e.contains("[BUDGET] 预估超预算，run 阻断")),
+        "{events:?}"
+    );
+
+    // ── 相位二：同预算 + briefing_only → 仍阻断（spend_mode 随行记账）──
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "full", "spend_mode": "briefing_only"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(60));
+    assert_eq!(snapshot["status"], "failed", "{snapshot}");
+    assert_eq!(
+        snapshot["outcome"]["budget_block"]["spend_mode"], "briefing_only",
+        "{snapshot}"
+    );
+
+    // 阻断两相位全程零 AI 请求（budget 闸在首次 LLM 之前）。
+    let llm_zero = llm.received_requests().await.expect("llm requests");
+    assert!(llm_zero.is_empty(), "阻断相位不得触 LLM：{llm_zero:?}");
+
+    // ── 相位三：预算提到 4.00 + briefing_only → 放行到底 done ──
+    let yaml = std::fs::read_to_string(&config_path).unwrap();
+    let pinned = yaml.replace("  run_budget_cny: \"0.01\"", "  run_budget_cny: \"4.00\"");
+    std::fs::write(&config_path, pinned).unwrap();
+    // 放行相位后 audience 惰性构造提交体：briefing_only 跳过 viewer 扇出（viewer_ids/
+    // entity/mention 集合全空）→ 终局校验「至少一个栏目非空」需不引用任何实体的
+    // 栏目——audience_structure 是自由字符串列表，天然零引用，够格充当该栏目；
+    // executive_summary 满足 min-len。填格必须在 POST 前——本 run 的 Guards 采集
+    // 会 reset_output 清 viewers/，POST 后再 derive 会读到空目录；且零实体引用
+    // 无从触发 R2 归并面第二次 LLM。
+    fill(
+        &cell,
+        "audience",
+        json!({
+            "executive_summary": "预算闸验收：预算足额后简报轮放行，态势以最小面落定。",
+            "audience_structure": ["单观众简报轮无个人详情，仅整体态势；观众结构为零引用自由文本。"]
+        }),
+    );
+    let (status, body) = oneshot(
+        &app,
+        "POST",
+        "/api/runs",
+        Some(json!({"kind": "full", "spend_mode": "briefing_only"})),
+    )
+    .await;
+    assert_eq!(status, 202, "{body}");
+    let run_id = body["run_id"].as_str().unwrap().to_string();
+    let snapshot = run_terminal(&run_id, &registry, Duration::from_secs(90));
+    assert_eq!(snapshot["status"], "done", "{snapshot}");
+    assert!(
+        snapshot["outcome"].get("budget_block").is_none(),
+        "放行相位不得带 budget_block：{snapshot}"
+    );
+    let events: Vec<&str> = snapshot["events"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(
+        events
+            .iter()
+            .any(|e| e.starts_with("[BUDGET] 模式=briefing_only") && e.contains("→ 放行")),
+        "放行轨迹应带 [BUDGET] → 放行：{events:?}"
+    );
+    let llm_calls = llm.received_requests().await.expect("llm requests");
+    assert_eq!(
+        llm_calls.len(),
+        1,
+        "放行轮应恰一次 audience 提交：{llm_calls:?}"
+    );
+}

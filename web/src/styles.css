@@ -252,6 +252,16 @@ table.data-table td{vertical-align:middle}
 .run-confirm-actions button{border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:var(--r-sm);padding:8px 12px;cursor:pointer;font:inherit}
 .run-confirm-actions .primary{background:var(--accent);border:0;color:#fff}
 
+/* Z6 件2/件5：预算阻断卡（hero/卡片内通用）——自持面板底色，hero 白字面自救
+   （同 .run-events 策略）；flex-basis:100% 让卡在 .run-status inline-flex 里换行整宽。 */
+.budget-block{display:flex;flex-direction:column;gap:6px;flex-basis:100%;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:var(--r-md);padding:10px 12px;box-shadow:var(--shadow)}
+.budget-block-copy{margin:0;font-size:var(--fs-sm)}
+.budget-block-actions{display:flex;gap:8px;flex-wrap:wrap}
+.budget-block-actions button{border:1px solid var(--line);background:var(--panel2);color:var(--text);border-radius:var(--r-sm);padding:6px 10px;cursor:pointer;font:inherit;font-size:var(--fs-sm)}
+.budget-block-actions button:hover{border-color:var(--accent)}
+.budget-block-actions button:disabled{opacity:.6;cursor:wait}
+.budget-block-link{margin-top:2px;color:var(--accent)}
+
 /* ---- FE-F2 追加段：图谱层色变量 + 详情徽标 + a11y 清单 ----
    层色唯一锚点：GraphPage 画布 KIND_COLORS（cytoscape canvas 不解析 var()，
    3.31 实测判 invalid 回落基色，故那边保留同值字面锚）与所有 DOM 面

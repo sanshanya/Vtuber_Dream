@@ -2,15 +2,24 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 
 import { api } from "../api";
+import { errText, fmtCny } from "../format";
 
 /**
- * 设置页（D6）：白名单四键可写（cookie/api_key/base_url/model），空串 = 保持现值；
+ * 设置页（D6/Z6 件5）：白名单五键可写（cookie/api_key/base_url/model/run_budget_cny），
+ * 空串 = 保持现值；预算键回显现值（null=未设闸）兼月度实耗行（/api/budget）。
  * 其余面只读直出，永不回显原文。
  */
 export function Settings() {
   const queryClient = useQueryClient();
   const config = useQuery({ queryKey: ["config"], queryFn: api.config });
-  const [form, setForm] = useState({ cookie: "", api_key: "", base_url: "", model: "" });
+  const budget = useQuery({ queryKey: ["budget"], queryFn: api.budget });
+  const [form, setForm] = useState({
+    cookie: "",
+    api_key: "",
+    base_url: "",
+    model: "",
+    run_budget_cny: "",
+  });
   const [feedback, setFeedback] = useState<string | null>(null);
   const [isError, setIsError] = useState(false);
   const [pending, setPending] = useState(false);
@@ -25,15 +34,16 @@ export function Settings() {
           api_key: form.api_key,
           base_url: form.base_url,
           model: form.model,
+          run_budget_cny: form.run_budget_cny,
         },
       });
       setIsError(false);
       setFeedback(result.status === "updated" ? `已写入 ${result.keys} 个键` : "无变化");
-      setForm({ cookie: "", api_key: "", base_url: "", model: "" });
+      setForm({ cookie: "", api_key: "", base_url: "", model: "", run_budget_cny: "" });
       await queryClient.invalidateQueries({ queryKey: ["config"] });
     } catch (error) {
       setIsError(true);
-      setFeedback(String(error instanceof Error ? error.message : error));
+      setFeedback(errText(error));
     } finally {
       setPending(false);
     }
@@ -95,6 +105,16 @@ export function Settings() {
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
               />
             </label>
+            <label>
+              AI 单次预算（元，预估超支即阻断；空 = 保持）
+              <input
+                type="text"
+                inputMode="decimal"
+                value={form.run_budget_cny}
+                placeholder={data.ai.run_budget_cny == null ? "未设限" : String(data.ai.run_budget_cny)}
+                onChange={(e) => setForm({ ...form, run_budget_cny: e.target.value })}
+              />
+            </label>
             <div className="toolbar">
               <button className="primary" disabled={pending} onClick={() => void save()}>
                 {pending ? "写入中…" : "保存设置"}
@@ -129,6 +149,21 @@ export function Settings() {
               </span>
             ))}
           </div>
+          <h3>月度实耗（history.jsonl 汇总）</h3>
+          {budget.isLoading ? (
+            <div className="state-loading">载入预算面…</div>
+          ) : budget.isError ? (
+            <div className="notice">{errText(budget.error)}</div>
+          ) : budget.data ? (
+            <div className="muted small" data-testid="monthly-budget">
+              本月（{budget.data.month}）AI 实耗 {fmtCny(budget.data.month_cost_cny)}／
+              {budget.data.month_runs} 次运行；单次预算{" "}
+              {budget.data.budget_cny === null ? "未设" : fmtCny(budget.data.budget_cny)}
+              {budget.data.last_run
+                ? ` · 最近一次：${budget.data.last_run.kind}（${budget.data.last_run.status}）≈${fmtCny(budget.data.last_run.cost_cny)}`
+                : " · 暂无历史记录"}
+            </div>
+          ) : null}
         </div>
       </div>
     </section>

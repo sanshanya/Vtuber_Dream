@@ -13,11 +13,12 @@ use super::{AppResult, AppState, JsonBody, fail, load_config};
 /// D9：PUT 单值长度上限。
 pub const MAX_PUT_VALUE_CHARS: usize = 4096;
 /// D6：允许的写入键白名单（(顶层段, 键)）——此后扩展需要同名加键 + 测试。
-pub const WRITABLE_CONFIG_KEYS: [(&str, &str); 4] = [
+pub const WRITABLE_CONFIG_KEYS: [(&str, &str); 5] = [
     ("bilibili", "cookie"),
     ("ai", "api_key"),
     ("ai", "base_url"),
     ("ai", "model"),
+    ("ai", "run_budget_cny"),
 ];
 
 pub(super) async fn config_get(State(state): State<AppState>) -> AppResult<Json<Value>> {
@@ -53,6 +54,8 @@ pub(super) async fn config_get(State(state): State<AppState>) -> AppResult<Json<
             "search_results_per_query": ai.search_results_per_query,
             "max_output_tokens": ai.max_output_tokens,
             "rules": ai.rules,
+            // Z6 件5：第 5 白名单键回显（None=不设闸，前端输入框初始为空）。
+            "run_budget_cny": ai.run_budget_cny,
         },
         "writable_keys": WRITABLE_CONFIG_KEYS.iter().map(|(s, k)| format!("{s}.{k}")).collect::<Vec<_>>(),
     })))
@@ -228,4 +231,54 @@ pub(super) async fn config_put(
         return Err(fail(StatusCode::UNPROCESSABLE_ENTITY, &error));
     }
     Ok(Json(json!({"status": "updated", "keys": patch.len()})))
+}
+
+/// Z6 件3：GET /api/budget —— 月度实耗汇总（读 `{output_dir}/history.jsonl`，
+/// 每 run 终态一行，见 registry::append_history_line）。
+///
+/// 口径：只按追加序逐行聚合，坏行直接跳过（容忍记账面手改/半截写）；
+/// 月界 = ts 前 7 字符 "YYYY-MM"（ISO 时间戳 +00:00，前缀比较即 UTC 月界，
+/// 与中国时区 +8 的「自然月」不同，刻意选 UTC——账本口径前后端一致不动摇）；
+/// 文件缺失/全坏 → 全零 + last_run=null。`budget_cny` = config 预算（None → null）。
+pub(super) async fn budget_get(State(state): State<AppState>) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    let records: Vec<Value> = std::fs::read_to_string(config.output_dir.join("history.jsonl"))
+        .map(|text| {
+            text.lines()
+                .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    // UTC 月界：ts 前 7 字符即 "YYYY-MM"。
+    let month = &live_core::episodes::now_iso()[..7];
+    let (month_cost_cny, month_runs) =
+        records
+            .iter()
+            .fold((0.0_f64, 0_i64), |(cost, count), record| {
+                if record["ts"]
+                    .as_str()
+                    .is_some_and(|ts| ts.starts_with(month))
+                {
+                    (cost + record["cost_cny"].as_f64().unwrap_or(0.0), count + 1)
+                } else {
+                    (cost, count)
+                }
+            });
+    let last_run = records.last().map(|record| {
+        json!({
+            "run_id": record["run_id"],
+            "ts": record["ts"],
+            "cost_cny": record["cost_cny"],
+            "status": record["status"],
+            "kind": record["kind"],
+            "spend_mode": record["spend_mode"],
+        })
+    });
+    Ok(Json(json!({
+        "budget_cny": config.ai.run_budget_cny,
+        "month": month,
+        "month_cost_cny": month_cost_cny,
+        "month_runs": month_runs,
+        "last_run": last_run,
+    })))
 }

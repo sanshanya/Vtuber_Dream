@@ -4,6 +4,7 @@ import { type RunRecordView } from "../api";
 import { RUN_EVENTS_CAP } from "../constants";
 import { fmtTime } from "../format";
 import { useStartRun } from "../hooks/useStartRun";
+import { BudgetBlockCard } from "./BudgetBlockCard";
 import { useRunTracker } from "./RunTracker";
 
 /** outcome.error 摘取（failed 终局体的唯一用户可读位；非对象 outcome → null）。 */
@@ -63,6 +64,8 @@ export function RunStatusBadge() {
           <pre>{events.join("\n")}</pre>
         </details>
       )}
+      {/* Z6 件2/件5：outcome.budget_block 阻断卡（两选重发 + 去设置页改预算）。 */}
+      {data && <BudgetBlockCard record={data} />}
     </span>
   );
 }

@@ -10,6 +10,7 @@
 use std::sync::{Arc, Mutex};
 
 use live_core::agent::budget::SpendMode;
+use live_core::agent::pipeline::PipelineError;
 use live_core::config::Config;
 use live_core::episodes::{now_iso, now_unix_secs};
 use live_core::events::RunEvents;
@@ -217,6 +218,7 @@ impl Registry {
         kind: &str,
         viewer_uid: Option<String>,
         force: bool,
+        spend_mode: SpendMode,
         bilibili_hosts: Option<(String, String)>,
     ) -> Result<Arc<Mutex<RunRecord>>, String> {
         let events = Arc::new(RunEvents::new());
@@ -254,10 +256,15 @@ impl Registry {
 
         let registry = registry.clone();
         let kind = kind.to_string();
+        // 走账面（件3）需要在 config 被内层闭包整体吞掉前留一份 output_dir 克隆。
+        let output_dir = config.output_dir.clone();
         // ag3-F2：catch_unwind 收尾自持三件套——线程体整体 move 走原句柄。
         let panic_registry = registry.clone();
         let panic_run_id = run_id.clone();
         let panic_events = events.clone();
+        // 件3：panic 收尾分支在 body 整体 move 之后还要走账——kind/output_dir 各留一份。
+        let panic_kind = kind.clone();
+        let panic_output_dir = output_dir.clone();
         std::thread::spawn(move || {
             let body = move || {
                 // emit 自持一份 Arc<RunEvents>——后续内层闭包要整体 move `events`，
@@ -266,6 +273,9 @@ impl Registry {
                     let events = events.clone();
                     move |message: &str| events.push(message)
                 };
+                // 件3：compute 闭包整体 move `kind`/`emit`/`events`，终局收账前重造。
+                let kind_for_outcome = kind.clone();
+                let outcome_events = events.clone();
                 emit(&format!("[runs] 触发 kind={kind}"));
                 // Z4：动作平面分层——ai_* 只跑认知层（baseline+pipeline），不进 collector
                 // 的 reset_output 屠刀（采集 + reset 会灭 ai/ 缓存，动作语义必须干净）。
@@ -300,10 +310,15 @@ impl Registry {
                 // partial 判定）仍要用原版（E0382）。
                 let inner_registry = registry.clone();
                 let inner_run_id = run_id.clone();
-                let outcome: Result<Value, String> = (move || {
+                // 件2：闭包错误改携 PipelineError（保持原文案）——BudgetBlocked 需在
+                // stringify 之前摘出带字段的阻断体，其余错误继续 to_string 落 outcome。
+                let outcome: Result<Value, PipelineError> = (move || {
+                    // 件3：内层 emit 就地重建——body 的 emit 留给终局收账（E0382 不重演）。
+                    let emit = move |message: &str| outcome_events.push(message);
                     if !ai_only {
                         // 阶段①：collection
-                        let client = client.map_err(|error| error.to_string())?;
+                        let client =
+                            client.map_err(|error| PipelineError::Message(error.to_string()))?;
                         let mut emit_fn = |message: &str| emit(message);
                         let mut summary = live_core::collector::run::collect_with_client(
                             client,
@@ -311,7 +326,7 @@ impl Registry {
                             mode,
                             &mut emit_fn,
                         )
-                        .map_err(|error| error.to_string())?;
+                        .map_err(|error| PipelineError::Message(error.to_string()))?;
                         if collect_only {
                             // Z4a：collect_* 是事实层终局——collect_with_client 的汇总
                             // 即 outcome（无 viewer_failures 键 → 默认 0 → 非 partial）。
@@ -367,7 +382,7 @@ impl Registry {
                         &config.output_dir,
                         config.perception.max_evidence_per_viewer as usize,
                     )
-                    .map_err(|error| error.to_string())?;
+                    .map_err(|error| PipelineError::Message(error.to_string()))?;
                     // 阶段③+④：pipeline——stage hook 进 registry；progress 进 events
                     let sink_events = events.clone();
                     let sink = move |message: &str| sink_events.push(message);
@@ -378,7 +393,9 @@ impl Registry {
                     let rt = tokio::runtime::Builder::new_current_thread()
                         .enable_all()
                         .build()
-                        .map_err(|error| format!("tokio runtime: {error}"))?;
+                        .map_err(|error| {
+                            PipelineError::Message(format!("tokio runtime: {error}"))
+                        })?;
                     rt.block_on(async move {
                         let mut knobs = live_core::agent::pipeline::PipelineKnobs {
                             progress: Some(&sink),
@@ -387,11 +404,11 @@ impl Registry {
                             bilibili_origin: bilibili_hosts.clone(),
                             stage: Some(&stage_listener),
                             // Z4b：ai_viewers 在 viewer 阶段写盘后收——不跑 audience。
-                            stop_after_viewer_stage: kind == "ai_viewers",
-                            // R2 批4 D3：编译面显式默认全量（省钱模式由动作面/白名单键接入）。
-                            spend_mode: SpendMode::Normal,
+                            stop_after_viewer_stage: kind_for_outcome == "ai_viewers",
+                            // R2 批4 D3：省钱模式由 POST 动作面解析落位（Normal=默认全量）。
+                            spend_mode,
                         };
-                        let result = match kind.as_str() {
+                        match kind_for_outcome.as_str() {
                             "viewer" => {
                                 live_core::agent::pipeline::run_viewer_pipeline(
                                     config,
@@ -408,30 +425,72 @@ impl Registry {
                                 )
                                 .await
                             }
-                        };
-                        result.map_err(|error| error.to_string())
+                        }
                     })
                 })();
+                // 件2：BudgetBlocked 先于 stringify 摘出阻断体；其余错误保持原 failed
+                // 体（partial 判定数据源仍是 pipeline 契约键 viewer_stage_status）。
                 match outcome {
                     Ok(value) => {
                         let partial = value["viewer_failures"].as_i64().unwrap_or(0) > 0;
                         registry.finalize(&run_id, "done", value, partial);
+                        append_history_line(&output_dir, &run_id, &kind, spend_mode, "done", &emit);
                     }
-                    Err(error) => {
-                        // partial 的数据源是 pipeline 契约键 viewer_stage_status（ag3-F1）。
-                        // 注意 collect 期失败时上一轮 state 已被 collector 归档进
-                        // history/snapshots，此处读到缺文件 → false，是正确语义。
-                        // W1/r2-F5 时间闸：updated_at 早于本轮 started_at 的 complete
-                        // 是旧轮次底票，不算本轮数据面（baseline/pipeline 期失败时
-                        // collect 的旧 state 不再回来，窗口真实存在）。
-                        let stage_complete = viewer_stage_complete_since(&state_dir, &started_at);
-                        registry.finalize(
-                            &run_id,
-                            "failed",
-                            json!({"error": error}),
-                            stage_complete,
-                        );
-                    }
+                    Err(error) => match &error {
+                        PipelineError::BudgetBlocked {
+                            estimated_cny,
+                            budget_cny,
+                            fresh_viewers,
+                            total_viewers,
+                            spend_mode: blocked_spend_mode,
+                        } => {
+                            let outcome = json!({
+                                "error": error.to_string(),
+                                "budget_block": {
+                                    "spend_mode": blocked_spend_mode.as_str(),
+                                    "estimated_cny": estimated_cny,
+                                    "budget_cny": budget_cny,
+                                    "fresh_viewers": fresh_viewers,
+                                    "total_viewers": total_viewers,
+                                    "hint": "两选重发：spend_mode=incremental 只更新变化者 / briefing_only 只推简报",
+                                },
+                            });
+                            emit("[BUDGET] 预估超预算，run 阻断（详见 outcome.budget_block）");
+                            registry.finalize(&run_id, "failed", outcome, false);
+                            append_history_line(
+                                &output_dir,
+                                &run_id,
+                                &kind,
+                                spend_mode,
+                                "failed",
+                                &emit,
+                            );
+                        }
+                        _ => {
+                            // partial 的数据源是 pipeline 契约键 viewer_stage_status（ag3-F1）。
+                            // 注意 collect 期失败时上一轮 state 已被 collector 归档进
+                            // history/snapshots，此处读到缺文件 → false，是正确语义。
+                            // W1/r2-F5 时间闸：updated_at 早于本轮 started_at 的 complete
+                            // 是旧轮次底票，不算本轮数据面（baseline/pipeline 期失败时
+                            // collect 的旧 state 不再回来，窗口真实存在）。
+                            let stage_complete =
+                                viewer_stage_complete_since(&state_dir, &started_at);
+                            registry.finalize(
+                                &run_id,
+                                "failed",
+                                json!({"error": error.to_string()}),
+                                stage_complete,
+                            );
+                            append_history_line(
+                                &output_dir,
+                                &run_id,
+                                &kind,
+                                spend_mode,
+                                "failed",
+                                &emit,
+                            );
+                        }
+                    },
                 }
             };
             if let Err(panic) = std::panic::catch_unwind(std::panic::AssertUnwindSafe(body)) {
@@ -447,6 +506,14 @@ impl Registry {
                     "failed",
                     json!({"error": format!("内部恐慌：{message}")}),
                     false,
+                );
+                append_history_line(
+                    &panic_output_dir,
+                    &panic_run_id,
+                    &panic_kind,
+                    spend_mode,
+                    "failed",
+                    &|message| panic_events.push(message),
                 );
             }
         });
@@ -643,4 +710,61 @@ pub fn run_to_json(record: &RunRecord) -> Value {
         "outcome": record.outcome,
         "events": record.events.snapshot(),
     })
+}
+
+/// Z6 件3：run 到终态（done|failed，含恐慌收尾与预算阻断）即追加一行
+/// `{output_dir}/history.jsonl`（append-only，一行一 JSON）。
+///
+/// 实耗语料 = `{output_dir}/ai/state.json` 的 usage 键（collect_* 无 AI → 全零）；
+/// `cost_cny` 用 live-core 费率公式 `(input×2+output×8)/1_000_000`。state.json 缺失/
+/// 坏 JSON → 实耗照记全零（诚实账本，不冒充成功）。写入失败只响铃 events，
+/// 绝不改 run 终态——账本面永远让位给 run 状态机。
+pub fn append_history_line(
+    output_dir: &std::path::Path,
+    run_id: &str,
+    kind: &str,
+    spend_mode: SpendMode,
+    status: &str,
+    emit: &dyn Fn(&str),
+) {
+    let usage = std::fs::read_to_string(output_dir.join("ai/state.json"))
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .and_then(|state| state.get("usage").cloned())
+        .unwrap_or_else(|| json!({}));
+    let key = |name: &str| usage.get(name).and_then(Value::as_i64).unwrap_or(0);
+    let input_tokens = key("input_tokens");
+    let output_tokens = key("output_tokens");
+    let line = json!({
+        "ts": utc_now(),
+        "run_id": run_id,
+        "kind": kind,
+        "spend_mode": spend_mode.as_str(),
+        "status": status,
+        "usage": {
+            "llm_requests": key("llm_requests"),
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": key("total_tokens"),
+        },
+        "cost_cny": live_core::agent::budget::cost_cny(input_tokens, output_tokens),
+    });
+    let append = (|| -> std::io::Result<()> {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(output_dir.join("history.jsonl"))?;
+        writeln!(
+            file,
+            "{}",
+            serde_json::to_string(&line).expect("history 行恒可 JSON")
+        )?;
+        Ok(())
+    })();
+    if let Err(error) = append {
+        emit(&format!(
+            "[LEDGER] history.jsonl 追加失败（run 终态不受影响）：{error}"
+        ));
+    }
 }

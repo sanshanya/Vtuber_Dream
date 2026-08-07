@@ -105,6 +105,28 @@ pub(super) async fn runs_post(
         }
         (_, viewer_uid) => viewer_uid,
     };
+    // Z6 件1：spend_mode 是省钱模式的可选键——缺席/空=Normal；只收字面
+    // incremental / briefing_only（其余一律 422，复用 SpendMode::parse 文案），
+    // 且只对带单人感知段的 kind 合法（full/viewer/ai_viewers）。
+    let spend_mode = match object.get("spend_mode") {
+        None | Some(Value::Null) => live_core::agent::budget::SpendMode::Normal,
+        Some(Value::String(raw)) => live_core::agent::budget::SpendMode::parse(raw.trim())
+            .map_err(|message| fail(StatusCode::UNPROCESSABLE_ENTITY, &message))?,
+        Some(_) => {
+            return Err(fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "spend_mode 只收 incremental / briefing_only",
+            ));
+        }
+    };
+    if spend_mode != live_core::agent::budget::SpendMode::Normal
+        && !matches!(kind, "full" | "viewer" | "ai_viewers")
+    {
+        return Err(fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &format!("kind={kind} 无单人感知段，spend_mode 无消费"),
+        ));
+    }
     let record = if state.demo {
         // G3 裁决：demo 模式返回已完成静态快照——合成、无网络、幂等（重复 POST
         // 返回同一 run_id；红线：合成不得伪装真实请求足迹）。
@@ -119,6 +141,7 @@ pub(super) async fn runs_post(
             kind,
             viewer_uid,
             force,
+            spend_mode,
             state.bilibili_hosts.clone(),
         )
         .map_err(|active| {
