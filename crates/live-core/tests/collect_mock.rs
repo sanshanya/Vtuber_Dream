@@ -772,10 +772,6 @@ async fn single_viewer_does_not_consume_leads() {
     store.begin_run_fixed("run:a", "t0", "m").unwrap();
     store.insert_lead_rows(&[&row], true).unwrap();
     drop(store);
-    // 预置旧 JSONL 账本（同一行内容）：单查不得触发迁移（闸门——不动账本）
-    let ledger_text = format!("{}\n", serde_json::to_string(&row).unwrap());
-    std::fs::write(root.join("leads.jsonl"), &ledger_text).unwrap();
-
     let base = server.uri();
     let mut config = test_config(root, 12);
     config.collection.lead_fetch_budget_per_run = 1;
@@ -800,13 +796,6 @@ async fn single_viewer_does_not_consume_leads() {
         vec![row.clone()],
         "单查不得消费已批准线索（预算>0 也要停火）"
     );
-    // 旧 JSONL 原样：迁移与归档都不发生
-    assert_eq!(
-        std::fs::read_to_string(root.join("leads.jsonl")).unwrap(),
-        ledger_text,
-        "单查不得触碰旧账本（迁移闸门同纪律）"
-    );
-    assert!(!root.join("leads.jsonl.bak").exists(), "单查不得归档账本");
     // summary/collection 均不面世 leads_consumed
     assert!(
         summary.get("leads_consumed").is_none(),
@@ -894,23 +883,16 @@ async fn room_comment_budget_zero_disables_points_without_requests() {
 // M4.x 消费环集成钉——approved 账本 +
 // budget=1 + wiremock 假搜索面 → 尾段消费写回 + leads_consumed 键 +
 // request_count 不漏报。
-// G2 表形态（design §9.2 行 254）：账本 = discovery_leads 表；旧 JSONL 在
-// collect 尾段一次性 migrate_jsonl 入库 + 归档 .bak。
+// G2 表形态（design §9.2 行 254）：账本 = discovery_leads 表为正本。
 // ---------------------------------------------------------------------------
 
-/// 旧 JSONL 形态置账（含 first_seen_run_id 外键锚的最小事实面）。
-fn seed_legacy_jsonl(root: &Path, rows: &[live_core::leads::LedgerRow]) {
+/// 账本置账（含 first_seen_run_id 外键锚的最小事实面；删码刀5 后无 JSONL 旁路）。
+fn seed_lead_rows(root: &Path, rows: &[live_core::leads::LedgerRow]) {
     let store = live_core::graph::store::Store::open(&root.join("graph/perception.sqlite3"))
         .expect("store opens");
     store.begin_run_fixed("run:a", "t0", "m").unwrap();
-    drop(store);
-    let text = rows
-        .iter()
-        .map(|r| serde_json::to_string(r).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    std::fs::write(live_core::leads::ledger_path(root), text).unwrap();
+    let refs: Vec<&live_core::leads::LedgerRow> = rows.iter().collect();
+    store.insert_lead_rows(&refs, true).expect("rows insert");
 }
 
 /// 表形态读回（写账序）。
@@ -958,7 +940,7 @@ async fn collect_tail_consumes_approved_leads_and_recounts_requests() {
             reject_note: String::new(),
         }
     };
-    seed_legacy_jsonl(
+    seed_lead_rows(
         root,
         &[
             mk_row(
@@ -994,13 +976,6 @@ async fn collect_tail_consumes_approved_leads_and_recounts_requests() {
         total_requests,
         "消费请求必须计入 request_count"
     );
-
-    // 迁移确证：旧 JSONL 已一次性入库并归档（可回滚本在场）
-    assert!(
-        !live_core::leads::ledger_path(root).exists(),
-        "collect 尾段须完成一次性迁移"
-    );
-    assert!(root.join("leads.jsonl.bak").exists(), "归档 .bak 必须在场");
 
     // 账本写回：approved → consumed（yield=3）；pending 行原样不动
     let rows = table_rows(root);
@@ -1070,7 +1045,7 @@ async fn l1_autonomy_auto_approves_and_consumes_new_creator() {
     mount_baseline(&server).await;
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path();
-    seed_legacy_jsonl(
+    seed_lead_rows(
         root,
         &[
             leads_row(
@@ -1160,7 +1135,7 @@ async fn l0_autonomy_default_pending_never_auto_approved() {
         "3001",
         live_core::leads::LeadStatus::PendingApproval,
     );
-    seed_legacy_jsonl(root, std::slice::from_ref(&row));
+    seed_lead_rows(root, std::slice::from_ref(&row));
 
     let base = server.uri();
     let mut config = test_config(root, 12);

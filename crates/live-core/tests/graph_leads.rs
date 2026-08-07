@@ -3,8 +3,6 @@
 //! - schema v7：`discovery_leads` 表（LedgerRow 全字段 + first_seen_run_id→graph_runs
 //!   外键）+ `episodes.lead_id` 列；v6→v7 就地升级原数据完好（旧库不兼容政策
 //!   至此让位：纯增量迁移零成本，照 GRAPH_SCHEMA_VERSION 机制升格）。
-//! - 迁移手段：`leads::migrate_jsonl` 把既有 leads.jsonl 一次性导入表（幂等——
-//!   dedupe_key 唯一键，重导入零新行），文件归档 `leads.jsonl.bak`（可回滚，不删除）。
 //! - 表面语义：dedupe 唯一键违例被拒；record 幂等；状态机单行道；
 //!   JSONL vs 表读面 parity（同一 LedgerRow 向量、同一 summary_line）。
 mod common;
@@ -67,17 +65,6 @@ fn tmp_dir(tag: &str) -> PathBuf {
     std::fs::create_dir_all(&dir).unwrap();
     dir
 }
-
-fn write_jsonl(dir: &Path, rows: &[LedgerRow]) {
-    let text = rows
-        .iter()
-        .map(|r| serde_json::to_string(r).unwrap())
-        .collect::<Vec<_>>()
-        .join("\n")
-        + "\n";
-    std::fs::write(leads::ledger_path(dir), text).unwrap();
-}
-
 // ---------------------------------------------------------------------------
 // 钉①：schema v7 新库——discovery_leads 表 + episodes.lead_id 列
 // ---------------------------------------------------------------------------
@@ -410,107 +397,7 @@ fn approve_transition_over_table() {
 // ---------------------------------------------------------------------------
 // 钉⑤：JSONL 一次性导入 + 归档 .bak + 幂等（二次零变化 / 重导入零新行）
 // ---------------------------------------------------------------------------
-
-#[test]
-fn migrate_jsonl_imports_archives_and_is_idempotent() {
-    let store = mem_store();
-    let dir = tmp_dir("migrate");
-    let rows = vec![
-        row("k1", "video", LeadStatus::PendingApproval),
-        row("k2", "search", LeadStatus::Approved),
-        row("k3", "creator", LeadStatus::Consumed),
-    ];
-    write_jsonl(&dir, &rows);
-
-    // 一次导入：3 行入表、jsonl 归档为 .bak（原文件消失、可回滚副本在场）
-    let imported = leads::migrate_jsonl(&store, &dir).unwrap();
-    assert_eq!(imported, 3);
-    assert!(!leads::ledger_path(&dir).exists(), "jsonl 必须被归档搬走");
-    let bak = dir.join("leads.jsonl.bak");
-    assert!(bak.exists(), ".bak 归档必须在场（可回滚）");
-    let table_rows = leads::read_rows(&store).unwrap();
-    assert_eq!(table_rows.len(), 3);
-
-    // 幂等①：二次迁移零变化（无 jsonl 可导、表行数不变、bak 不被覆盖）
-    let bak_bytes = std::fs::read(&bak).unwrap();
-    let again = leads::migrate_jsonl(&store, &dir).unwrap();
-    assert_eq!(again, 0, "二次迁移必须零变化");
-    assert_eq!(leads::read_rows(&store).unwrap().len(), 3);
-    assert_eq!(std::fs::read(&bak).unwrap(), bak_bytes, "bak 不动");
-
-    // 幂等②：人为复原 jsonl（同 3 行 + 1 新行）→ 重导入只进新行
-    let mut replay = rows.clone();
-    replay.push(row("k4", "video", LeadStatus::PendingApproval));
-    write_jsonl(&dir, &replay);
-    let delta = leads::migrate_jsonl(&store, &dir).unwrap();
-    assert_eq!(delta, 1, "dedupe_key 唯一键：同键零新行，只进 k4");
-    let table_rows = leads::read_rows(&store).unwrap();
-    assert_eq!(table_rows.len(), 4);
-    let k2 = table_rows.iter().find(|r| r.dedupe_key == "k2").unwrap();
-    assert_eq!(k2.status, LeadStatus::Approved, "迁移保留原状态机位");
-    let k3 = table_rows.iter().find(|r| r.dedupe_key == "k3").unwrap();
-    assert_eq!(k3.status, LeadStatus::Consumed);
-}
-
-/// 迁移守卫：jsonl 含坏行 → Err 响铃 + 文件原地不动（不推进归档）。
-#[test]
-fn migrate_jsonl_with_bad_line_rings_and_stays_put() {
-    let store = mem_store();
-    let dir = tmp_dir("bad-migrate");
-    let good = row("k1", "video", LeadStatus::PendingApproval);
-    let text = format!(
-        "{}\nnot json at all\n",
-        serde_json::to_string(&good).unwrap()
-    );
-    std::fs::write(leads::ledger_path(&dir), &text).unwrap();
-    let err = leads::migrate_jsonl(&store, &dir).unwrap_err();
-    assert!(err.to_string().contains("不可解析"), "{err}");
-    assert_eq!(
-        std::fs::read_to_string(leads::ledger_path(&dir)).unwrap(),
-        text,
-        "坏行在场时账本文本逐字节不动"
-    );
-    assert_eq!(
-        leads::read_rows(&store).unwrap().len(),
-        0,
-        "守卫拒下不导半份"
-    );
-}
-
-// ---------------------------------------------------------------------------
 // 钉⑥：读面 parity——JSONL 解析与表读出全等（LedgerRow 向量 + summary_line）
-// ---------------------------------------------------------------------------
-
-#[test]
-fn parity_jsonl_vs_table_read_face() {
-    let store = mem_store();
-    let dir = tmp_dir("parity");
-    let mut rows = vec![
-        row("k1", "video", LeadStatus::PendingApproval),
-        row("k2", "search", LeadStatus::Approved),
-        row("k3", "creator", LeadStatus::Consumed),
-    ];
-    rows[2].yield_count = 5;
-    write_jsonl(&dir, &rows);
-    // JSONL 解析面（迁移器同源的逐行 serde）
-    let jsonl_rows =
-        leads::parse_ledger_text(&std::fs::read_to_string(leads::ledger_path(&dir)).unwrap())
-            .unwrap();
-    leads::migrate_jsonl(&store, &dir).unwrap();
-    let table_rows = leads::read_rows(&store).unwrap();
-    assert_eq!(table_rows, jsonl_rows, "表读面必须与 JSONL 读面逐行全等");
-    assert_eq!(
-        leads::summary_line(&table_rows, None),
-        leads::summary_line(&jsonl_rows, None),
-        "摘要段必须两源同输出"
-    );
-    assert_eq!(
-        leads::summary_line(&table_rows, Some("u")),
-        leads::summary_line(&jsonl_rows, Some("u")),
-        "viewer 作用域摘要段同输出"
-    );
-}
-
 // ---------------------------------------------------------------------------
 // 钉⑦：episodes.lead_id——挂链写入面
 // ---------------------------------------------------------------------------
@@ -842,39 +729,4 @@ fn reject_fields_roundtrip_and_null_all_empty() {
     };
     assert_eq!(chips_json, None, "update 清空后 chip 列回 NULL");
     assert_eq!(note, None, "update 清空后注记列回 NULL");
-}
-
-/// 旧 .bak JSONL（v8 冻结契约：无 reject 字段）仍可解析/迁移——serde default
-/// 兼容面：缺键 → 空数组 + 空串（后续 reject 端点可正常写回）。
-#[test]
-fn legacy_jsonl_without_reject_fields_still_parses() {
-    let store = mem_store();
-    let dir = tmp_dir("legacy-reject");
-    // 手写 v8 期契约文本（无 reject_chips/reject_note 键）
-    let legacy_line = r#"{"dedupe_key":"k-legacy","type":"video","locator":"BV1","motivation":"m","expected_signal":"s","priority":"high","evidence_ids":["e1"],"viewer_id":"u","first_seen_run_id":"run:a","created_at":"t","status":"pending_approval","yield_count":0,"resolution_note":""}"#;
-    std::fs::write(leads::ledger_path(&dir), format!("{legacy_line}\n")).unwrap();
-    let imported = leads::migrate_jsonl(&store, &dir).unwrap();
-    assert_eq!(imported, 1);
-    let row = leads::read_rows(&store)
-        .unwrap()
-        .into_iter()
-        .next()
-        .unwrap();
-    assert_eq!(row.dedupe_key, "k-legacy");
-    assert_eq!(row.reject_chips, Vec::<String>::new(), "缺键 → 空拒因数组");
-    assert_eq!(row.reject_note, "", "缺键 → 空注记");
-    // reject 写回路径对旧行可通（一拒写账+记全字段，键不变）
-    let mut row = row;
-    row.status = LeadStatus::Rejected;
-    row.reject_chips = vec!["太泛".into()];
-    row.reject_note = "旧账新判".into();
-    store.update_lead_row(&row).unwrap();
-    let again = leads::read_rows(&store)
-        .unwrap()
-        .into_iter()
-        .next()
-        .unwrap();
-    assert_eq!(again.status, LeadStatus::Rejected);
-    assert_eq!(again.reject_chips, vec!["太泛".to_string()]);
-    assert_eq!(again.reject_note, "旧账新判");
 }

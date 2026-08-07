@@ -73,14 +73,10 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
         collection["leads_consumed"] = json!(0);
     }
     let store = open_graph(&root);
-    // G2 表形态（design §9.2 行 254）：leads 读面唯一源 = discovery_leads 表。
-    // 库在而旧 JSONL 仍在 → 此处一次性入库归档（幂等迁移的读面触点；守卫失败
-    // 即 500 响铃，绝不带病半账出面）。无库 → 空集合（M4.x 无账本的同义面）。
+    // 表形态（design §9.2 行 254）：leads 读面唯一源 = discovery_leads 表。
+    // 无库 → 空集合（一次性 JSONL 迁移已随删码刀5 退役）。
     let rows = match &store {
-        Some(store) => {
-            live_core::leads::migrate_jsonl(store, &root).map_err(internal)?;
-            live_core::leads::read_rows(store).map_err(internal)?
-        }
+        Some(store) => live_core::leads::read_rows(store).map_err(internal)?,
         None => Vec::new(),
     };
     let count =
@@ -331,7 +327,6 @@ pub(super) async fn lead_approve(
     // 写面端点：图库缺席则建仓（首触即 v7 schema；与纯读路径的「不建文件」纪律分野）。
     let store_path = root.join("graph").join("perception.sqlite3");
     let store = live_core::graph::store::Store::open(&store_path).map_err(internal)?;
-    live_core::leads::migrate_jsonl(&store, &root).map_err(internal)?;
     let Some(mut row) = store.lead_row(&lead_id).map_err(internal)? else {
         return Err(fail(
             StatusCode::NOT_FOUND,
@@ -391,7 +386,6 @@ pub(super) async fn lead_reject(
     // 写面端点：图库缺席则建仓（与 approve 同纪律）。
     let store_path = root.join("graph").join("perception.sqlite3");
     let store = live_core::graph::store::Store::open(&store_path).map_err(internal)?;
-    live_core::leads::migrate_jsonl(&store, &root).map_err(internal)?;
     let Some(mut row) = store.lead_row(&lead_id).map_err(internal)? else {
         return Err(fail(
             StatusCode::NOT_FOUND,

@@ -839,28 +839,6 @@ async fn viewer_tree_graph_reject_traversal_vids_404() {
     assert_eq!(status, 200, "demo-1 tree 应通行");
 }
 
-/// 补钉：overview 读面的端点响铃——legacy leads.jsonl 含坏行时
-/// 必须 500（绝不带病半账出面）、文件原地 .bak 缺席。
-#[tokio::test(flavor = "multi_thread")]
-async fn overview_with_bad_legacy_jsonl_rings_500() {
-    let fx = fixture();
-    std::fs::write(
-        fx.data_root.join("leads.jsonl"),
-        "{\"dedupe_key\":\"k-bad\"}\n{不是合法 json\n",
-    )
-    .unwrap();
-    let (status, body) = get(&fx.app, "/api/rooms/983/overview").await;
-    assert_eq!(status, 500, "{body}");
-    assert!(
-        body["error"]
-            .as_str()
-            .is_some_and(|s| s.contains("迁移守卫停火")),
-        "{body}"
-    );
-    assert!(fx.data_root.join("leads.jsonl").exists());
-    assert!(!fx.data_root.join("leads.jsonl.bak").exists());
-}
-
 /// 补钉：overview 的 leads.autonomy 徽标数据面双布景钉——
 /// 默认 0（人工审批文化）；config 写 leads_autonomy: 1 → 投影 1（徽标跟随）。
 #[tokio::test(flavor = "multi_thread")]

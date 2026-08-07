@@ -1455,11 +1455,6 @@ async fn run_pipeline_inner(
         Ok(store) => store,
         Err(err) => bail!(PipelineError::Store(err)),
     };
-    // G2（design §9.2 行 254）：M4.x JSONL 账本一次性入库 + 归档 .bak（幂等；
-    // 守卫失败响铃不绊管线——publish 读取面以表为准，迁移下轮再试。
-    if let Err(err) = leads::migrate_jsonl(&store, &config.output_dir) {
-        progress_say(knobs, &format!("[LEADS] 旧 JSONL 账本入库迁移失败：{err}"));
-    }
     let run_id = match store.begin_run(&config.ai.model) {
         Ok(run_id) => run_id,
         Err(err) => bail!(PipelineError::Store(err)),

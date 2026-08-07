@@ -11,15 +11,9 @@
 //!   （collect 尾段按预算消费）consumed + yield_count；人工可改 rejected
 //!   （一击终态，拒因留档）；适配器无映射的类型写 deferred。
 //!   禁倒退路径（approve_transition / reject_transition 唯一裁决点）。
-//! - 迁移：`migrate_jsonl` 把 M4.x 的 `output_dir/leads.jsonl` 一次性导入表
-//!   （守卫解析——坏行响铃不动文件；dedupe_key OR IGNORE 使重导入零新行），
-//!   随后把文件归档为 `leads.jsonl.bak`（不删除，可回滚；再撞名加序号）。
-//!   JSONL 读面兼容层**不留**——读本领只走表。
 //! - fail-open 血脉（表形态）：入账/写回失败以 Err 面世，调用方
 //!   （pipeline/collect 尾段）响铃吞错——丢账目不丢感知，但绝不静默。
 //! - 摘要段 `summary_line` 是下轮 AI 上下文唯一消费者（移除实验体：不在则死）。
-
-use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
@@ -28,7 +22,6 @@ use crate::graph::store::{Store, StoreError};
 use crate::models::Lead;
 
 /// M4.x 账本文件名（迁移期源文件；现布局单房间产物根）。
-pub const LEDGER_FILE_NAME: &str = "leads.jsonl";
 /// `dedupe_key` recipe 域前缀（`_hash` 第一槽）。
 pub const DEDUPE_KEY_PREFIX: &str = "m4x-lead";
 /// `dedupe_key` 截断长度（`_hash` 第二参；与 evidence_id/episode_id 全产线同宽）。
@@ -83,7 +76,7 @@ pub struct LedgerRow {
     #[serde(default)]
     pub resolution_note: String,
     /// 拒绝提交的 chip（reject 端点白名单校验后落账）；
-    /// `#[serde(default)]` 兼容旧 .bak/已归档 JSONL 行的缺席形态（空数组）。
+    /// `#[serde(default)]` 空数组缺省。
     #[serde(default)]
     pub reject_chips: Vec<String>,
     /// 拒绝注记（reject 端点自由文本；全空合法 = 空串）。
@@ -124,11 +117,6 @@ fn pending_row(lead: &Lead, viewer_id: &str, run_id: &str, now: &str) -> LedgerR
     }
 }
 
-/// M4.x 账本路径（迁移期唯一用途；读面不再经此取数）。
-pub fn ledger_path(output_dir: &Path) -> PathBuf {
-    output_dir.join(LEDGER_FILE_NAME)
-}
-
 /// 入账新线索（幂等）：同 dedupe_key 任意状态已存在则跳行。返回实际入库行数。
 /// Err 面世（FK 违约 / 库不可写），由调用方响铃吞纳。
 pub fn record_leads(
@@ -149,61 +137,6 @@ pub fn record_leads(
 /// 全账读面（写账序）——annex / overview / 审批缝的唯一数据源。
 pub fn read_rows(store: &Store) -> Result<Vec<LedgerRow>, StoreError> {
     store.lead_rows()
-}
-
-/// M4.x JSONL 文本的守卫解析：任何一行不可解析即 Err（行号入错文）——
-/// 迁移器与 parity 钉共同的真源（坏行绝不带病入库）。
-pub fn parse_ledger_text(text: &str) -> std::io::Result<Vec<LedgerRow>> {
-    let mut rows = Vec::new();
-    for (index, line) in text.lines().enumerate() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-        let row = serde_json::from_str::<LedgerRow>(trimmed).map_err(|err| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                format!("leads.jsonl 第{}行不可解析：{err}", index + 1),
-            )
-        })?;
-        rows.push(row);
-    }
-    Ok(rows)
-}
-
-/// 归档文件名：`leads.jsonl.bak`；撞名加序号（.bak.1 .bak.2…——多轮迁移不毁旧回滚本）。
-fn archive_target(output_dir: &Path) -> PathBuf {
-    let mut candidate = output_dir.join(format!("{LEDGER_FILE_NAME}.bak"));
-    let mut serial = 1_u32;
-    while candidate.exists() {
-        candidate = output_dir.join(format!("{LEDGER_FILE_NAME}.bak.{serial}"));
-        serial += 1;
-    }
-    candidate
-}
-
-/// G2 JSONL→表迁移（design §9.2 行 254）：把 `output_dir/leads.jsonl` 一次性导入
-/// discovery_leads 表（dedupe_key OR IGNORE → 重导入零新行，幂等），随后把源文件
-/// 归档为 `.bak`（不删除，可回滚）。
-///
-/// - 无账本文件 → Ok(0)（零副作用）；
-/// - 文件存在但任一行不可解析 → Err 响铃，**文件原地不动、表不导半份**（同族守卫）；
-/// - 入库失败（FK 违约等）→ Err，文件不归档，下轮重试面自愈合。
-pub fn migrate_jsonl(store: &Store, output_dir: &Path) -> Result<usize, StoreError> {
-    let path = ledger_path(output_dir);
-    let text = match std::fs::read_to_string(&path) {
-        Ok(text) => text,
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(0),
-        Err(err) => return Err(StoreError::Repo(format!("leads 账本读取失败：{err}"))),
-    };
-    let rows = parse_ledger_text(&text)
-        .map_err(|err| StoreError::Repo(format!("leads 账本迁移守卫停火：{err}")))?;
-    let refs: Vec<&LedgerRow> = rows.iter().collect();
-    let inserted = store.insert_lead_rows(&refs, false)?;
-    let target = archive_target(output_dir);
-    std::fs::rename(&path, &target)
-        .map_err(|err| StoreError::Repo(format!("leads 账本归档失败：{err}")))?;
-    Ok(inserted)
 }
 
 /// G2-B 审批缝状态机辅助：`pending_approval → approved` 是 approve 通道唯一合法
@@ -553,6 +486,7 @@ fn annex_snippet_of(title: &str, fields_json: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     fn lead(lead_type: &str, locator: &str) -> Lead {
         Lead {
@@ -657,16 +591,6 @@ mod tests {
     }
 
     /// 守卫解析：好行进出全等；坏行载行号 Err（迁移停火面的措辞钉）。
-    #[test]
-    fn parse_ledger_text_guarded() {
-        let good = row("k1", "video", LeadStatus::PendingApproval);
-        let text = format!("{}\n\n", serde_json::to_string(&good).unwrap());
-        assert_eq!(parse_ledger_text(&text).unwrap(), vec![good]);
-        let bad = "{\"dedupe_key\": \"x\"}\nnot json at all\n";
-        let err = parse_ledger_text(bad).unwrap_err();
-        assert!(err.to_string().contains("第1行不可解析"), "{err}");
-    }
-
     #[test]
     fn summary_line_matches_frozen_contract() {
         let mut rows = vec![

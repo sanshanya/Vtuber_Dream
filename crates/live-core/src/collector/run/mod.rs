@@ -222,11 +222,9 @@ pub fn collect_with_client(
 }
 
 /// G2 尾段账本动作一体化的表形态（design §9.2 行 254）：
-/// 1. 图库不存在且旧 JSONL 账本也不存在 → 秒返 0（鲜房零副作用——不建空库，
-///    缺图空态不被消费通道提前翻牌）；
-/// 2. 库在（或旧账本需在库）→ 开库 → `migrate_jsonl` 一次性把 M4.x JSONL 导入表并
-///    归档 .bak（幂等；守卫失败响铃+本轮账本停火，同族）；
-/// 3. G2-B 自治 L1 先翻页 → 预算内消费 approved 行。
+/// 图库不存在 → 秒返 0（鲜房零副作用——不建空库，缺图空态不被消费通道提前翻牌）；
+/// 库在 → 开库 → G2-B 自治 L1 先翻页 → 预算内消费 approved 行。
+/// （一次性 JSONL 迁移已随删码刀5 退役：账本 = 表为正本。）
 ///
 /// 全程失败响铃吞纳（返回 0）：账本失败不杀 collection（薄切 fail-open 血脉）。
 fn consume_lead_table(
@@ -236,8 +234,7 @@ fn consume_lead_table(
     emit: &mut dyn FnMut(&str),
 ) -> usize {
     let store_path = root.join("graph").join("perception.sqlite3");
-    let ledger_present = crate::leads::ledger_path(root).exists();
-    if !store_path.exists() && !ledger_present {
+    if !store_path.exists() {
         return 0;
     }
     let store = match crate::graph::store::Store::open(&store_path) {
@@ -247,19 +244,6 @@ fn consume_lead_table(
             return 0;
         }
     };
-    match crate::leads::migrate_jsonl(&store, root) {
-        Ok(n) => {
-            if n > 0 {
-                emit(&format!(
-                    "[LEADS] 旧 JSONL 账本入库 {n} 行（原文件归档为 leads.jsonl.bak）"
-                ));
-            }
-        }
-        Err(err) => {
-            emit(&format!("[LEADS] 账本迁移失败，本轮账本动作停火：{err}"));
-            return 0;
-        }
-    }
     // G2-B 自治 L1：消费前先把谓词合格的 pending 行自动迁 approved
     //（autonomy=0 → 秒返 0，L0 现状纯人工一字不动）。
     let auto = leads::auto_approve_pending_leads(

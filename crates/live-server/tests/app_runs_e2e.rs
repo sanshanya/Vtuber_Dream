@@ -1136,8 +1136,7 @@ async fn single_viewer_run_audience_failure_marks_partial_true() {
 /// 终局带回 ≥1 条 audience lead → 账本出现 pending_approval 行（以
 /// AUDIENCE_VIEWER_ID 入账），/rooms/:uid/overview 读数面同步呈现 pending。
 /// 审批 seam（G2-B 已端点化）：POST /api/rooms/:uid/leads/:lead_id/approve
-/// 翻转 pending → approved（幂等重放同终态不写账本）；旧红线（手工编辑
-/// leads.jsonl）仍是合法的旁路面。
+/// 翻转 pending → approved（幂等重放同终态不写账本）。
 /// 轮二（采集消费+对账）：撬开 lead_fetch_budget_per_run=1 → 同模式非单查 collect
 /// 尾段按预算消费该 creator lead，wiremock /x/space/wbi/arc/search 以 mid=3001
 /// 命中并返还 1 条投稿 → 行转 consumed、yield_count>0、collection.json

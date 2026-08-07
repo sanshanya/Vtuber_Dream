@@ -280,17 +280,6 @@ mod tests {
         assert!(!root.join("analysis.json").exists());
     }
 
-    /// leads.jsonl 是 M4.x 线索账本——在 reset_output 白名单**外**，
-    /// 必须永不被清（工作面清理不碰长期账本；「存在性钉」防改清单时灭账）。
-    #[test]
-    fn reset_output_never_sweeps_leads_ledger() {
-        let root = temp_root();
-        let root = root.path();
-        std::fs::write(root.join("leads.jsonl"), "{\"dedupe_key\":\"x\"}\n").unwrap();
-        reset_output(root).unwrap();
-        assert!(root.join("leads.jsonl").exists(), "账本必须在 reset 中存活");
-    }
-
     /// write/rename 之间进程崩溃会留孤儿
     /// `.{name}.live-core-tmp-*`（唯一命名不复用、不自愈）；归档若原样整拷，
     /// 垃圾态会污染时间序列快照——归档必须滤掉隐藏临时件。

@@ -68,7 +68,7 @@ npm run build
 
 ## 线索账本（M4.x 薄切）
 
-AI 终局提交中的 `leads[]`（经终局校验白名单：search/creator/video/room）由程序记入**图库 `discovery_leads` 表**（账本 = 表为正本；旧 `leads.jsonl` 只做一次性迁移源——含坏行时迁移守卫响铃停火、文件原地、不入半份；成功则导入归档为 `leads.jsonl.bak`，读面只走表）。身份为 `(type, locator)` 的内容哈希（dedupe_key 主键即幂等唯一键），重复线索不增行；状态机 `pending_approval → approved → consumed / rejected`（另有 `deferred` 搁置态，不入主链）。人工审批唯一通道：线索账本页的「批准/拒绝」钮（`POST /api/rooms/{room}/leads/{lead_id}/approve|reject`，`lead_id` = 行 `dedupe_key`；幂等——重放返回相同终态不写账本，已拒绝行带相异非空拒因重放 = 422 留档不可改写；不存在=404；非法迁移=422 讲规则；迁移守卫坏行=500 停火）。拒绝可携拒因：chip 白名单（太泛/不对路/已知道/做不了，唯一真源 = overview `leads.reject_chip_reasons` 下发）+ ≤80 字自由注记，全空合法（留档 NULL/NULL）。
+AI 终局提交中的 `leads[]`（经终局校验白名单：search/creator/video/room）由程序记入**图库 `discovery_leads` 表**（账本 = 表为正本，读面只走表；M4.x 一次性 JSONL 迁移已完成使命退役——旧 `leads.jsonl` 不再特殊，reset 语义不为它背书）。身份为 `(type, locator)` 的内容哈希（dedupe_key 主键即幂等唯一键），重复线索不增行；状态机 `pending_approval → approved → consumed / rejected`（另有 `deferred` 搁置态，不入主链）。人工审批唯一通道：线索账本页的「批准/拒绝」钮（`POST /api/rooms/{room}/leads/{lead_id}/approve|reject`，`lead_id` = 行 `dedupe_key`；幂等——重放返回相同终态不写账本，已拒绝行带相异非空拒因重放 = 422 留档不可改写；不存在=404；非法迁移=422 讲规则）。拒绝可携拒因：chip 白名单（太泛/不对路/已知道/做不了，唯一真源 = overview `leads.reject_chip_reasons` 下发）+ ≤80 字自由注记，全空合法（留档 NULL/NULL）。
 
 - 消费：采集（collect）尾段按 `collection.lead_fetch_budget_per_run`（默认 0＝完全休眠）消费 `approved` 行，成功行记 `yield_count`；>0 会产生额外 B 站请求，同样受 `request_delay_seconds` 限速。
 - 自治位：`collection.leads_autonomy`（0|1，默认 0=纯人工）。置 1（L1）后，collect 尾段在预算消费前先自动批准 pending 行——谓词限 creator/search 型、且 creator 目标 uid 不在本房间既有名册（viewers/*.json ∪ 主播 uid）——账本 resolution_note 记「L1 自动批准」，再照常按预算消费；线索页标题行徽标可读当前位。
