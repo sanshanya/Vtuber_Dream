@@ -366,8 +366,6 @@ fn build_ws_fixture(
         config_path: config_path.clone(),
         web_root: tmp.path().join("no-dist"),
         registry: registry.clone(),
-        demo: false,
-        data_root: None,
         bilibili_hosts: Some((bilibili_uri.to_string(), bilibili_uri.to_string())),
         config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),

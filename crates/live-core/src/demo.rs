@@ -1,4 +1,6 @@
-//! M4-D 合成 demo 通道（Python demo.py 平移，裁剪：不产 peers/* 与 HTML 站）。
+//! 合成数据布景母机（**测试/走查专用**：CLI/serve 产品面已删除 synthetic 运行时——
+//! 本模块不再接入任何产品运行路径；消费者 = 集成测试布景（app_data/app_delta 等）
+//! 与 demo_run 自测。面板离线预览 = 以本母机或 tests-fixtures/demo 铺 output_dir。
 //!
 //! 体积备书：超 500 线 = 端到端单一流水线 + 数据字面（demo_viewers/specs；
 //! 同观众断言的依据）。字面-行为同卷邻置正是金样本独立性原则（批次 B3 内特批）；

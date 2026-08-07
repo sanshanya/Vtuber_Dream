@@ -1,6 +1,6 @@
 //! M5-B2 数据面钉团：overview（含 delta/leads 区块）/viewers/tree/graph（cytoscape DTO）。
 //!
-//! 布景 = build_demo 到临时输出根 → web/dist 无参与（fallback 另案钉）。
+//! 布景 = build_demo 直产 config.output_dir → web/dist 无参与（fallback 另案钉）。
 
 use std::io::Read as _;
 
@@ -42,18 +42,12 @@ fn fixture() -> Fixture {
     )
     .unwrap();
     let config = live_core::config::load_config(&config_path).expect("config loads");
-    let built = live_core::demo::build_demo(&config, None).expect("demo builds");
-    let data_root = std::path::PathBuf::from(
-        built["output_dir"]
-            .as_str()
-            .expect("demo reports output_dir"),
-    );
+    live_core::demo::build_demo(&config, Some(&output_dir)).expect("demo builds");
+    let data_root = output_dir;
     let app = build_app(AppState {
         config_path: config_path.clone(),
         web_root: tmp.path().join("no-dist"),
         registry: live_server::registry::Registry::new(),
-        demo: true,
-        data_root: Some(data_root.clone()),
         bilibili_hosts: None,
         config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
@@ -808,8 +802,6 @@ async fn graph_endpoints_404_when_graph_absent() {
         config_path,
         web_root: tmp.path().join("no-dist"),
         registry: live_server::registry::Registry::new(),
-        demo: false,
-        data_root: None,
         bilibili_hosts: None,
         config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),

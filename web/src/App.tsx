@@ -26,19 +26,6 @@ const GraphPage = lazy(() =>
   import("./pages/GraphPage").then((module) => ({ default: module.GraphPage })),
 );
 
-/**
- * footer synthetic 徽标的析取口径（单源）：collection/ai/situation
- * 任一 synthetic_demo=true → 亮；三分段全缺席/全 false → 不亮（合成标示宁可缺席，
- * 不许凭失败/缺省臆造）。注：Streamer 内的同源口径是他单辖区，保留不动。
- */
-export function isSyntheticRun(overview: OverviewView | undefined): boolean {
-  return (
-    overview?.collection?.synthetic_demo === true ||
-    overview?.ai?.synthetic_demo === true ||
-    overview?.situation?.synthetic_demo === true
-  );
-}
-
 /** 页面键 → 组件实体装配（ROUTES 数据表在 router.tsx；七页全懒，
  *  Suspense 边界唯一，挂在 <main> 出口——见 App 返回体）。 */
 function renderPage(page: PageId, params: string[], roomId: string) {
@@ -67,14 +54,11 @@ export default function App() {
   // 现布局单房间：任何数据页先解析第一条 room（uid 由 config 房号背书）。
   const rooms = useQuery({ queryKey: ["rooms"], queryFn: api.rooms });
   const roomId = rooms.data?.[0]?.id;
-  // synthetic_demo 全局明示（README「页面以徽标明示」承诺兑现）。
-  // overview 失败静默缺省——合成标示宁可缺席，不许凭失败臆造。
   const overview = useQuery({
     queryKey: ["overview", roomId],
     queryFn: () => api.overview(roomId!),
     enabled: roomId !== undefined,
   });
-  const syntheticDemo = isSyntheticRun(overview.data);
   // hero 房间名：streamer.name 优先（房间 = 主播），缺档回落项目名。
   const streamerName = overview.data?.streamer?.name;
   const route = matchRoute(segments);
@@ -146,11 +130,6 @@ export default function App() {
       </main>
       <footer className="container footer">
         公开信息感知原型 · 平台事实、AI语义、状态判断和行动建议分层展示
-        {syntheticDemo && (
-          <span className="badge" data-testid="app-synthetic">
-            synthetic_demo 合成演示数据
-          </span>
-        )}
       </footer>
     </>
   );

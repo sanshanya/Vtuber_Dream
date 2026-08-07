@@ -71,8 +71,8 @@ fn stage_delta_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
     )
     .unwrap();
     let config = live_core::config::load_config(&config_path).expect("config loads");
-    let built = live_core::demo::build_demo(&config, None).expect("demo builds");
-    let demo_root = PathBuf::from(built["output_dir"].as_str().expect("output_id"));
+    live_core::demo::build_demo(&config, Some(&output_dir)).expect("demo builds");
+    let demo_root = output_dir;
 
     let graph_db = demo_root.join("graph").join("perception.sqlite3");
     let conn = rusqlite::Connection::open(&graph_db).expect("graph opens");
@@ -180,13 +180,11 @@ fn stage_delta_fixture() -> (tempfile::TempDir, PathBuf, PathBuf) {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn overview_delta_after_second_complete_run_is_non_baseline() {
-    let (_tmp, config_path, demo_root) = stage_delta_fixture();
+    let (_tmp, config_path, _demo_root) = stage_delta_fixture();
     let app = build_app(AppState {
         config_path: config_path.clone(),
         web_root: Path::new("no-dist").to_path_buf(),
         registry: live_server::registry::Registry::new(),
-        demo: true,
-        data_root: Some(demo_root.clone()),
         bilibili_hosts: None,
         config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),

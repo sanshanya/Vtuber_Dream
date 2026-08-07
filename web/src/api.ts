@@ -164,14 +164,12 @@ export interface CollectionView {
   finished_at?: string | null;
   viewer_count?: number;
   /** 合成标示写位（三处分段随工件周期漂移，前端析取不绑定单一来源位）。 */
-  synthetic_demo?: boolean;
   leads_consumed?: number;
 }
 
 export interface AiJobView {
   status?: string | null;
   completed_at?: string | null;
-  synthetic_demo?: boolean;
   /** state.json.usage 原始五键（金额换算只在 format.ts，URL: 单屏单口径）。 */
   usage?: UsageRow | null;
 }
@@ -181,7 +179,6 @@ export interface SituationView {
   /** LLM 产物形状漂移（无 schema 校验）——消费侧护栏取值。
    *  deprecated：前台直呈已退役； surviving 唯一消费=BriefingCard 的 front_brief。 */
   analysis?: Record<string, unknown> | null;
-  synthetic_demo?: boolean;
 }
 
 /** viewers/{uid}.json 原料形状（前进式取用：已知键字面量 + 透传租约）。 */

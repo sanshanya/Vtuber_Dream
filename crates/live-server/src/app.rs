@@ -45,10 +45,6 @@ pub struct AppState {
     /// 静态面根（不内嵌；生产 cwd/web/dist、测试可注入）。
     pub web_root: PathBuf,
     pub registry: Registry,
-    /// demo（run --demo）模式（G3）——run 通道返回静态快照，不触发真实运行。
-    pub demo: bool,
-    /// 数据呈现根覆盖 —— run --demo 让它指向 _demo，serve 常态 = None → 从 config 每请求读取。
-    pub data_root: Option<PathBuf>,
     /// 测试接缝：POST runs → spawn 的 Bilibili 根地址注入（生产 None → 官方端点）。
     pub bilibili_hosts: Option<(String, String)>,
     /// config 写互斥——并发 PUT 的 read-modify-write 会互相覆盖丢更新。
@@ -96,12 +92,9 @@ pub(super) fn load_config(state: &AppState) -> AppResult<live_core::config::Conf
         .map_err(|error| fail(StatusCode::INTERNAL_SERVER_ERROR, &error.to_string()))
 }
 
-/// 数据根统一落点：demo 覆盖 → config.output_dir。
+/// 数据根统一落点：config.output_dir。
 pub(super) fn data_root(state: &AppState) -> AppResult<PathBuf> {
-    match &state.data_root {
-        Some(root) => Ok(root.clone()),
-        None => Ok(load_config(state)?.output_dir),
-    }
+    Ok(load_config(state)?.output_dir)
 }
 
 /// JSON 体信封化——所有 JsonRejection（含 DefaultBodyLimit 触发的 413）
@@ -242,9 +235,6 @@ pub struct StartOptions {
     pub config_path: PathBuf,
     pub port: u16,
     pub web_root: PathBuf,
-    pub demo: bool,
-    /// demo（_demo 根）态数据呈现覆盖。
-    pub data_root: Option<PathBuf>,
     /// 测试接缝：POST runs → Bilibili 根地址注入（生产 None；见 AppState 同名字段）。
     pub bilibili_hosts: Option<(String, String)>,
 }
@@ -260,8 +250,6 @@ pub fn serve(options: StartOptions) -> Result<(), String> {
             config_path: options.config_path,
             web_root: options.web_root,
             registry: Registry::new(),
-            demo: options.demo,
-            data_root: options.data_root,
             bilibili_hosts: options.bilibili_hosts,
             config_write_lock: Default::default(),
             graph_artifact_lock: Default::default(),

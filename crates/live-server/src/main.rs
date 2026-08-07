@@ -1,35 +1,20 @@
-//! live-audience CLI（M5-B：serve + run --demo 双模式）。
+//! live-audience CLI。
 //!
 //! 参数解析与命令分发 only（AGENTS.md 目标模块边界）；手写最小解析——
-//! 四个子命令（demo/agent-check/serve/run），选项集不同，不值得引入 clap。
+//! 三个子命令（agent-check/serve/graph-reconcile），选项集不同，不值得引入 clap。
 
 use std::path::PathBuf;
 use std::process::ExitCode;
 
-const USAGE: &str = "用法: live-audience <命令>\n  demo [-c|--config <config.yaml>] [--output <目录>]  合成数据 Demo\n  agent-check [-c|--config <config.yaml>]              真实端点探针验收（opt-in：需环境变量 VTD_AGENT_CHECK=1）\n  serve [-c|--config <config.yaml>] [--port <n>]         本地服务（默认 3781）\n  run --demo [-c|--config <config.yaml>] [--port <n>]    先构建合成 Demo，再以其结果起服\n  graph-reconcile [-c|--config <config.yaml>]            长期实体「AI 归并」单轮回放";
+const USAGE: &str = "用法: live-audience <命令>\n  agent-check [-c|--config <config.yaml>]              真实端点探针验收（opt-in：需环境变量 VTD_AGENT_CHECK=1）\n  serve [-c|--config <config.yaml>] [--port <n>]         本地服务（默认 3781）\n  graph-reconcile [-c|--config <config.yaml>]            长期实体「AI 归并」单轮回放";
 
 /// 真实端点验收的显式开关值（AGENTS.md 质量门禁：真实端点必须 opt-in）。只认 "1"。
 pub const AGENT_CHECK_ENV: &str = "VTD_AGENT_CHECK";
 
 enum Parse {
-    Demo {
-        config: PathBuf,
-        output: Option<PathBuf>,
-    },
-    AgentCheck {
-        config: PathBuf,
-    },
-    Serve {
-        config: PathBuf,
-        port: u16,
-    },
-    RunDemo {
-        config: PathBuf,
-        port: u16,
-    },
-    GraphReconcile {
-        config: PathBuf,
-    },
+    AgentCheck { config: PathBuf },
+    Serve { config: PathBuf, port: u16 },
+    GraphReconcile { config: PathBuf },
     Help,
     Usage(String),
 }
@@ -81,20 +66,10 @@ fn parse(args: &[String]) -> Parse {
     if command == "-h" || command == "--help" {
         return Parse::Help;
     }
-    // run 的合法形态只有 `run --demo`。
-    if command == "run" && rest.next().map(String::as_str) != Some("--demo") {
-        return Parse::Usage("run 仅支持 --demo（合成演示通道）".to_string());
-    }
-    if command != "demo"
-        && command != "agent-check"
-        && command != "serve"
-        && command != "run"
-        && command != "graph-reconcile"
-    {
+    if command != "agent-check" && command != "serve" && command != "graph-reconcile" {
         return Parse::Usage(format!("未知命令 {command}"));
     }
     let mut config = PathBuf::from("config.yaml");
-    let mut output = None;
     let mut port = live_server::app::DEFAULT_PORT;
     while let Some(arg) = rest.next() {
         match arg.as_str() {
@@ -108,22 +83,13 @@ fn parse(args: &[String]) -> Parse {
                 Ok(value) => port = value,
                 Err(reason) => return Parse::Usage(reason),
             },
-            "--output" if command == "demo" => match rest.next() {
-                Some(value) if looks_like_option(value) => {
-                    return Parse::Usage(format!("--output 缺目录（{value} 是选项）"));
-                }
-                Some(value) => output = Some(PathBuf::from(value)),
-                None => return Parse::Usage("--output 缺目录".to_string()),
-            },
             other => return Parse::Usage(format!("未知参数 {other}")),
         }
     }
     match command {
-        "demo" => Parse::Demo { config, output },
         "agent-check" => Parse::AgentCheck { config },
         "serve" => Parse::Serve { config, port },
-        "graph-reconcile" => Parse::GraphReconcile { config },
-        _ => Parse::RunDemo { config, port },
+        _ => Parse::GraphReconcile { config },
     }
 }
 
@@ -156,14 +122,6 @@ fn main() -> ExitCode {
             eprintln!("{reason}\n{USAGE}");
             ExitCode::from(2)
         }
-        Parse::Demo { config, output } => run_json_task(|| {
-            live_core::config::load_config(&config)
-                .map_err(|error| error.to_string())
-                .and_then(|cfg| {
-                    live_core::demo::build_demo(&cfg, output.as_deref())
-                        .map_err(|error| error.to_string())
-                })
-        }),
         Parse::AgentCheck { config } => {
             // env 门先行：未 opt-in 时连 config 都不读（AGENTS.md 质量门禁·真实端点条款；
             // 钉：agent_check_cli.rs 拒门用例给了不存在的配置路径仍报门）。
@@ -182,7 +140,7 @@ fn main() -> ExitCode {
                     })
             })
         }
-        Parse::Serve { config, port } => serve_command(config, port, false, None),
+        Parse::Serve { config, port } => serve_command(config, port),
         Parse::GraphReconcile { config } => run_json_task(|| {
             live_core::config::load_config(&config)
                 .map_err(|error| error.to_string())
@@ -205,39 +163,15 @@ fn main() -> ExitCode {
                     serde_json::to_value(report).map_err(|error| error.to_string())
                 })
         }),
-        Parse::RunDemo { config, port } => {
-            // run --demo：构建合成 Demo → 起服（demo 模式 = run 通道返回静态快照，G3）。
-            let built = live_core::config::load_config(&config)
-                .map_err(|error| error.to_string())
-                .and_then(|cfg| {
-                    live_core::demo::build_demo(&cfg, None).map_err(|error| error.to_string())
-                });
-            match built {
-                Ok(result) => {
-                    eprintln!(
-                        "合成 Demo 已就绪：{}",
-                        result["output_dir"].as_str().unwrap_or("<路径丢失>")
-                    );
-                    let demo_root = result["output_dir"].as_str().map(PathBuf::from);
-                    serve_command(config, port, true, demo_root)
-                }
-                Err(error) => {
-                    eprintln!("error: {error}");
-                    ExitCode::from(2)
-                }
-            }
-        }
     }
 }
 
-/// serve/run 共用启动面（B1）：端口 + demo 模式 + 数据根覆盖。
-fn serve_command(config: PathBuf, port: u16, demo: bool, demo_root: Option<PathBuf>) -> ExitCode {
+/// serve 启动面（B1）：端口。
+fn serve_command(config: PathBuf, port: u16) -> ExitCode {
     match live_server::app::serve(live_server::app::StartOptions {
         config_path: config,
         port,
         web_root: PathBuf::from("web/dist"),
-        demo,
-        data_root: demo_root,
         // 生产恒走官方端点；测试面由 AppState 同名 seam 注入 wiremock 根。
         bilibili_hosts: None,
     }) {

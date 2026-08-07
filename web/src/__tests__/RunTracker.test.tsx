@@ -206,16 +206,4 @@ describe("RunTracker 共享追踪", () => {
     // 且丢失提示有可见 ×（dismiss 不靠悬停 tooltip 藏）。
     expect(screen.getByText(/run 记录已丢失.*×/)).toBeTruthy();
   });
-
-  // demo 快照徽标必须明示合成——与真实 done 同形即「合成诡装真实」。
-  it("kind===demo 的终态徽标带合成字样", async () => {
-    stubFetchPlan({
-      "/api/runs/r-1": [
-        { status: 200, body: JSON.stringify(makeRecord({ kind: "demo", status: "done" })) },
-      ],
-    });
-    harness();
-    fireEvent.click(screen.getByText("track"));
-    await waitFor(() => expect(screen.getByText(/synthetic_demo 合成演示/)).toBeTruthy());
-  });
 });

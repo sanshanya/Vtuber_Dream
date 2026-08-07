@@ -5,7 +5,7 @@
  * - 主播卡 profile 透传（名字/粉丝徽标/头像 no-referrer）与 profile 缺档空态；
  * - v2：首卡恒为复盘卡（recap 就绪/null 两态 DOM 序）+ 宏观段退役面
  *   （态势项胶囊/宏观折叠组/executive_summary 直呈/situ-synthetic 徽标随退役段
- *   同葬；synthetic 析取的存活面=页脚徽标，App.test 钉着）。
+ *   同葬；页脚 synthetic 徽标亦随刀2 runtime-demo 删除同葬）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";

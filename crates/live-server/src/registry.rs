@@ -69,8 +69,6 @@ pub struct RunRecord {
 #[derive(Default)]
 struct RegistryInner {
     records: std::collections::HashMap<String, Arc<Mutex<RunRecord>>>,
-    /// demo 静态快照：重复 POST /api/runs 返回同一记录（合成、无网络→幂等）。
-    demo_snapshot_id: Option<String>,
 }
 
 #[derive(Clone, Default)]
@@ -79,8 +77,7 @@ pub struct Registry {
 }
 
 /// 登记簿保留上限——run 记录是进程内短时热数据，常驻只增不删会缓慢膨胀；
-/// 终态记录按 started_at 从旧到新剔除至不越顶（在飞 run 永远保留，demo 快照被剔时也
-/// 不影响幂等——demo_snapshot_id 兜底重栽，见 demo_snapshot）。
+/// 终态记录按 started_at 从旧到新剔除至不越顶（在飞 run 永远保留）。
 pub const RUN_RECORDS_CAP: usize = 64;
 
 impl Registry {
@@ -99,7 +96,7 @@ impl Registry {
         Self::insert_locked(&mut inner, record)
     }
 
-    /// 已持 inner 锁的登记通道：demo_snapshot / spawn_run 的复合判定+登记共享这一根。
+    /// 已持 inner 锁的登记通道：spawn_run 的复合判定+登记共享这一根。
     fn insert_locked(inner: &mut RegistryInner, record: RunRecord) -> Arc<Mutex<RunRecord>> {
         let shared = Arc::new(Mutex::new(record));
         let key = shared.lock().expect("record poisoned").run_id.clone();
@@ -171,47 +168,12 @@ impl Registry {
         }
     }
 
-    /// demo 静态快照（G3 裁决）：合成、无网络、幂等——重复 POST /api/runs 返回同一记录。
-    ///
-    /// 查/栽/回填必须同锁——旧实现先查后栽，两个并发 POST 能各自栽出
-    /// 一份快照并把 demo_snapshot_id 互相踩掉。快照记录若被 GC 剔走，id 兜底重栽。
-    pub fn demo_snapshot(&self, outcome: Value) -> Arc<Mutex<RunRecord>> {
-        let mut inner = self.inner.lock().expect("registry poisoned");
-        if let Some(record) = inner
-            .demo_snapshot_id
-            .as_ref()
-            .and_then(|id| inner.records.get(id))
-        {
-            return record.clone();
-        }
-        let shared = Self::insert_locked(
-            &mut inner,
-            RunRecord {
-                run_id: format!("demo-{}", uuid::Uuid::new_v4()),
-                kind: "demo".to_string(),
-                viewer_uid: None,
-                force: false,
-                status: "done".to_string(),
-                started_at: utc_now(),
-                finished_at: Some(utc_now()),
-                outcome: Some(json!({
-                    "synthetic_demo": true,
-                    "state": outcome,
-                })),
-                partial: false,
-                events: Arc::new(RunEvents::new()),
-            },
-        );
-        inner.demo_snapshot_id = Some(shared.lock().expect("record poisoned").run_id.clone());
-        shared
-    }
-
     /// 触发真实运行：spawn 一个普通线程（collect 是同步、pipeline 内有自身 runtime）。
     ///
     /// seam：`bilibili_hosts` 在测试面注入（wiremock）；生产 None → BilibiliClient::new。
     ///
     /// 单 run 互斥：判定与登记在同一把 inner 锁内完成；已有未终态 run →
-    /// Err(在飞 run_id)，由调用方折 409。demo 快照恒 done 不挡路。
+    /// Err(在飞 run_id)，由调用方折 409。
     pub fn spawn_run(
         registry: &Registry,
         config: Config,

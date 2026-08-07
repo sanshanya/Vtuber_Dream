@@ -16,12 +16,11 @@
 # 前端一次性构建（产物 web/dist，未构建时 / 显示构建指引而非静默 404）
 cd web && npm ci && npm run build && cd ..
 
-live-audience serve [-c config.yaml] [--port 3781]       # 绑定 127.0.0.1（无鉴权 = 仅本机）
-live-audience run --demo [-c config.yaml] [--port 3781]  # 构建合成 Demo 后以其产物起服
-live-audience demo [-c config.yaml] [--output dir]       # 只构建合成 Demo 数据
+live-audience serve [-c config.yaml] [--port 3781]  # 绑定 127.0.0.1（无鉴权 = 仅本机）
 ```
 
-合成 Demo 数据含 `synthetic_demo: true` 标记，页面以徽标明示、与真实采集产出永不相混。
+无账号离线预览面板：把 `tests-fixtures/demo/` 的内容铺进 config 的 `output_dir` 后 `serve` 即可
+（合成布景母机 `live-core/src/demo.rs` 仅供测试/走查，产品不再内置演示运行时）。
 
 ## HTTP/CLI 面
 
@@ -32,7 +31,6 @@ live-audience demo [-c config.yaml] [--output dir]       # 只构建合成 Demo 
   - 校验失败 `422`（kind=viewer 必须有 viewer_uid、与 force 互斥；kind=full 不接受 viewer_uid；四个分层 kind 一律拒绝 viewer_uid 与 force；非布尔 force / 超长 uid 同拒）。
   - 已有未终态 run → `409`，错文携带在飞 run_id（同一时刻只允许一个真实 run）。
   - 请求体超 64KiB 等抽取层拒绝 → 状态码保留 + `{error}` JSON 信封（含 413）。
-  - demo 模式下 `POST /api/runs` 返回静态合成快照（幂等：重复触发返回同一 run_id）。
 - 重采保 AI：`ai/`（认知层缓存）与 `graph/ history/`（长期记忆）三面均永不被采集推倒——采集只重建事实面（viewers/site/shared + 顶层 JSON）；事实面快照仍照旧归档进 `history/snapshots`。旧 AI 结论保留作参考：舰长行带**时效位** `ai_stale`（true=该舰长信源已更新·待重判，哈希翻面即亮、重判即灭；false=时效内；null=无参考旧结论）。失效唯凭 per-舰长 `input_hash`——哈希件刻意摘除观察时刻类过程时间戳（episode `observed_at`、summary 请求数/耗时、`platform_snapshot.captured_at`）：事实相同的两次采集必同哈希，重采 + 重跑 AI 的成本下限 = 零。
 - 面板（`web/`）：hero = 应用品牌 + 主导航（主播介绍/舰长列表/直播数据/线索账本/设置）+ 当前房间 pill（房间=主播，单房间原型）+ 只读 run 状态徽标（含 partial 标记与 events 流）；**动作不落 hero，落页面**（钮随身段——哪个页面消费哪个产物，钮就住哪个页面）：
   - 主播介绍页（首屏）：制片人复盘卡居首卡（上一场次复盘，只读 fact 层）；主播卡（头像/签名/平台事实徽标）；**制片人简报卡**（AI 推断层）：situation 终局 `front_brief` 句句带出处（refs chip 可点跳归属观众个人树），三态 = 未生成空缺位（含一键重跑）/ 沉默渠（「本轮证据不足以成简报」= AI 宁缺毋滥的有效结论）/ 就绪（带覆盖时段与生成时间戳），任一舰长信源变则亮 stale 徽标；感知动作区 = 「触发全量感知」唯一主钮（敏感谨慎钮：inline 两段确认，直陈花费上界/409 互斥）+ 钮旁 `预估 ≈¥…（上限口径）· 约 N~M 分钟` 行（名册缺/空落「预估 —」）+「分层跑」次级菜单（主播 AI 分析/三种采集面动作的各页引导）。

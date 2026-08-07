@@ -1,4 +1,4 @@
-//! M5-B3b runs 通道钉团：POST 校验 + demo 静态快照幂等 + spawn 生命周期（G3）。
+//! M5-B3b runs 通道钉团：POST 校验 + spawn 生命周期（G3）。
 //!
 //! 全部通路走 `build_app` + tower ServiceExt（不起真端口）。spawn 生命周期用
 //! wiremock 作 Bilibili 根地址注入（AppState.bilibili_hosts seam）——404 即证明
@@ -23,7 +23,7 @@ struct Fixture {
     registry: Registry,
 }
 
-fn fixture(demo: bool, bilibili_hosts: Option<(String, String)>) -> Fixture {
+fn fixture(bilibili_hosts: Option<(String, String)>) -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let config_path = tmp.path().join("config.yaml");
     let out_dir = tmp.path().join("out");
@@ -49,8 +49,6 @@ fn fixture(demo: bool, bilibili_hosts: Option<(String, String)>) -> Fixture {
         config_path,
         web_root: tmp.path().join("no-dist"),
         registry: registry.clone(),
-        demo,
-        data_root: None,
         bilibili_hosts,
         config_write_lock: Default::default(),
         graph_artifact_lock: Default::default(),
@@ -98,7 +96,7 @@ fn record_json(record: &Arc<Mutex<RunRecord>>) -> Value {
 
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_post_validation_battery_422() {
-    let fx = fixture(false, None);
+    let fx = fixture(None);
     let cases: Vec<Value> = vec![
         json!(42),                                                     // 非对象
         json!({}),                                                     // 缺 kind
@@ -145,7 +143,7 @@ async fn runs_post_validation_battery_422() {
 /// 复用 + kind 语义门都在生效。
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_post_spend_mode_bad_literal_and_kind_mismatch_both_422() {
-    let fx = fixture(false, None);
+    let fx = fixture(None);
     for (case, needle) in [
         (
             json!({"kind": "full", "spend_mode": "normal"}),
@@ -190,7 +188,7 @@ async fn runs_post_spend_mode_bad_literal_and_kind_mismatch_both_422() {
 /// 字符集白名单 [A-Za-z0-9_-]，dot-dot/内嵌斜杠/非 ASCII 一律拒（r6 「不落盘」是证据主位）。
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_post_rejects_malicious_viewer_uid_without_side_effects() {
-    let fx = fixture(false, None);
+    let fx = fixture(None);
     for uid in ["..", "../escape", "12/34", "USP-中"] {
         let (status, body) = oneshot(
             &fx.app,
@@ -213,44 +211,13 @@ async fn runs_post_rejects_malicious_viewer_uid_without_side_effects() {
 }
 
 // ---------------------------------------------------------------------------
-// demo 模式：静态快照幂等（G3）
-// ---------------------------------------------------------------------------
-
-#[tokio::test(flavor = "multi_thread")]
-async fn demo_runs_post_returns_idempotent_snapshot() {
-    let fx = fixture(true, None);
-    let (status_a, body_a) =
-        oneshot(&fx.app, "POST", "/api/runs", Some(json!({"kind": "full"}))).await;
-    assert_eq!(status_a, 202, "{body_a}");
-    let run_id = body_a["run_id"].as_str().expect("run_id 字符串");
-    let (status_b, body_b) = oneshot(
-        &fx.app,
-        "POST",
-        "/api/runs",
-        Some(json!({"kind": "viewer", "viewer_uid": "77"})),
-    )
-    .await;
-    assert_eq!(status_b, 202, "{body_b}");
-    // G3：重复 POST 返回同一静态快照，不触发真实运行。
-    assert_eq!(body_b["run_id"].as_str(), Some(run_id));
-
-    let (status, snapshot) = oneshot(&fx.app, "GET", &format!("/api/runs/{run_id}"), None).await;
-    assert_eq!(status, 200, "{snapshot}");
-    assert_eq!(snapshot["status"], "done");
-    assert_eq!(snapshot["partial"], false);
-    assert_eq!(snapshot["outcome"]["synthetic_demo"], true);
-    assert!(snapshot["finished_at"].is_string(), "{snapshot}");
-    assert_eq!(snapshot["events"], json!([]), "快照无 progress 事件");
-}
-
-// ---------------------------------------------------------------------------
 // spawn 生命周期：collect 渠道真实启动 → wiremock 404 → failed（确定性、无外呼）
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
 async fn spawn_run_full_lifecycle_collect_failure_marks_failed() {
     let mock = wiremock::MockServer::start().await;
-    let fx = fixture(false, Some((mock.uri(), mock.uri())));
+    let fx = fixture(Some((mock.uri(), mock.uri())));
 
     let (status, body) = oneshot(&fx.app, "POST", "/api/runs", Some(json!({"kind": "full"}))).await;
     assert_eq!(status, 202, "{body}");
@@ -304,7 +271,7 @@ async fn spawn_run_full_lifecycle_collect_failure_marks_failed() {
 /// 已有未终态 run → 409，错文携带在飞 run_id。
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_post_rejects_second_active_run_409() {
-    let fx = fixture(false, None);
+    let fx = fixture(None);
     fx.registry.register(RunRecord {
         run_id: "run-in-flight".to_string(),
         kind: "full".to_string(),
@@ -330,7 +297,7 @@ async fn runs_post_rejects_second_active_run_409() {
 /// 超上限 body → axum 原生 413 纯文本被信封化为 JSON {error}。
 #[tokio::test(flavor = "multi_thread")]
 async fn runs_post_oversized_body_is_413_json_envelope() {
-    let fx = fixture(false, None);
+    let fx = fixture(None);
     let payload = format!(
         r#"{{"kind":"full","pad":"{}"}}"#,
         "x".repeat(MAX_REQUEST_BODY_BYTES)
@@ -461,27 +428,6 @@ fn registry_gc_evicts_oldest_terminal_records_to_cap() {
     );
 }
 
-/// demo 快照查/栽必须同锁——8 线程同时按门，落点唯一、登记一帧。
-#[test]
-fn demo_snapshot_collapses_concurrent_callers_to_one_record() {
-    let registry = Registry::new();
-    let handles: Vec<_> = (0..8)
-        .map(|_| {
-            let registry = registry.clone();
-            std::thread::spawn(move || registry.demo_snapshot(json!({})))
-        })
-        .collect();
-    let mut ids: Vec<String> = handles
-        .into_iter()
-        .map(|handle| handle.join().expect("thread join"))
-        .map(|record| record.lock().expect("record poisoned").run_id.clone())
-        .collect();
-    ids.sort();
-    ids.dedup();
-    assert_eq!(ids.len(), 1, "并发 demo_snapshot 必须唯一落点：{ids:?}");
-    assert_eq!(registry.record_count(), 1);
-}
-
 /// collect 期失败时 partial 必须为 false（集成姿势语义钉）。
 /// 重采（reset）后旧的 ai/state.json 不再被推倒——文件原地留存，
 /// partial=false 由时间闸兜底：栽的 state 无 updated_at → 按旧票拒收，
@@ -489,7 +435,7 @@ fn demo_snapshot_collapses_concurrent_callers_to_one_record() {
 #[tokio::test(flavor = "multi_thread")]
 async fn collect_failure_keeps_prior_ai_state_and_reports_partial_false() {
     let mock = wiremock::MockServer::start().await;
-    let fx = fixture(false, Some((mock.uri(), mock.uri())));
+    let fx = fixture(Some((mock.uri(), mock.uri())));
     let state_dir = fx._tmp.path().join("out").join("ai");
     std::fs::create_dir_all(&state_dir).unwrap();
     std::fs::write(

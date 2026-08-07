@@ -1,4 +1,4 @@
-//! runs 面（B3）：POST 触发 + registry 轮询 + demo 静态快照。
+//! runs 面（B3）：POST 触发 + registry 轮询。
 //!
 //! 自 `app.rs` 按头注 rooms/config/runs 条款拆出；`MAX_VIEWER_UID_CHARS`
 //! 经根卷 `pub use` re-export，`app::MAX_VIEWER_UID_CHARS` 外部路径零变化。
@@ -127,30 +127,22 @@ pub(super) async fn runs_post(
             &format!("kind={kind} 无单人感知段，spend_mode 无消费"),
         ));
     }
-    let record = if state.demo {
-        // G3 裁决：demo 模式返回已完成静态快照——合成、无网络、幂等（重复 POST
-        // 返回同一 run_id；红线：合成不得伪装真实请求足迹）。
-        state.registry.demo_snapshot(json!({
-            "detail": "demo 模式：返回静态快照，不触发真实运行",
-        }))
-    } else {
-        // 已有未终态 run → 409，客户端可从错文中拿到在飞 run_id 自行轮询。
-        crate::registry::Registry::spawn_run(
-            &state.registry,
-            load_config(&state)?,
-            kind,
-            viewer_uid,
-            force,
-            spend_mode,
-            state.bilibili_hosts.clone(),
+    // 已有未终态 run → 409，客户端可从错文中拿到在飞 run_id 自行轮询。
+    let record = crate::registry::Registry::spawn_run(
+        &state.registry,
+        load_config(&state)?,
+        kind,
+        viewer_uid,
+        force,
+        spend_mode,
+        state.bilibili_hosts.clone(),
+    )
+    .map_err(|active| {
+        fail(
+            StatusCode::CONFLICT,
+            &format!("已有进行中的 run（{active}），待其到达终态后再触发"),
         )
-        .map_err(|active| {
-            fail(
-                StatusCode::CONFLICT,
-                &format!("已有进行中的 run（{active}），待其到达终态后再触发"),
-            )
-        })?
-    };
+    })?;
     let run_id = record.lock().expect("record poisoned").run_id.clone();
     Ok((StatusCode::ACCEPTED, Json(json!({"run_id": run_id}))))
 }

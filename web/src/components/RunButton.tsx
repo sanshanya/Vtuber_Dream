@@ -43,7 +43,6 @@ export function RunStatusBadge() {
           {data.status}
           {data.partial ? "(partial)" : ""}
           {/* demo 快照与真实 done 逐像素同形是合成诡装真实——明示合成。 */}
-          {data.kind === "demo" ? "（synthetic_demo 合成演示）" : ""}
         </span>
       )}
       {tracker.lost && (
