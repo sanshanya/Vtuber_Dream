@@ -31,7 +31,6 @@ fn ai_config(api_key: &str) -> AiConfig {
             replay_window: None,
         },
         agent: AgentRuntimeConfig {
-            max_turns: 8,
             resume: false,
             local_trace: true,
             run_retries: 1,
@@ -67,7 +66,7 @@ async fn deepseek_probe_smoke_opt_in() {
         AttemptPlan {
             label: "deepseek-probe",
             prompt: "开始执行探针。",
-            max_turns: ai.agent.max_turns.max(4) as usize,
+            max_turns: 8,
             retries: ai.agent.run_retries.max(0) as usize,
             backoff_seconds: ai.agent.retry_backoff_seconds,
             token_budget: None,

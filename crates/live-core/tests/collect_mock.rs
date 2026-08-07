@@ -251,7 +251,6 @@ fn test_config(root: &Path, budget: i64) -> Config {
                 replay_window: None,
             },
             agent: AgentRuntimeConfig {
-                max_turns: 2,
                 resume: false,
                 local_trace: false,
                 run_retries: 0,

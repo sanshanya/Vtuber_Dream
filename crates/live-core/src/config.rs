@@ -111,7 +111,6 @@ pub struct ReasoningConfig {
 
 #[derive(Debug, Clone)]
 pub struct AgentRuntimeConfig {
-    pub max_turns: i64,
     pub resume: bool,
     pub local_trace: bool,
     pub run_retries: i64,
@@ -562,7 +561,6 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                     .map(|v| clamped_u32(v, 1, u32::MAX)),
             },
             agent: AgentRuntimeConfig {
-                max_turns: integer(runtime, "max_turns", 2, Some(64))?,
                 resume: boolean(runtime, "resume", true)?,
                 local_trace: boolean(runtime, "local_trace", true)?,
                 run_retries: integer(runtime, "run_retries", 0, Some(2))?,

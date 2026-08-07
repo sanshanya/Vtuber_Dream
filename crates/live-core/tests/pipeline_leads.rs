@@ -100,7 +100,6 @@ fn test_config(root: &Path, uri: &str) -> Config {
                 replay_window: None,
             },
             agent: AgentRuntimeConfig {
-                max_turns: 4,
                 resume: true,
                 local_trace: false,
                 run_retries: 0,

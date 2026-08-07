@@ -149,10 +149,6 @@ pub fn normalized_json(config: &Config) -> Value {
     ai.insert("reasoning".to_string(), Value::Object(reasoning));
     let mut agent = Map::new();
     agent.insert(
-        "max_turns".to_string(),
-        Value::from(config.ai.agent.max_turns),
-    );
-    agent.insert(
         "run_retries".to_string(),
         Value::from(config.ai.agent.run_retries),
     );

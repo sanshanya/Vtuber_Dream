@@ -139,7 +139,6 @@ ai:
   reasoning:
     enabled: false
   agent:
-    max_turns: 4
     run_retries: 0
   max_output_tokens: 131072
 report:

@@ -375,7 +375,9 @@ pub async fn run_entity_reconcile(
         AttemptPlan {
             label: "entity-reconcile",
             prompt: &prompt,
-            max_turns: config.ai.agent.max_turns as usize,
+            // 轮数不设限（2026-08-07 官规：已有 viewer_token_budget 保险丝，轮数闸无意义）；
+            // 终局唯一形状=模型自提交，usize::MAX 实质把刹车交给 token 熔断。
+            max_turns: usize::MAX,
             retries: config.ai.agent.run_retries.max(0) as usize,
             backoff_seconds: config.ai.agent.retry_backoff_seconds,
             token_budget: None,

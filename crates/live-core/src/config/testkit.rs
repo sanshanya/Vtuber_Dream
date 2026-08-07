@@ -41,7 +41,6 @@ ai:
     effort: high
     replay_content: true
   agent:
-    max_turns: 64
     run_retries: 2
   max_output_tokens: 131072
 report:

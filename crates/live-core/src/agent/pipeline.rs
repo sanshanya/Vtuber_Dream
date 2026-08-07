@@ -939,7 +939,8 @@ async fn run_one_viewer(
         AttemptPlan {
             label: &label,
             prompt: &prompt,
-            max_turns: config.ai.agent.max_turns as usize,
+            // 轮数不设限（2026-08-07 官规：唯一刹车=下方 viewer_token_budget 保险丝）。
+            max_turns: usize::MAX,
             retries: config.ai.agent.run_retries as usize,
             backoff_seconds: config.ai.agent.retry_backoff_seconds,
             // 单 viewer token 预算熔断（累计 total_tokens 超限 → viewer_failure）。
@@ -1147,7 +1148,7 @@ async fn run_audience_stage(
         AttemptPlan {
             label: "整体Situation",
             prompt: &prompt,
-            max_turns: config.ai.agent.max_turns as usize,
+            max_turns: usize::MAX,
             retries: config.ai.agent.run_retries as usize,
             backoff_seconds: config.ai.agent.retry_backoff_seconds,
             // token 预算熔断只属 viewer 面；audience 单 agent 不设 budget。

@@ -982,7 +982,6 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
             replay_window: None,
         },
         agent: live_core::config::AgentRuntimeConfig {
-            max_turns: 4,
             resume: false,
             local_trace: false,
             run_retries: 0,

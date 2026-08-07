@@ -137,7 +137,7 @@ pub async fn run_agent_check_async(config: &Config) -> Result<Value, AgentRuntim
         AttemptPlan {
             label: "agent-check",
             prompt: "开始思考模式多轮Tool Call与终局Tool Call验收。",
-            max_turns: 8.max(config.ai.agent.max_turns) as usize,
+            max_turns: 8,
             retries: config.ai.agent.run_retries.max(0) as usize,
             backoff_seconds: config.ai.agent.retry_backoff_seconds,
             token_budget: None,

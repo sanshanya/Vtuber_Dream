@@ -38,7 +38,6 @@ pub(super) async fn config_get(State(state): State<AppState>) -> AppResult<Json<
                 "replay_content": ai.reasoning.replay_content,
             },
             "agent": {
-                "max_turns": agent.max_turns,
                 "run_retries": agent.run_retries,
                 "retry_backoff_seconds": agent.retry_backoff_seconds,
                 "local_trace": agent.local_trace,
