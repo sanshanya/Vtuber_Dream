@@ -85,6 +85,51 @@ impl Store {
         Ok(())
     }
 
+    /// D1-2B 身份面收拢（同窗续接幂等复检臂）：WS 行 identity = stable 前缀
+    /// `episode:{viewer}:{stable}`，**不含** content_version 尾段。理由：WS 场次事实
+    /// （session rid / 窗口起点）随附着时刻漂移，背靠背两次 collect（或同窗断线重发）
+    /// 采到同一条平台行（同 ts/uid/文本）会得到不同 content_version → full-id 撞库
+    /// 完全失效、同一事实重复入账并虚增复盘四个数。归位规则与 upsert 复检臂同族：
+    /// 同身份已存在 → 只刷 last_seen_at（行事实保首次所见，追加不覆盖）。
+    ///
+    /// immutable 守卫不降格：命中时比对 fields 指纹——同身份不同正文照旧报
+    /// immutable Episode conflict（绝不静默覆盖事实）。
+    ///
+    /// 只为 WS 线调用：replay/comment 语料的 stable 嵌平台 id、version 天然稳定，
+    /// 其「同 stable 不同内容」必须继续走 full-id 冲突报错面（immutable 守卫）。
+    pub fn touch_episode_by_identity(
+        &self,
+        identity_prefix: &str,
+        fields_json_canon: &str,
+    ) -> Result<bool> {
+        let now = self.now();
+        // ASCII 后继区间：':' (0x3A) < ';' (0x3B)——[lo, hi) 恰为「以此串打头」的前缀集。
+        let lo = format!("{identity_prefix}:");
+        let hi = format!("{identity_prefix};");
+        let existing: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT fields_json FROM episodes WHERE episode_id >= ? AND episode_id < ? \
+                 ORDER BY episode_id LIMIT 1",
+                params![lo, hi],
+                |row| row.get(0),
+            )
+            .optional()?;
+        let Some(old_fields) = existing else {
+            return Ok(false);
+        };
+        if old_fields != fields_json_canon {
+            return repo_err(format!(
+                "immutable Episode conflict: {identity_prefix}:*（同身份不同正文）"
+            ));
+        }
+        self.conn.execute(
+            "UPDATE episodes SET last_seen_at=? WHERE episode_id >= ? AND episode_id < ?",
+            params![now, lo, hi],
+        )?;
+        Ok(true)
+    }
+
     // -------------------------------------------------------------- mentions
 
     pub fn upsert_mention(

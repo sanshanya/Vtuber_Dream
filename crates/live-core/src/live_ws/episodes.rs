@@ -461,12 +461,38 @@ pub struct WsWindowCapture {
 
 /// WS 场窗 Episode 入账：P0-1 房间语料通道（`ingest_room_corpus`，同一 upsert
 /// 纪律：`viewer:_room` 守卫节点 + `ingest_platform_facts` 逐条撞库）。
+///
+/// 幂等键纪律（同窗重跑/断线重发背靠背相邻窗）：同一平台行（同 room/ts/uid/文本）
+/// 在不同窗会因 session rid 漂移产生不同 content_version——撞库身份因此归 stable
+/// 前缀（`touch_episode_by_identity`）：同身份已在库 → 只刷 last_seen，本窗该行不进
+/// 语料通道（事实层行数守恒，复盘四个数不虚增）。
 pub fn ingest_ws_window(
     store: &crate::graph::Store,
     run_id: &str,
     capture: &WsWindowCapture,
 ) -> crate::graph::store::Result<()> {
-    crate::episodes::room_corpus::ingest_room_corpus(store, run_id, &capture.episodes)
+    let mut fresh: Vec<Episode> = Vec::with_capacity(capture.episodes.len());
+    for episode in &capture.episodes {
+        // id = episode:{viewer}:{stable}:{content_version} —— 剥尾段即 stable 前缀。
+        let identity = episode
+            .episode_id
+            .rsplit_once(':')
+            .map(|(prefix, _)| prefix)
+            .unwrap_or(&episode.episode_id);
+        // immutable 守卫降格不得：同身份比对正文摘文（与 upsert 同一 canon 口径）。
+        let fields_canon = crate::episodes::json_canon(&Value::Array(
+            episode
+                .fields
+                .iter()
+                .map(crate::episodes::EpisodeField::to_json)
+                .collect::<Vec<_>>(),
+        ));
+        if store.touch_episode_by_identity(identity, &fields_canon)? {
+            continue;
+        }
+        fresh.push(episode.clone());
+    }
+    crate::episodes::room_corpus::ingest_room_corpus(store, run_id, &fresh)
 }
 
 #[cfg(test)]
@@ -947,6 +973,49 @@ mod tests {
         assert!(
             format!("{err}").contains("immutable Episode conflict"),
             "撞库拒绝须报错而非静默覆盖: {err}"
+        );
+    }
+
+    /// 身份收拢真实场景钉（B-C 爆雷面的幂等根）：背靠背两次 collect——两窗附着
+    /// 错开一秒，session rid 漂移 → full-id 必然换脸（旧撞库语义下同一平台行必然
+    /// 重复入账、复盘四个数虚增）。身份归 stable 前缀后：第二窗同一平台行只刷
+    /// last_seen，行数守恒，且行事实保首次所见（首窗版本）。
+    #[test]
+    fn ingest_ws_window_back_to_back_windows_dedup_same_platform_line() {
+        let dir = tempdir().unwrap();
+        let store = crate::graph::Store::open(&dir.path().join("graph.sqlite3")).expect("store");
+        let danmaku = WsEvent::Danmaku {
+            uid: "u-7".into(),
+            uname: "丙".into(),
+            text: "贴贴".into(),
+            ts: Some(1_700_000_000),
+        };
+        let build_capture = |attach_ts: i64| {
+            let mut rec = WsRecorder::attach(77, attach_ts, 1).unwrap();
+            rec.on_event(&danmaku, attach_ts + 1);
+            rec.on_event(&WsEvent::Preparing { round: 1 }, attach_ts + 2);
+            rec.finish(&SessionEnd::Closed, attach_ts + 2)
+        };
+        let first = build_capture(1_000_000);
+        let second = build_capture(1_000_001);
+        assert_ne!(
+            first.episodes[0].episode_id, second.episodes[0].episode_id,
+            "钉前提：ID 尾段=content_version，窗事实漂移必换脸"
+        );
+        store
+            .begin_run_fixed("run-a", &now_iso(), "test")
+            .expect("begin run");
+        ingest_ws_window(&store, "run-a", &first).expect("首窗入账");
+        store
+            .begin_run_fixed("run-b", &now_iso(), "test")
+            .expect("begin run");
+        ingest_ws_window(&store, "run-b", &second).expect("邻窗入账");
+        let rows = crate::graph::query::episodes(&store, ROOM_VIEWER_ID, None).expect("query");
+        assert_eq!(rows.len(), 1, "相邻窗同一平台行不得重复入账：{rows:?}");
+        assert_eq!(
+            rows[0]["episode_id"],
+            json!(first.episodes[0].episode_id),
+            "行事实保首次所见（新窗不覆盖）：{rows:?}"
         );
     }
 }
