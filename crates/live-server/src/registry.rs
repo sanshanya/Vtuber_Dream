@@ -33,6 +33,12 @@ pub const RUN_KINDS: [&str; 2] = ["full", "viewer"];
 /// 动作平面：采集/AI 分层的四个新 kind（全名面，冻结给 api.ts 的 RunKind）。
 /// collect_* 是事实层（不进 baseline/pipeline）；ai_* 是认知层（不进 collector——
 /// AI 幂等靠 pipeline 既有 complete_cache(input_hash) 短路，不碰采集面）。
+///
+/// 判词（2026-08-07 二轮评审点名「内部 stage 不该暴露给 API」）：六 kind 不是
+/// full 的相位泄漏——相位面只有 RUN_STATES 七值（queued→…→done）；每个 kind
+/// 各绑一个用户动作，「删了谁疼」试代：ai_viewers 删 →「只重推认知不重采」
+/// 得白挨一次 B 站全量采集；collect_streamer 删 → 轻刷主播被逼成 22 人全扫；
+/// ai_audience 删 → 纠正陈旧简报要强跑整条全量链。动作平面判存。
 pub const RUN_KINDS_STAGED: [&str; 4] = [
     "collect_streamer",
     "collect_guards",

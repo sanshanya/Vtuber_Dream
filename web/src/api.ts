@@ -334,7 +334,11 @@ export const api = {
     ),
 };
 
-/** 动作平面：六 kind 字面冻结（与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源）。 */
+/**
+ * 动作平面：六 kind 字面冻结（与 registry.rs RUN_KINDS/RUN_KINDS_STAGED 同源）。
+ * 相位（queued→collecting→episodes→per_viewer_ai→audience→done|failed）是 run 的
+ * 内部推进面，不进本枚举——kind=用户动作，相位=状态机；判词见 registry.rs。
+ */
 export const RUN_KIND_LABELS = {
   full: "全量感知",
   viewer: "单舰长感知",

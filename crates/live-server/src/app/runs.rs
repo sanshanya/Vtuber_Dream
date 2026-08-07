@@ -15,9 +15,10 @@ pub const MAX_VIEWER_UID_CHARS: usize = 32;
 
 /// POST /api/runs {kind, force?, viewer_uid?} → 202 {run_id}。
 ///
-/// 校验口径（kickoff B3b 冻结）：kind ∈ {full, viewer}；kind=viewer 必须给出
-/// viewer_uid 且与 force 互斥（force 是全量清理语义）；kind=full 与 viewer_uid
-/// 互斥；非布尔 force / 超长 uid / 非对象体一律 422。
+/// 校验口径：kind ∈ RUN_KINDS ∪ RUN_KINDS_STAGED（动作平面六值，判词见 registry.rs）；
+/// kind=viewer 必须给出 viewer_uid 且与 force 互斥（force 是全量清理语义）；kind=full
+/// 与 viewer_uid 互斥；四个分层 kind 同拒 viewer_uid 与 force；非布尔 force /
+/// 超长 uid / 非对象体一律 422。
 pub(super) async fn runs_post(
     State(state): State<AppState>,
     JsonBody(body): JsonBody<Value>,
