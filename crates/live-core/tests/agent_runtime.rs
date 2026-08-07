@@ -996,6 +996,7 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
         },
         search_results_per_query: 5,
         rules: vec![],
+        run_budget_cny: None,
     };
     let runtime = AgentRuntime::from_ai_config(&config).expect("config ok");
     let mut spec = probe_spec();

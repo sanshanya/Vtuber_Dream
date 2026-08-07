@@ -172,6 +172,10 @@ pub struct AiConfig {
     pub agent: AgentRuntimeConfig,
     pub search_results_per_query: i64,
     pub rules: Vec<String>,
+    /// R2 批4 D3 白名单第 5 键：每轮 run 花费预算（¥）。None=不设闸（现状一字不动）；
+    /// Some 时 per-viewer 全量预估严格超此额即阻断并提供省钱模式。字符串语义（金额文案，
+    /// 与 YAML 数字型形义区分），同现有 4 键白名单规格、非法即 422 同族。
+    pub run_budget_cny: Option<f64>,
 }
 
 #[derive(Debug, Clone)]
@@ -276,6 +280,34 @@ fn string(mapping: &Value, key: &str, default: &str) -> String {
     match mapping.get(key) {
         Some(value) => py_str_config(value).trim().to_string(),
         None => default.to_string(),
+    }
+}
+
+/// R2 批4 D3：`run_budget_cny` 只收**字符串**金额（白名单第 5 键字符串语义，与 YAML
+/// 数字型形义区分——金额文案应写作 "3.50" 而非 3.50）。缺键/空串→None（不设闸）；
+/// 解析失败、NaN/inf、负值、超上限一律拒装（同现有白名单键 422 规格）。
+fn optional_money_string(mapping: &Value, key: &str) -> Result<Option<f64>, ConfigError> {
+    const MAX_BUDGET_CNY: f64 = 1_000_000.0;
+    match mapping.get(key) {
+        None => Ok(None),
+        Some(Value::String(s)) => {
+            let trimmed = s.trim();
+            if trimmed.is_empty() {
+                return Ok(None);
+            }
+            let value = trimmed.parse::<f64>().map_err(|_| {
+                ConfigError::new(format!("'{key}' must be a money string: \"{s}\""))
+            })?;
+            if !value.is_finite() || !(0.0..=MAX_BUDGET_CNY).contains(&value) {
+                return Err(ConfigError::new(format!(
+                    "'{key}' must be a finite money amount in [0, {MAX_BUDGET_CNY}]"
+                )));
+            }
+            Ok(Some(value))
+        }
+        Some(_) => Err(ConfigError::new(format!(
+            "'{key}' must be a string (money amount in CNY)"
+        ))),
     }
 }
 
@@ -587,6 +619,7 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
             },
             search_results_per_query: integer(ai, "search_results_per_query", 1, Some(20))?,
             rules,
+            run_budget_cny: optional_money_string(ai, "run_budget_cny")?,
             api,
         },
         report_title,
@@ -806,6 +839,46 @@ mod tests {
             );
             let err = load_config(write_temp(&bad).path()).unwrap_err();
             assert!(err.to_string().contains(key), "{key}: {err}");
+        }
+    }
+
+    /// R2 批4 D3：`ai.run_budget_cny` 白名单第 5 键——缺省 None（不设闸，现状一字不动）；
+    /// 字符串金额回显 Some；空串→None；非字符串（数字型 YAML）/非法/负值/非有限一律拒装。
+    #[test]
+    fn run_budget_cny_default_string_and_domain_rejects() {
+        let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
+        assert_eq!(ok.ai.run_budget_cny, None, "缺省 None=不设闸（现状文化）");
+
+        let with = EXAMPLE_YAML.replace(
+            "    run_retries: 2",
+            "    run_retries: 2\n  run_budget_cny: \"3.50\"",
+        );
+        let ok2 = load_config(write_temp(&with).path()).unwrap();
+        assert_eq!(ok2.ai.run_budget_cny, Some(3.5), "字符串金额回显 Some");
+
+        let empty = EXAMPLE_YAML.replace(
+            "    run_retries: 2",
+            "    run_retries: 2\n  run_budget_cny: \"\"",
+        );
+        let ok3 = load_config(write_temp(&empty).path()).unwrap();
+        assert_eq!(ok3.ai.run_budget_cny, None, "空串=不设闸");
+
+        for injected in [
+            "  run_budget_cny: 3.5",
+            "  run_budget_cny: \"-1\"",
+            "  run_budget_cny: \"abc\"",
+            "  run_budget_cny: \"NaN\"",
+            "  run_budget_cny: true",
+        ] {
+            let bad = EXAMPLE_YAML.replace(
+                "    run_retries: 2",
+                &format!("    run_retries: 2\n{injected}"),
+            );
+            let err = load_config(write_temp(&bad).path()).unwrap_err();
+            assert!(
+                err.to_string().contains("run_budget_cny"),
+                "{injected} 必须拒装：{err}"
+            );
         }
     }
 }

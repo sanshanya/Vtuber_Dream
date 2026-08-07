@@ -9,6 +9,7 @@
 
 use std::sync::{Arc, Mutex};
 
+use live_core::agent::budget::SpendMode;
 use live_core::config::Config;
 use live_core::episodes::{now_iso, now_unix_secs};
 use live_core::events::RunEvents;
@@ -387,6 +388,8 @@ impl Registry {
                             stage: Some(&stage_listener),
                             // Z4b：ai_viewers 在 viewer 阶段写盘后收——不跑 audience。
                             stop_after_viewer_stage: kind == "ai_viewers",
+                            // R2 批4 D3：编译面显式默认全量（省钱模式由动作面/白名单键接入）。
+                            spend_mode: SpendMode::Normal,
                         };
                         let result = match kind.as_str() {
                             "viewer" => {

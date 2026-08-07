@@ -116,6 +116,7 @@ fn test_config(root: &Path, uri: &str) -> Config {
             },
             search_results_per_query: 20,
             rules: vec!["取向优先新内容与互动攻略".into()],
+            run_budget_cny: None,
         },
         report_title: "t".into(),
     }

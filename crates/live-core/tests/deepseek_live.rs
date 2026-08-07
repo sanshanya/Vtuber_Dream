@@ -45,6 +45,7 @@ fn ai_config(api_key: &str) -> AiConfig {
         },
         search_results_per_query: 20,
         rules: vec![],
+        run_budget_cny: None,
     }
 }
 

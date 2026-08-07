@@ -267,6 +267,7 @@ fn test_config(root: &Path, budget: i64) -> Config {
             },
             search_results_per_query: 20,
             rules: vec![],
+            run_budget_cny: None,
         },
         report_title: "t".into(),
     }
