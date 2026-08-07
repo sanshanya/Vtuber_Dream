@@ -15,7 +15,7 @@ use tower::ServiceExt;
 mod common;
 
 use live_server::app::{AppState, MAX_REQUEST_BODY_BYTES, MAX_VIEWER_UID_CHARS, build_app};
-use live_server::registry::{RUN_RECORDS_CAP, Registry, RunRecord};
+use live_server::registry::{Registry, RunRecord};
 
 struct Fixture {
     _tmp: tempfile::TempDir,
@@ -308,48 +308,6 @@ fn viewer_stage_complete_since_rejects_stale_ticket() {
         "缺 updated_at 按旧票处理"
     );
 }
-
-/// 登记簿 GC——终态记录从旧到新剔除至 RUN_RECORDS_CAP；在飞记录永不剔。
-#[test]
-fn registry_gc_evicts_oldest_terminal_records_to_cap() {
-    let registry = Registry::new();
-    let seed = |suffix: &str, status: &str, started_at: &str| RunRecord {
-        run_id: format!("run-gc-{suffix}"),
-        kind: "full".to_string(),
-        viewer_uid: None,
-        force: false,
-        status: status.to_string(),
-        started_at: started_at.to_string(),
-        finished_at: None,
-        outcome: None,
-        partial: false,
-        events: Arc::new(live_core::events::RunEvents::new()),
-    };
-    registry.register(seed(
-        "old-in-flight",
-        "collecting",
-        "2026-01-01T00:00:00+00:00",
-    ));
-    let last = RUN_RECORDS_CAP + 2;
-    for index in 0..=last {
-        registry.register(seed(
-            &format!("{index:02}"),
-            "done",
-            &format!("2026-02-01T01:{:02}:{:02}+00:00", index / 60, index % 60),
-        ));
-    }
-    assert_eq!(registry.record_count(), RUN_RECORDS_CAP);
-    assert!(
-        registry.get("run-gc-old-in-flight").is_some(),
-        "在飞记录永不被剔除"
-    );
-    assert!(registry.get("run-gc-00").is_none(), "最旧终态记录被剔除");
-    assert!(
-        registry.get(&format!("run-gc-{last:02}")).is_some(),
-        "最新登记必须在场"
-    );
-}
-
 /// collect 期失败时 partial 必须为 false（集成姿势语义钉）。
 /// 重采（reset）后旧的 ai/state.json 不再被推倒——文件原地留存，
 /// partial=false 由时间闸兜底：栽的 state 无 updated_at → 按旧票拒收，

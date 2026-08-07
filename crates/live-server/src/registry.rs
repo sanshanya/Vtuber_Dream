@@ -51,7 +51,7 @@ fn utc_now() -> String {
 
 pub struct RunRecord {
     pub run_id: String,
-    /// full | viewer | demo。
+    /// full | viewer | collect_* | ai_*。
     pub kind: String,
     pub viewer_uid: Option<String>,
     pub force: bool,
@@ -65,19 +65,13 @@ pub struct RunRecord {
     pub events: Arc<RunEvents>,
 }
 
-#[derive(Default)]
-struct RegistryInner {
-    records: std::collections::HashMap<String, Arc<Mutex<RunRecord>>>,
-}
-
+/// 单槽登记——真实约束 = 同一时刻只允许一个真实 run（单飞互斥在 spawn_run
+/// 的同一把锁内裁决），多记录 HashMap + GC 是把这个约束重复实现一遍。
+/// 登记当下 = 唯一记录；旧 run 历史不在内存（终态产出已落盘，要回看查磁盘）。
 #[derive(Clone, Default)]
 pub struct Registry {
-    inner: Arc<Mutex<RegistryInner>>,
+    inner: Arc<Mutex<Option<Arc<Mutex<RunRecord>>>>>,
 }
-
-/// 登记簿保留上限——run 记录是进程内短时热数据，常驻只增不删会缓慢膨胀；
-/// 终态记录按 started_at 从旧到新剔除至不越顶（在飞 run 永远保留）。
-pub const RUN_RECORDS_CAP: usize = 64;
 
 impl Registry {
     pub fn new() -> Self {
@@ -96,48 +90,24 @@ impl Registry {
     }
 
     /// 已持 inner 锁的登记通道：spawn_run 的复合判定+登记共享这一根。
-    fn insert_locked(inner: &mut RegistryInner, record: RunRecord) -> Arc<Mutex<RunRecord>> {
+    fn insert_locked(
+        inner: &mut Option<Arc<Mutex<RunRecord>>>,
+        record: RunRecord,
+    ) -> Arc<Mutex<RunRecord>> {
         let shared = Arc::new(Mutex::new(record));
-        let key = shared.lock().expect("record poisoned").run_id.clone();
-        inner.records.insert(key, shared.clone());
-        Self::gc_locked(inner);
+        *inner = Some(shared.clone());
         shared
     }
 
-    /// 终态记录从旧到新剔除至不越 RUN_RECORDS_CAP；在飞 run 不参与剔除。
-    fn gc_locked(inner: &mut RegistryInner) {
-        if inner.records.len() <= RUN_RECORDS_CAP {
-            return;
-        }
-        let mut terminal: Vec<(String, String)> = inner
-            .records
-            .values()
-            .filter_map(|record| {
-                let record = record.lock().expect("record poisoned");
-                matches!(record.status.as_str(), "done" | "failed")
-                    .then(|| (record.started_at.clone(), record.run_id.clone()))
-            })
-            .collect();
-        // ISO 时间戳同形：字符串序 == 时间序。
-        terminal.sort();
-        let overflow = inner.records.len() - RUN_RECORDS_CAP;
-        for (_, run_id) in terminal.into_iter().take(overflow) {
-            inner.records.remove(&run_id);
-        }
-    }
-
     pub fn get(&self, run_id: &str) -> Option<Arc<Mutex<RunRecord>>> {
-        self.inner
-            .lock()
-            .expect("registry poisoned")
-            .records
-            .get(run_id)
-            .cloned()
+        let inner = self.inner.lock().expect("registry poisoned");
+        let record = inner.as_ref()?;
+        (record.lock().expect("record poisoned").run_id == run_id).then(|| record.clone())
     }
 
-    /// 记录总数（钉面：POST 校验副作用对账、GC 兑现验证）。
+    /// 登记在场数 0|1（钉面：POST 校验副作用对账）。
     pub fn record_count(&self) -> usize {
-        self.inner.lock().expect("registry poisoned").records.len()
+        usize::from(self.inner.lock().expect("registry poisoned").is_some())
     }
 
     pub fn set_status(&self, run_id: &str, status: &str) {
@@ -185,7 +155,7 @@ impl Registry {
         // 互斥判定 + 登记同锁，杜绝「双 POST 同时通过检查」窗口。
         let shared = {
             let mut inner = registry.inner.lock().expect("registry poisoned");
-            if let Some(active) = inner.records.values().find_map(|candidate| {
+            if let Some(active) = inner.as_ref().and_then(|candidate| {
                 let record = candidate.lock().expect("record poisoned");
                 (!matches!(record.status.as_str(), "done" | "failed"))
                     .then(|| record.run_id.clone())
