@@ -94,9 +94,11 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
         Some(store) => Some(live_core::graph::query::graph_stats(store).map_err(internal)?),
         None => None,
     };
-    // Z5/C1：BriefingCard refs 可点的归属解析面——episode_id → {viewer_id, title}。
+    // Z5/C1：BriefingCard refs 可点的归属解析面——episode_id → {viewer_id, title, source}。
     // 轻量投影（GRAPH_QUERY_LIMIT=500 帽，超出部分 ref 落未解析态、chip 不可点），
     // 不抄整行（fields/platform_facts 大键留在 tree/graph 端点）。
+    // R2 批5 D5：source 同行透出——芯片副文本 = Episode 类型词（动态/投稿/弹幕…），
+    // 不再拿标题当持有人。
     let episode_index: Value = match &store {
         Some(store) => {
             let rows = live_core::graph::query::episodes(store, "", None).map_err(internal)?;
@@ -107,7 +109,7 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
                     let viewer_id = row["viewer_id"].as_str()?;
                     Some((
                         episode_id.to_string(),
-                        json!({"viewer_id": viewer_id, "title": row["title"]}),
+                        json!({"viewer_id": viewer_id, "title": row["title"], "source": row["source"]}),
                     ))
                 })
                 .collect::<serde_json::Map<String, Value>>();
@@ -136,6 +138,8 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
         "episode_index": episode_index,
         "collection": collection,
         "ai": read_json(&root.join("ai").join("state.json")),
+        // R2 批5 D6（deprecated）：situation 保留 = BriefingCard 的 front_brief 数据源
+        // （API 兼容）；「态势项」胶囊/宏观折叠组等前台直呈已整段退役——勿新挂直呈消费。
         "situation": read_json(&root.join("ai").join("situation.json")),
         "leads": {
             // R3-F2：summary 键零消费者（FE 不渲、真消费者是 pipeline annex）——砍。

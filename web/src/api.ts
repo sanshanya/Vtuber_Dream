@@ -169,7 +169,8 @@ export interface AiJobView {
 
 export interface SituationView {
   status?: string;
-  /** LLM 产物形状漂移（ag4-F6 无 schema 校验）——Situ 消费侧 String() 护栏。 */
+  /** LLM 产物形状漂移（ag4-F6 无 schema 校验）——消费侧护栏取值。
+   *  R2 批5 D6 deprecated：前台直呈已退役； surviving 唯一消费=BriefingCard 的 front_brief。 */
   analysis?: Record<string, unknown> | null;
   synthetic_demo?: boolean;
 }

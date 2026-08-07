@@ -1,7 +1,7 @@
 /**
- * 主播介绍页（Z2 定稿首页）：主播卡（头像/签名/平台事实徽标）→ 运行概览（薄统计带 +
- * 花费公示）→ 整体态势。取代旧 Dashboard——「vs 上轮」裁决为底层参考信号不上页面
- * （Z2 裁定），线索账本独立成 #/leads 页。
+ * 主播介绍页（Z2 定稿首页）：主播卡（头像/签名/平台事实徽标）→ 复盘卡（首卡，
+ * P1-1 裁决三）→ 制片人简报 → 运行概览（薄统计带 + 花费公示）→ 舰长栏。
+ * 取代旧 Dashboard；R2 批5 D6：宏观态势直呈段整段退役（简报即态势展示面）。
  */
 import { useQuery } from "@tanstack/react-query";
 
@@ -12,7 +12,6 @@ import { Avatar } from "../components/Avatar";
 import { KindRunButton } from "../components/KindRunButton";
 import { RunButton } from "../components/RunButton";
 import { RecapCard } from "../components/RecapCard";
-import { Situ } from "../components/Situ";
 import { StreamerCard } from "../components/StreamerCard";
 import { estimateCostCny, fmtCny, fmtInt, fmtTime, type UsageRow } from "../format";
 
@@ -71,10 +70,6 @@ export function Streamer({ roomId }: { roomId: string }) {
   const statNum = (key: string): number | null =>
     stats && typeof stats[key] === "number" ? (stats[key] as number) : null;
   const analysis = situation.analysis as Record<string, unknown> | undefined;
-  const situationCount =
-    situation.status === "complete" && Array.isArray(analysis?.situations)
-      ? (analysis?.situations as unknown[]).length
-      : null;
 
   return (
     <>
@@ -84,8 +79,12 @@ export function Streamer({ roomId }: { roomId: string }) {
         roomId={String(data.room_id ?? "")}
       />
 
-      {/* Z5/C1（终裁 P0-5）：制片人简报 = 首屏第一卡——「发生了什么/该干嘛/该信谁」
-          免滚动可答；未生成/沉默两态同样具名呈现（缺席必可见）。 */}
+      {/* v2 P1-1（裁决三）：首卡恒为复盘卡（有无数据均占首位）——疲惫态下播 5
+          分钟要答案不要诊断；未生成/空场/就绪三态各有具名呈现。 */}
+      <RecapCard recap={data.recap ?? null} />
+
+      {/* Z5/C1（终裁 P0-5）：制片人简报居次——「发生了什么/该干嘛/该信谁」；
+          未生成/沉默两态同样具名呈现（缺席必可见）。 */}
       <BriefingCard
         analysis={analysis}
         situationStatus={situation.status}
@@ -94,10 +93,6 @@ export function Streamer({ roomId }: { roomId: string }) {
         episodeIndex={(data.episode_index ?? {}) as Record<string, EpisodeIndexEntry>}
         nameOf={new Map((viewers.data ?? []).map((row) => [row.uid, row.name ?? row.uid]))}
       />
-
-      {/* P0-2（迭代细则 v1 §1）：下播复盘卡——四纯规则数+AI命名件+未知行恒在。
-          她下播 5 分钟的第一站；未生成/空场/就绪三态各有具名呈现。 */}
-      <RecapCard recap={data.recap ?? null} />
 
       {/* Z4d 动作落页：本页住「全量感知」（敏感谨慎钮，双段确认）与「主播 AI 分析」
           （认知层聚合，不重采）。采集面动作：主播采集在「直播数据」页、舰长采集在
@@ -143,10 +138,6 @@ export function Streamer({ roomId }: { roomId: string }) {
           <div className="card stat">
             <strong>{fmtInt(statNum("relations"))}</strong>
             <span>当前关系</span>
-          </div>
-          <div className="card stat">
-            <strong>{fmtInt(situationCount)}</strong>
-            <span>态势项</span>
           </div>
         </div>
       </section>
@@ -219,30 +210,9 @@ export function Streamer({ roomId }: { roomId: string }) {
         )}
       </section>
 
-      {situation.status === "complete" && situation.analysis ? (
-        // P0-2（迭代细则 v1 §1）：宏观态势段下沉为默认折叠——复盘卡承接她下播 5 分钟，
-        // 宏观段只在想深挖时才展开（验收钉③：default-collapsed）。
-        // synthetic_demo 徽标的数据面在 collection/ai/situation 任一分段（demo.rs 写位随工件；
-        // overview 原样透传读取文件，前端不臆造单一来源位）。Z2b：各态势部件拆卡由 Situ 自持。
-        <details className="section" data-testid="macro-details">
-          <summary>
-            整体态势（宏观）——{fmtInt(situationCount)} 项，点开看
-          </summary>
-          <Situ
-            analysis={situation.analysis}
-            synthetic={
-              collection.synthetic_demo === true ||
-              ai.synthetic_demo === true ||
-              situation.synthetic_demo === true
-            }
-          />
-        </details>
-      ) : (
-        <section className="section card">
-          <h2>整体态势</h2>
-          <div className="empty">整体态势尚未形成（跑完 Audience 阶段后呈现）</div>
-        </section>
-      )}
+      {/* R2 批5 D6（裁决）：「态势项」胶囊与宏观折叠组整段退役——简报（front_brief）
+          即态势的展示面与承接口，矛盾数字（0 态势项 vs 满格简报）不可再同框。
+          situation 字段本身保留（BriefingCard 的 front_brief 数据源，API deprecated）。 */}
     </>
   );
 }

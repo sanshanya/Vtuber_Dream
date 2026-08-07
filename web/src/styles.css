@@ -215,12 +215,11 @@ table.data-table td{vertical-align:middle}
 .room-entry{display:inline-flex;align-items:center;margin-left:10px;padding:6px 12px;border:1px solid rgba(255,255,255,.35);border-radius:var(--r-md);color:#eef2ff;text-decoration:none}
 .room-entry:hover{background:rgba(255,255,255,.12);text-decoration:none}
 
-/* Z2b 追加段：首页舰长栏 + 态势拆卡 */
+/* Z2b 追加段：首页舰长栏 */
 .guard-strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(192px,1fr));gap:8px}
 .guard-chip{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-md);background:var(--panel2);text-decoration:none;color:var(--text)}
 .guard-chip:hover{border-color:var(--accent)}
 .guard-chip strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.situ-part{margin-top:16px}
 
 /* Z3 追加段：舰长头像列 / 指标条 / 观众单元 */
 .avatar-xs{width:26px;height:26px;border-radius:50%;object-fit:cover;background:var(--panel2);border:1px solid var(--line);flex:none;display:inline-flex;align-items:center;justify-content:center;font-size:var(--fs-xs);font-weight:700;color:var(--muted)}

@@ -397,11 +397,11 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
             默认折叠视图：仅人与关注点主骨架
           </span>
         )}
+        {/* R2 批5 D6：状态/行动机会图例行清退——简报已承接态势展示面，图例只解
+            说当前实有节点类（Situation/Action 节点机制仍在，复出以色辨位）。 */}
         <div className="legend">
           <span><i className="dot fact" /> Viewer/舰长</span>
           <span><i className="dot ai" /> Entity/兴趣</span>
-          <span><i className="dot state" /> 状态</span>
-          <span><i className="dot action" /> 行动机会</span>
           <span><i className="dot" style={{ background: STREAMER_COLOR }} /> 主播</span>
         </div>
       </div>

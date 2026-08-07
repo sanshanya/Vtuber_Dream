@@ -156,7 +156,8 @@ async fn overview_combines_collection_ai_leads_and_baseline_delta() {
     assert!(stats["entities"].as_i64().unwrap_or(0) > 0, "{stats}");
     assert!(stats.get("relations").is_some() && stats.get("interest_states").is_some());
     // Z5/C1：BriefingCard refs 归属解析面——episode_index 恒在（键纪律同上），
-    // demo 布景有图 → 非空且每行恰两键 viewer_id + title（大键不上 overview 面）。
+    // demo 布景有图 → 非空；R2 批5 D5 起每行恰三键 viewer_id + title + source
+    // （芯片类型词素材；大键不上 overview 面）。
     let index = &body["episode_index"];
     let entries = index.as_object().expect("episode_index 是对象");
     assert!(
@@ -169,12 +170,12 @@ async fn overview_combines_collection_ai_leads_and_baseline_delta() {
             "{episode_id}: {entry}"
         );
         assert!(
-            entry
-                .as_object()
-                .unwrap()
-                .keys()
-                .all(|key| key == "viewer_id" || key == "title"),
-            "索引行只许 viewer_id/title 两键：{entry}"
+            entry["source"].as_str().is_some_and(|v| !v.is_empty()),
+            "D5 芯片类型词素材 source 键恒在：{episode_id}: {entry}"
+        );
+        assert!(
+            entry.as_object().unwrap().len() == 3,
+            "索引行只许 viewer_id/title/source 三键：{entry}"
         );
     }
     // 未知 uid → 404

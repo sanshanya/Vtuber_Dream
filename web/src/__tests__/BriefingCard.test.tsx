@@ -8,7 +8,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { BriefingCard, parseBrief } from "../components/BriefingCard";
+import {
+  BriefingCard,
+  episodeKindWord,
+  groupRefsByHolder,
+  parseBrief,
+} from "../components/BriefingCard";
 import { RunTrackerProvider } from "../components/RunTracker";
 
 const NAME_OF: ReadonlyMap<string, string> = new Map([["u1", "观众甲"]]);
@@ -75,12 +80,12 @@ describe("BriefingCard 三态", () => {
     expect(screen.queryByTestId("briefing-list")).toBeNull();
   });
 
-  it("就绪：refs 经 episode_index 可点跳个人树；未解析 ref 退化为不可点 chip；stale 盖章", async () => {
+  it("就绪（D5）：芯片=人名·类型词，跳转=持有人 uid；未解析 ref 退化为不可点 chip；stale 盖章", async () => {
     mount({
       situationStatus: "complete",
       aiCompletedAt: "2026-08-04T19:32:49Z",
       stale: true,
-      episodeIndex: { "ep-1": { viewer_id: "u1", title: "异环实况" } },
+      episodeIndex: { "ep-1": { viewer_id: "u1", title: "异环实况", source: "bangumi" } },
       nameOf: NAME_OF,
       analysis: {
           front_brief: {
@@ -93,9 +98,67 @@ describe("BriefingCard 三态", () => {
     );
     const links = await screen.findAllByTestId("brief-ref");
     expect(links[0].getAttribute("href")).toBe("#/viewers/u1/tree");
-    expect(links[0].textContent).toBe("异环实况");
+    expect(links[0].textContent).toBe("观众甲·追番");
     expect(screen.getByTestId("brief-ref-unresolved").textContent).toBe("ep-ghost");
     expect(screen.getByTestId("brief-range").textContent).toContain("2026-08-01");
     expect(screen.getByTestId("briefing-stale")).toBeTruthy();
+  });
+
+  it("就绪（D5 合并）：同人两条证据合为一芯携计数；无名持有人回退 uid；异源类型斜杠并落", async () => {
+    mount({
+      situationStatus: "complete",
+      aiCompletedAt: null,
+      stale: false,
+      episodeIndex: {
+        "ep-1": { viewer_id: "u1", title: "一", source: "live_ws_danmaku" },
+        "ep-2": { viewer_id: "u1", title: "二", source: "live_ws_danmaku" },
+        "ep-3": { viewer_id: "u2", title: "三", source: "dynamic" },
+        "ep-4": { viewer_id: "u2", title: "四", source: "room_comment" },
+      },
+      nameOf: NAME_OF,
+      analysis: {
+        front_brief: {
+          sentences: [
+            { text: "弹幕与动态齐飞。", episode_refs: ["ep-1", "ep-2", "ep-3", "ep-4"] },
+          ],
+        },
+      },
+    });
+    const links = await screen.findAllByTestId("brief-ref");
+    expect(links.map((link) => [link.getAttribute("href"), link.textContent])).toEqual([
+      ["#/viewers/u1/tree", "观众甲·弹幕×2"],
+      ["#/viewers/u2/tree", "u2·动态/评论×2"],
+    ]);
+  });
+});
+
+describe("D5 纯件：episodeKindWord / groupRefsByHolder", () => {
+  it("类型词表钉：已知源映射、未知源原样、缺席空串", () => {
+    expect(episodeKindWord("video")).toBe("投稿");
+    expect(episodeKindWord("dynamic")).toBe("动态");
+    expect(episodeKindWord("favorite")).toBe("收藏");
+    expect(episodeKindWord("bangumi")).toBe("追番");
+    expect(episodeKindWord("live_danmaku")).toBe("弹幕");
+    expect(episodeKindWord("live_ws_danmaku")).toBe("弹幕");
+    expect(episodeKindWord("room_comment")).toBe("评论");
+    expect(episodeKindWord("live_ws_sc")).toBe("醒目留言");
+    expect(episodeKindWord("live_ws_entry")).toBe("进场");
+    expect(episodeKindWord("weird_src")).toBe("weird_src");
+    expect(episodeKindWord(null)).toBe("");
+    expect(episodeKindWord(undefined)).toBe("");
+  });
+
+  it("归并钉：同人合并保首次序、未解析独立成组不混入", () => {
+    const groups = groupRefsByHolder(["a1", "ghost", "a2", "b1", "a3"], {
+      a1: { viewer_id: "u1" },
+      a2: { viewer_id: "u1" },
+      a3: { viewer_id: "u1" },
+      b1: { viewer_id: "u2" },
+    });
+    expect(groups.map((g) => [g.viewerId, g.refs])).toEqual([
+      ["u1", ["a1", "a2", "a3"]],
+      [null, ["ghost"]],
+      ["u2", ["b1"]],
+    ]);
   });
 });

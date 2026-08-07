@@ -2,9 +2,10 @@
  * Streamer 首页钉团：
  * - 空态判别（ag5-F6：404 status 特判，不再子串匹配 message）；
  * - 概述 500 且文案含 "collection" → 不许误吞成空态（原裸子串 bug 复现形）；
- * - synthetic 徽标 = collection/ai/situation 任一析取（W3/X2补丁钉）；
  * - Z2：主播卡 profile 透传（名字/粉丝徽标/头像 no-referrer）与 profile 缺档空态；
- * - Z2：executive_summary 走 Markdown（## → h3、- ** → li strong），不再糊整段 <p>。
+ * - R2 批5：v2 P1-1 首卡恒为复盘卡（recap 就绪/null 两态 DOM 序）+ D6 退役面
+ *   （态势项胶囊/宏观折叠组/executive_summary 直呈/situ-synthetic 徽标随退役段
+ *   同葬；synthetic 析取的存活面=页脚徽标，App.test 钉着）。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -70,41 +71,6 @@ describe("Streamer 空态判别（ag5-F6）", () => {
     await waitFor(() => expect(screen.getByText(/磁盘只读/)).toBeTruthy());
     expect(screen.queryByText(/还没有采集数据/)).toBeNull();
   });
-
-  // W3/X2补丁钉：synthetic 徽标判定是 collection/ai/situation 任一分段析取——
-  // 单点 ai=true 即亮（写位随工件周期漂移，前端不许绑定单一来源位）。
-  it("synthetic 任一分段析取：仅 ai.synthetic_demo=true 也出徽标", async () => {
-    stubFetch(
-      200,
-      JSON.stringify({
-        collection: { status: "complete", finished_at: "2026-08-05T00:00:00+00:00" },
-        ai: { status: "complete", synthetic_demo: true },
-        situation: {
-          status: "complete",
-          analysis: { executive_summary: "合成态势", interest_graph: [] },
-        },
-      }),
-    );
-    renderStreamer();
-    await waitFor(() => expect(screen.getByTestId("situ-synthetic")).toBeTruthy());
-  });
-
-  it("synthetic 三分段全缺席 → 不臆造徽标", async () => {
-    stubFetch(
-      200,
-      JSON.stringify({
-        collection: { status: "complete", finished_at: "2026-08-05T00:00:00+00:00" },
-        ai: { status: "complete" },
-        situation: {
-          status: "complete",
-          analysis: { executive_summary: "真实态势", interest_graph: [] },
-        },
-      }),
-    );
-    renderStreamer();
-    await waitFor(() => expect(screen.getByText("真实态势")).toBeTruthy());
-    expect(screen.queryByTestId("situ-synthetic")).toBeNull();
-  });
 });
 
 describe("Streamer 主播卡（Z2）", () => {
@@ -152,29 +118,6 @@ describe("Streamer 主播卡（Z2）", () => {
     expect(document.querySelector("img.streamer-face")).toBeNull();
   });
 
-  it("executive_summary 走 Markdown：## 出标题、- **粗体** 出列表项 strong", async () => {
-    stubFetch(
-      200,
-      JSON.stringify({
-        ...base,
-        situation: {
-          status: "complete",
-          analysis: {
-            executive_summary: "## 观众结构\n- **1名舰长**：高价值\n",
-            interest_graph: [],
-          },
-        },
-      }),
-    );
-    renderStreamer();
-    await waitFor(() => {
-      const heading = document.querySelector(".markdown h3");
-      expect(heading?.textContent).toBe("观众结构");
-      const strong = document.querySelector(".markdown li strong");
-      expect(strong?.textContent).toBe("1名舰长");
-    });
-  });
-
   it("Z2b：舰长栏=采集一发的名单见人——chip 渲染名字+AI状态+态势深链", async () => {
     stubFetchMap({
       overview: { status: 200, body: { ...base } },
@@ -204,7 +147,7 @@ describe("Streamer 主播卡（Z2）", () => {
     await waitFor(() => expect(screen.getByText(/舰长名单为空/)).toBeTruthy());
   });
 
-  it("Z3：指标条=旧版站签名（舰长/Episode/Mention/实体/关系/态势项），graph_stats 面透传", async () => {
+  it("Z3：指标条=旧版站签名（舰长/Episode/Mention/实体/关系；R2 批5 D6：态势项胶囊退役）", async () => {
     stubFetchMap({
       overview: {
         status: 200,
@@ -231,8 +174,54 @@ describe("Streamer 主播卡（Z2）", () => {
     expect(strip.textContent).toContain("998");
     expect(strip.textContent).toContain("1,473");
     expect(strip.textContent).toContain("4,477");
-    expect(strip.textContent).toContain("态势项");
-    expect(strip.querySelectorAll(".card.stat").length).toBe(6);
+    // D6 退役实证：胶囊面只剩 5 枚，且「态势项」在指标条零残留。
+    expect(strip.textContent).not.toContain("态势项");
+    expect(strip.querySelectorAll(".card.stat").length).toBe(5);
+  });
+
+  it("v2 P1-1（裁决三）：首卡恒为复盘卡——recap 就绪与 null 两态 DOM 序均领先简报卡", async () => {
+    const ready = {
+      status: "ready",
+      generated_at: "2026-08-05T22:00:00+00:00",
+      session: { start: "2026-08-05T21:00:00+00:00", end: "2026-08-05T21:30:00+00:00", rid: "S2" },
+      headline: "今晚 3 人来过，1 人回来过",
+      speakers: 3,
+      returning: { count: 1, base: 3, sessions_back: 1 },
+      peak: null,
+      repeated: null,
+      naming: null,
+      unknown: [],
+      empty_copy: null,
+    };
+    for (const recap of [ready, null]) {
+      stubFetchMap({
+        overview: {
+          status: 200,
+          body: {
+            ...base,
+            recap,
+            situation: {
+              status: "complete",
+              analysis: { front_brief: { sentences: [] } },
+            },
+          },
+        },
+        viewers: { status: 200, body: [] },
+      });
+      renderStreamer();
+      await waitFor(() => expect(screen.getByTestId("recap-card")).toBeTruthy());
+      const recapCard = screen.getByTestId("recap-card");
+      const briefingCard = screen.getByTestId("briefing-card");
+      expect(
+        recapCard.compareDocumentPosition(briefingCard) & Node.DOCUMENT_POSITION_FOLLOWING,
+      ).toBeTruthy();
+      // 退役面零残留（D6 双区都不复存在）。
+      expect(screen.queryByTestId("macro-details")).toBeNull();
+      // 「整体态势」heading 是退役段的签名（动作区 note 里的同名短语是存活文案）。
+      expect(screen.queryByRole("heading", { name: "整体态势" })).toBeNull();
+      expect(screen.queryByText(/点开看/)).toBeNull();
+      cleanup();
+    }
   });
 
   it("Z3：graph_stats 缺图态 → 指标条落「—」不臆造数字", async () => {

@@ -28,6 +28,61 @@ interface BriefSentence {
 export interface EpisodeIndexEntry {
   viewer_id?: string;
   title?: string | null;
+  /** R2 批5 D5：Episode 源（video/dynamic/…/live_ws_*）——芯片副文本类型词的素材。 */
+  source?: string | null;
+}
+
+/** D5 类型词表：芯片副文本=「什么」（Episode 类型），未知源原样落、缺席=空串
+ *  （芯片只落人名，绝不臆造类型）。 */
+export function episodeKindWord(source: string | null | undefined): string {
+  switch (source ?? "") {
+    case "video":
+      return "投稿";
+    case "dynamic":
+      return "动态";
+    case "favorite":
+      return "收藏";
+    case "bangumi":
+      return "追番";
+    case "live_danmaku":
+    case "live_ws_danmaku":
+      return "弹幕";
+    case "room_comment":
+      return "评论";
+    case "live_ws_sc":
+      return "醒目留言";
+    case "live_ws_entry":
+      return "进场";
+    default:
+      return source?.trim() ?? "";
+  }
+}
+
+interface RefGroup {
+  viewerId: string | null;
+  refs: string[];
+}
+
+/** D5：refs 按证据持有人（viewer_id）归并为一组，保首次出现序；未解析（无归属面）
+ *  的 ref 单独成组、viewerId=null——降级渲染权归调用处。 */
+export function groupRefsByHolder(
+  refs: string[],
+  index: Record<string, EpisodeIndexEntry>,
+): RefGroup[] {
+  const groups: RefGroup[] = [];
+  const position = new Map<string, number>();
+  for (const ref of refs) {
+    const viewerId = index[ref]?.viewer_id ?? null;
+    const key = viewerId ?? `unresolved:${ref}`;
+    const slot = position.get(key);
+    if (slot === undefined) {
+      position.set(key, groups.length);
+      groups.push({ viewerId, refs: [ref] });
+    } else {
+      groups[slot].refs.push(ref);
+    }
+  }
+  return groups;
 }
 
 /** LLM 形状护栏：Record 形状的 front_brief → 句子列表；任何漂移 → null（按沉默态渲染）。 */
@@ -126,23 +181,31 @@ export function BriefingCard({
                     覆盖 {sentence.range[0]} ~ {sentence.range[1]}
                   </span>
                 )}
-                {sentence.episodeRefs.map((ref) => {
-                  const owner = index[ref];
-                  const label = owner?.title?.trim() ? String(owner.title) : ref;
-                  return owner?.viewer_id ? (
+                {/* R2 批5 D5：芯片=「谁说的·什么」——同一持有人多证据合并一芯携计数；
+                    标签=持有人名·类型词（不再拿 Episode 标题冒充持有人），点击行为不变
+                    （入树并定位），title 载全量 ref 编号。未解析 ref 保持原样降级。 */}
+                {groupRefsByHolder(sentence.episodeRefs, index).map((group) => {
+                  if (group.viewerId === null) {
+                    return group.refs.map((ref) => (
+                      <span key={ref} className="brief-ref unresolved" data-testid="brief-ref-unresolved" title={`未解析的 episode 引用：${ref}`}>
+                        {ref}
+                      </span>
+                    ));
+                  }
+                  const uid = group.viewerId;
+                  const name = nameOf.get(uid) ?? uid;
+                  const kinds = [...new Set(group.refs.map((ref) => episodeKindWord(index[ref]?.source)).filter((word) => word !== ""))];
+                  const label = `${name}${kinds.length > 0 ? `·${kinds.join("/")}` : ""}${group.refs.length > 1 ? `×${group.refs.length}` : ""}`;
+                  return (
                     <a
-                      key={ref}
+                      key={uid}
                       className="brief-ref"
                       data-testid="brief-ref"
-                      href={`#/viewers/${encodeURIComponent(owner.viewer_id)}/tree`}
-                      title={`证据：${label}（${ref}）→ ${nameOf.get(owner.viewer_id) ?? owner.viewer_id} 的个人树`}
+                      href={`#/viewers/${encodeURIComponent(uid)}/tree`}
+                      title={`证据 ${group.refs.length} 条：${group.refs.join("、")} → ${name} 的个人树`}
                     >
                       {label}
                     </a>
-                  ) : (
-                    <span key={ref} className="brief-ref unresolved" data-testid="brief-ref-unresolved" title={`未解析的 episode 引用：${ref}`}>
-                      {ref}
-                    </span>
                   );
                 })}
               </div>

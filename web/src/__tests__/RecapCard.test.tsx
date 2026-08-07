@@ -4,7 +4,7 @@
  * - naming=null：动作位具名「未命名」，不补文案（无伪造语义）；
  * - empty 态：诚实文案（今晚没人来——但你没说错话）而非报错；
  * - null 态：复盘尚未生成；
- * - Streamer 集成：宏观态势段 <details> 默认折叠（无 open 属性）。
+ * - Streamer 集成（v2 P1-1/D6）：复盘卡为首卡；宏观折叠段已整段退役。
  */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { cleanup, render, screen, waitFor } from "@testing-library/react";
@@ -92,8 +92,8 @@ describe("下播复盘卡", () => {
   });
 });
 
-describe("Streamer 集成（验收钉③）", () => {
-  it("整体态势段 default-collapsed + 复盘卡上页面", async () => {
+describe("Streamer 集成（v2 P1-1 首卡钉 + R2 批5 D6 退役面）", () => {
+  it("复盘卡上页面且为首卡（DOM 序领先简报卡）；宏观折叠组整段退役零残留", async () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
@@ -132,9 +132,16 @@ describe("Streamer 集成（验收钉③）", () => {
     await waitFor(() => expect(screen.getByTestId("recap-card")).toBeTruthy());
     // 复盘卡呈现四数
     expect(screen.getByTestId("recap-headline").textContent).toContain("3 人来过");
-    // 钉③：宏观段 = <details> 且无 open 属性（默认折叠）
-    const macro = screen.getByTestId("macro-details") as HTMLDetailsElement;
-    expect(macro.tagName).toBe("DETAILS");
-    expect(macro.open).toBe(false);
+    // v2 P1-1（裁决三）：首卡恒为复盘卡——DOM 序领先简报卡。
+    const recapCard = screen.getByTestId("recap-card");
+    const briefingCard = screen.getByTestId("briefing-card");
+    expect(
+      recapCard.compareDocumentPosition(briefingCard) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // R2 批5 D6：宏观段整段退役——旧「整体态势（宏观）…项，点开看」零残留。
+    expect(screen.queryByTestId("macro-details")).toBeNull();
+      // 「整体态势」heading 是退役段的签名（动作区 note 里的同名短语是存活文案）。
+      expect(screen.queryByRole("heading", { name: "整体态势" })).toBeNull();
+      expect(screen.queryByText(/点开看/)).toBeNull();
   });
 });

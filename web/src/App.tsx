@@ -29,7 +29,7 @@ const GraphPage = lazy(() =>
 /**
  * footer synthetic 徽标的析取口径（W2/r5-F3，R3#6 单源）：collection/ai/situation
  * 任一 synthetic_demo=true → 亮；三分段全缺席/全 false → 不亮（合成标示宁可缺席，
- * 不许凭失败/缺省臆造）。注：Streamer/Situ 内的同源口径是他单辖区，保留不动。
+ * 不许凭失败/缺省臆造）。注：Streamer 内的同源口径是他单辖区，保留不动。
  */
 export function isSyntheticRun(overview: OverviewView | undefined): boolean {
   return (
