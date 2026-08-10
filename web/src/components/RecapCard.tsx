@@ -27,6 +27,16 @@ export interface RecapPayload {
   } | null;
   unknown?: string[];
   empty_copy?: string | null;
+  /** 金额面（当前场次窗）：换算唯一在服务端合计点（gold=付费、金瓜子 1000:1 元）。
+      null = 本场零金钱事件（静默位，绝非零流量的谎）。 */
+  money?: {
+    paid_gifts: number;
+    gift_yuan: number;
+    sc_count: number;
+    sc_yuan: number;
+    guard_buys: number;
+    toasts: number;
+  } | null;
 }
 
 export function RecapCard({ recap }: { recap: RecapPayload | null | undefined }) {
@@ -97,6 +107,18 @@ export function RecapCard({ recap }: { recap: RecapPayload | null | undefined })
                   ? `·「${naming.sentence_name}」`
                   : "")
               : "被复读的句子（本场没有达标复读）"}
+          </span>
+        </div>
+        <div className="card stat" data-testid="recap-money">
+          <strong>
+            {recap.money ? `¥${(recap.money.gift_yuan + recap.money.sc_yuan).toFixed(1)}` : "—"}
+          </strong>
+          <span>
+            {recap.money
+              ? `金钱流水（礼物 ¥${recap.money.gift_yuan.toFixed(1)}/${recap.money.paid_gifts} 次` +
+                `　SC ¥${recap.money.sc_yuan.toFixed(1)}/${recap.money.sc_count} 次` +
+                `　上舰 ${recap.money.guard_buys}　播报 ${recap.money.toasts}）`
+              : "金钱流水（本场零金钱事件）"}
           </span>
         </div>
       </div>

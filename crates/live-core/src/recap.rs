@@ -106,6 +106,26 @@ pub struct RecapNaming {
     pub named_at: String,
 }
 
+/// 金额面（当前场次窗）：付费礼物/SC/上舰/播报的规则合计。
+///
+/// 换算纪律：事实层（Episode facts）只存平台原币轨（total_coin 金瓜子、price
+/// 平台原值）；「1000 金瓜子 = 1 元」「coin_type=="gold" 才算付费」的解读权
+/// ——同 ws-replay 报表面同一把尺——只在这个合计点出现。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RecapMoney {
+    /// 付费礼物行数（gold 且 total_coin>0）。
+    pub paid_gifts: i64,
+    /// 付费礼物折元总额。
+    pub gift_yuan: f64,
+    /// SC 行数 / 折元总额（SC price 单位即元，无换算）。
+    pub sc_count: i64,
+    pub sc_yuan: f64,
+    /// 上舰接入行数（GUARD_BUY；上舰无可结算币轨，暂只计数）。
+    pub guard_buys: i64,
+    /// 上舰播报行数（USER_TOAST_V2，含续费播报，非付费事件本身）。
+    pub toasts: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RecapCard {
     /// ready = 有本场；empty = 零语料或零本场发言（诚实文案，不是报错）。
@@ -125,6 +145,9 @@ pub struct RecapCard {
     pub unknown: Vec<String>,
     /// 空场诚实文案（status=empty 才非空）。
     pub empty_copy: Option<String>,
+    /// 金额面：当前场次窗金钱流水合计；零金钱事件 = null
+    /// （呈现面按「本场零金钱流水」静默位渲染——0 也是事实，但不是错误）。
+    pub money: Option<RecapMoney>,
 }
 
 /// 空场文案（细则原文句式 + Hamilton：0 同接也有价值——如实说，不报错）。
@@ -197,6 +220,29 @@ struct LineRow {
     text: String,
 }
 
+/// 金额面登记行：事实层原币轨照登（元换算只在合计点，见 RecapMoney 注释）。
+#[derive(Debug)]
+struct MoneyRow {
+    /// 原场次窗（Episode facts 的 session 区段——归场规则与 LineRow 同尺）。
+    start_ts: i64,
+    end_ts: i64,
+    kind: MoneyKind,
+    /// SC/上舰 price（平台原值：SC=元）。
+    price: f64,
+    /// 礼物 total_coin（金瓜子）。
+    total_coin: i64,
+    /// coin_type=="gold"（silver 免费票不合计；原值照登记）。
+    gold: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MoneyKind {
+    Gift,
+    SuperChat,
+    GuardBuy,
+    Toast,
+}
+
 /// 区间折叠：重叠（严格相交 `next.start < cur.end`，边界相触不算）即并进同一场次；
 /// 折叠界 = [min start, max end]。rid 遵循 WS 优先（is_ws 组件的 rid 随时重夺），
 /// 否则取最早 start 的组件 rid。退化区间（start≤0 / end<start）不构成场次。
@@ -233,6 +279,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         crate::graph::query::episodes(store, crate::episodes::room_corpus::ROOM_VIEWER_ID, None)?;
     let mut interval_facts: Vec<IntervalFact> = Vec::new();
     let mut line_rows: Vec<LineRow> = Vec::new();
+    let mut money_rows: Vec<MoneyRow> = Vec::new();
     let mut comments: Vec<Value> = Vec::new();
     // WS 窗元信息（window_start 诚实标记）——折叠后按「当前场次窗」读取。
     let mut ws_windows: Vec<WsWindowMeta> = Vec::new();
@@ -333,6 +380,24 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
                 if start_ts > 0 && end_ts > 0 && !ws_windows.contains(&meta) {
                     ws_windows.push(meta);
                 }
+                // 金额面登记：SC/礼物/上舰/播报——事实原值照登，换算权在合计点。
+                let money_kind = match source {
+                    s if s == SOURCE_WS_SC => Some(MoneyKind::SuperChat),
+                    s if s == SOURCE_WS_GIFT => Some(MoneyKind::Gift),
+                    s if s == SOURCE_WS_GUARD_BUY => Some(MoneyKind::GuardBuy),
+                    s if s == SOURCE_WS_TOAST => Some(MoneyKind::Toast),
+                    _ => None,
+                };
+                if let Some(kind) = money_kind {
+                    money_rows.push(MoneyRow {
+                        start_ts,
+                        end_ts,
+                        kind,
+                        price: facts.get("price").and_then(Value::as_f64).unwrap_or(0.0),
+                        total_coin: facts.get("total_coin").and_then(Value::as_i64).unwrap_or(0),
+                        gold: facts.get("coin_type").and_then(Value::as_str) == Some("gold"),
+                    });
+                }
                 if source == SOURCE_WS_DANMAKU || source == SOURCE_WS_SC {
                     // 弹幕/SC 行入 lines——SC 也是发言轨（含文本）；进场/礼物/上舰/
                     // 播报是纯氛围事实（无发言文本），不进四数行轨但场次窗照归。
@@ -387,6 +452,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
                     "有评论但零场次窗：这不是「没人来」，也不能判今晚有效——复盘等下一个有效场次。"
                         .to_string(),
                 ),
+                money: None,
             });
         }
         unknown.push("没有任何场次落进图里——采集没碰到新的回放弹幕/评论。".to_string());
@@ -402,6 +468,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
             naming: None,
             unknown,
             empty_copy: Some(EMPTY_COPY.to_string()),
+            money: None,
         });
     }
 
@@ -431,6 +498,51 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         .take(RECAP_LOOKBACK_SESSIONS)
         .collect();
     let current_key = (current.start_ts, current.end_ts);
+
+    // 金额面：金钱事件按 LineRow 同尺归场；只合计当前场（最新场次窗）。
+    // 零金钱事件 = None（面板静默位——0 与缺席要分开诚实）。
+    let mut money_acc = RecapMoney {
+        paid_gifts: 0,
+        gift_yuan: 0.0,
+        sc_count: 0,
+        sc_yuan: 0.0,
+        guard_buys: 0,
+        toasts: 0,
+    };
+    for row in &money_rows {
+        let owner = sessions
+            .iter()
+            .find(|s| s.start_ts <= row.start_ts && row.end_ts <= s.end_ts)
+            .map(|s| (s.start_ts, s.end_ts));
+        if owner != Some(current_key) {
+            continue;
+        }
+        match row.kind {
+            MoneyKind::Gift => {
+                if row.gold && row.total_coin > 0 {
+                    money_acc.paid_gifts += 1;
+                    money_acc.gift_yuan += row.total_coin as f64 / 1000.0;
+                }
+            }
+            MoneyKind::SuperChat => {
+                if row.price > 0.0 {
+                    money_acc.sc_count += 1;
+                    money_acc.sc_yuan += row.price;
+                }
+            }
+            MoneyKind::GuardBuy => money_acc.guard_buys += 1,
+            MoneyKind::Toast => money_acc.toasts += 1,
+        }
+    }
+    let money = if money_acc.paid_gifts == 0
+        && money_acc.sc_count == 0
+        && money_acc.guard_buys == 0
+        && money_acc.toasts == 0
+    {
+        None
+    } else {
+        Some(money_acc)
+    };
 
     // 换轨诚实面：当前场次若含 WS 窗且起点为 attach（未收 LIVE 校正），
     // 诚实标记进未知行（绝不补段、绝不假装起点=开播）。
@@ -540,6 +652,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
             naming: None,
             unknown,
             empty_copy: Some("今晚没人来——但你没说错话。".to_string()),
+            money,
         });
     }
 
@@ -660,6 +773,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
         naming: None,
         unknown,
         empty_copy: None,
+        money,
     })
 }
 
@@ -1048,6 +1162,146 @@ mod ws_recap_tests {
             card.unknown.iter().any(|row| row.contains(needle)),
             "未知行缺少「{needle}」: {:?}",
             card.unknown
+        );
+    }
+
+    /// 金额面钉：同窗 弹幕+付费礼物(gold)+免费票(silver)+SC+上舰+播报 ——
+    /// 合计只计当前场；gold 才折元（total_coin/1000）、免费票剔；上舰/播报只计数。
+    /// 另钉零金钱窗 → money=None（0 与缺席分轨诚实）。
+    #[test]
+    fn money_face_totals_current_session_and_none_when_zero() {
+        let store = fresh_store("money");
+        let mut rec = WsRecorder::attach(7, 1_000_000, 1).expect("在播开窗");
+        let feed = |rec: &mut WsRecorder, ev: WsEvent, ts: i64| rec.on_event(&ev, ts);
+        feed(
+            &mut rec,
+            WsEvent::Danmaku {
+                uid: "u-1".into(),
+                uname: "甲".into(),
+                text: "好".into(),
+                ts: Some(1_000_001),
+            },
+            1_000_001,
+        );
+        feed(
+            &mut rec,
+            WsEvent::Gift {
+                uid: "u-2".into(),
+                uname: "乙".into(),
+                gift_name: "小花花".into(),
+                num: 2,
+                price: 100.0,
+                total_coin: 200,
+                coin_type: "gold".into(),
+                ts: Some(1_000_002),
+            },
+            1_000_002,
+        );
+        feed(
+            &mut rec,
+            WsEvent::Gift {
+                uid: "u-3".into(),
+                uname: "丙".into(),
+                gift_name: "辣条".into(),
+                num: 1,
+                price: 0.0,
+                total_coin: 0,
+                coin_type: "silver".into(),
+                ts: Some(1_000_003),
+            },
+            1_000_003,
+        );
+        feed(
+            &mut rec,
+            WsEvent::SuperChat {
+                uid: "u-4".into(),
+                uname: "金主".into(),
+                text: "大气".into(),
+                price: 30.0,
+                start_time: Some(1_000_004),
+            },
+            1_000_004,
+        );
+        feed(
+            &mut rec,
+            WsEvent::GuardBuy {
+                uid: "u-5".into(),
+                uname: "舰长".into(),
+                guard_level: 3,
+                gift_name: "舰长".into(),
+                num: 1,
+                price: 198.0,
+                ts: Some(1_000_005),
+            },
+            1_000_005,
+        );
+        feed(
+            &mut rec,
+            WsEvent::Toast {
+                uid: "u-5".into(),
+                uname: "舰长".into(),
+                role_name: "舰长".into(),
+                guard_level: 3,
+                ts: Some(1_000_006),
+            },
+            1_000_006,
+        );
+        rec.on_event(&WsEvent::Preparing { round: 1 }, 1_000_007);
+        let cap = rec.finish(&SessionEnd::Closed, 1_000_007);
+        ingest_ws_window(&store, "r", &cap).unwrap();
+
+        let card = compute_recap(&store).unwrap();
+        let money = card.money.expect("金钱事件齐了必出金额面");
+        assert_eq!(money.paid_gifts, 1, "silver 免费票不计付费");
+        assert_eq!(money.gift_yuan, 0.2, "200 金瓜子 = ¥0.2");
+        assert_eq!(money.sc_count, 1);
+        assert_eq!(money.sc_yuan, 30.0);
+        assert_eq!(money.guard_buys, 1);
+        assert_eq!(money.toasts, 1);
+
+        // 零金钱场：同店再来一张纯弹幕窗 → money 缺席（None 与 0 分轨）。
+        let store2 = fresh_store("moneyzero");
+        let mut rec2 = WsRecorder::attach(7, 2_000_000, 1).expect("在播开窗");
+        rec2.on_event(
+            &WsEvent::Danmaku {
+                uid: "u-1".into(),
+                uname: "甲".into(),
+                text: "在".into(),
+                ts: Some(2_000_001),
+            },
+            2_000_001,
+        );
+        rec2.on_event(&WsEvent::Preparing { round: 1 }, 2_000_002);
+        let cap2 = rec2.finish(&SessionEnd::Closed, 2_000_002);
+        store2.begin_run_fixed("r2", &now_iso(), "t").unwrap();
+        ingest_ws_window(&store2, "r2", &cap2).unwrap();
+        let card2 = compute_recap(&store2).unwrap();
+        assert!(
+            card2.money.is_none(),
+            "零金钱事件窗 → None: {:?}",
+            card2.money
+        );
+
+        // 跨场不串账：首场金钱窗不动，第二场对店员合一——当前场合计只看最新场。
+        let mut rec3 = WsRecorder::attach(7, 3_000_000, 1).expect("在播开窗");
+        rec3.on_event(
+            &WsEvent::Danmaku {
+                uid: "u-9".into(),
+                uname: "壬".into(),
+                text: "晚".into(),
+                ts: Some(3_000_001),
+            },
+            3_000_001,
+        );
+        rec3.on_event(&WsEvent::Preparing { round: 1 }, 3_000_002);
+        let cap3 = rec3.finish(&SessionEnd::Closed, 3_000_002);
+        store.begin_run_fixed("r3", &now_iso(), "t").unwrap();
+        ingest_ws_window(&store, "r3", &cap3).unwrap();
+        let card3 = compute_recap(&store).unwrap();
+        assert!(
+            card3.money.is_none(),
+            "最新场零金钱 → None（首场的 ¥30.2 不得串入）: {:?}",
+            card3.money
         );
     }
 

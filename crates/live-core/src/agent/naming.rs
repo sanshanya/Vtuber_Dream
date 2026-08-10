@@ -292,6 +292,7 @@ mod tests {
             naming: None,
             unknown: vec![],
             empty_copy: None,
+            money: None,
         }
     }
 

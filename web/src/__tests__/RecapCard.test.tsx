@@ -65,6 +65,25 @@ describe("下播复盘卡", () => {
     expect(unknown.textContent).toContain("暂无");
   });
 
+  it("金额面：ready 有流水显拆分；null 显「零金钱事件」静默位（0 与缺席分轨）", () => {
+    renderCard({
+      ...READY,
+      money: { paid_gifts: 23, gift_yuan: 33.8, sc_count: 1, sc_yuan: 30, guard_buys: 2, toasts: 16 },
+    });
+    const money = screen.getByTestId("recap-money");
+    expect(money.textContent).toContain("¥63.8");
+    expect(money.textContent).toContain("礼物 ¥33.8/23 次");
+    expect(money.textContent).toContain("SC ¥30.0/1 次");
+    expect(money.textContent).toContain("上舰 2");
+    expect(money.textContent).toContain("播报 16");
+
+    cleanup();
+    renderCard({ ...READY, money: null });
+    const empty = screen.getByTestId("recap-money");
+    expect(empty.textContent).toContain("—");
+    expect(empty.textContent).toContain("本场零金钱事件");
+  });
+
   it("naming=null：动作位具名未命名、未知行显内容（无伪造语义）", () => {
     renderCard({ ...READY, naming: null, unknown: ["AI 命名未达成：recap-naming failed"] });
     expect(screen.getByTestId("recap-action").textContent).toContain("待 AI 命名");
