@@ -69,6 +69,14 @@ pub fn run_ws_record(
     let mut session_cfg = WsSessionConfig::new(danmu.url(), room_id, danmu.token);
     // cookie 只进 WS 握手头（§11 红线：绝不进任何错误串/日志面）。
     session_cfg.cookie = config.bilibili.cookie.clone();
+    // 探活旁路面：VTD_WS_FAILSAFE_MINUTES 环境变量给调试/试跑缩短保险丝
+    //（默认 12h 不动——主采使用面永远不受本旋钮影响）。
+    if let Ok(minutes) = std::env::var("VTD_WS_FAILSAFE_MINUTES")
+        && let Ok(minutes) = minutes.parse::<u64>()
+        && minutes > 0
+    {
+        session_cfg.failsafe_cap_ms = minutes * 60_000;
+    }
 
     let Some(mut recorder) = WsRecorder::attach(room_id, now_unix_secs(), 1) else {
         emit("[WS] 开窗失败（在播校验未过），本窗不开");
