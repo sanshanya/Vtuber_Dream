@@ -95,6 +95,15 @@ export function Live({ roomId }: { roomId: string }) {
   }
   // F3：overview 接口收紧后 pending 变体 data 类型含 undefined（F3 单宽限；他单重做消费面时收回）。
   const live = overview.data?.live ?? null;
+  // 采录场次窗（WS 实采）——与 B站回放列表是两个独立事实源（互不替补，同页分卡）。
+  const wsWindowsDoc = overview.data?.ws_windows ?? null;
+  const wsWindows = Array.isArray(wsWindowsDoc?.windows) ? wsWindowsDoc!.windows! : [];
+  const fmtYuan = (v: unknown): string =>
+    typeof v === "number" && Number.isFinite(v) ? `¥${v.toFixed(1)}` : "—";
+  const fmtIntOrDash = (v: unknown): string =>
+    typeof v === "number" && Number.isFinite(v) ? String(v) : "—";
+  const fmtWindowClock = (unix: unknown): string =>
+    typeof unix === "number" && Number.isFinite(unix) ? fmtClock(unix) : "—";
   const rows = Array.isArray(live?.records) ? (live.records as Array<Record<string, unknown>>) : [];
   const records = rows.map(toRecord).sort((a, b) => (b.start ?? 0) - (a.start ?? 0));
   // errors 数组原样透传。api.ts 的 OverviewView（收口面）未把 errors
@@ -121,9 +130,58 @@ export function Live({ roomId }: { roomId: string }) {
 
   return (
     <>
+      {/* 采录场次窗（WS 实采的第一事实源）——B站回放列表空≠没直播过；
+          本卡事实 = ws-replay 落盘的 ai/ws_windows.json（一场一窗）。 */}
+      <section className="section card" data-testid="ws-windows-card">
+        <div className="section-title">
+          <h2>采录场次窗（WS 实采）</h2>
+          <span className="muted small">
+            {wsWindows.length > 0 ? `${wsWindows.length} 场` : ""}
+          </span>
+        </div>
+        {wsWindows.length === 0 ? (
+          <div className="empty" data-testid="ws-windows-empty">
+            尚无采录场次——跑一次 ws-replay 后此处呈场（一场一窗：窗时刻/发言人数/弹幕 /SC/付费礼
+            物额/上舰播报）。
+          </div>
+        ) : (
+          <table className="data-table" data-testid="ws-windows-table">
+            <thead>
+              <tr>
+                <th>窗</th>
+                <th>发言人数</th>
+                <th>弹幕</th>
+                <th>SC</th>
+                <th>付费礼物</th>
+                <th>上舰/播报</th>
+              </tr>
+            </thead>
+            <tbody>
+              {wsWindows.map((w, i) => (
+                <tr key={w.session?.rid ?? i}>
+                  <td>
+                    {fmtWindowClock(w.session?.start_timestamp)} → {fmtWindowClock(w.session?.end_timestamp)}
+                  </td>
+                  <td data-testid={`ws-window-speakers-${i}`}>{fmtIntOrDash(w.speakers)}</td>
+                  <td>{fmtIntOrDash(w.danmaku)}</td>
+                  <td>{fmtIntOrDash(w.super_chat)}</td>
+                  <td>
+                    {w.money && (w.money.paid_gifts ?? 0) > 0
+                      ? `${fmtYuan(w.money.gift_yuan)}（${fmtIntOrDash(w.money.paid_gifts)} 次）`
+                      : "零付费礼物"}
+                  </td>
+                  <td>
+                    {fmtIntOrDash(w.money?.guard_buys)} / {fmtIntOrDash(w.money?.toasts)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
       <section className="section card">
         <div className="section-title">
-          <h2>直播数据</h2>
+          <h2>直播数据（B站回放接口）</h2>
           <span className="badge" data-testid="live-status">
             {live === null
               ? "档案面未建立"

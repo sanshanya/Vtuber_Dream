@@ -212,6 +212,20 @@ pub fn run_ws_replay(
     let recap = live_core::recap::refresh_recap_card(&config.output_dir, emit)
         .map_err(|err| format!("复盘卡刷新失败：{err}"))?;
 
+    // 采录场次窗摘要落盘（展示面直供——Live 页「采录场次窗」档案卡）：
+    // 事实源 = 本次入账的 capture 集；口径同复盘合计点（gold=付费、金瓜子 1000:1 元）。
+    let ws_windows_doc = json!({
+        "generated_at": now_iso(),
+        "windows": outcome.captures.iter().map(summarize_capture).collect::<Vec<Value>>(),
+    });
+    let ai_dir = config.output_dir.join("ai");
+    std::fs::create_dir_all(&ai_dir).map_err(|err| format!("ai/ 目录：{err}"))?;
+    std::fs::write(
+        ai_dir.join("ws_windows.json"),
+        serde_json::to_string_pretty(&ws_windows_doc).map_err(|err| err.to_string())?,
+    )
+    .map_err(|err| format!("ws_windows.json 落盘失败：{err}"))?;
+
     let window_json = |capture: &live_core::live_ws::episodes::WsWindowCapture| {
         json!({
             "lines": capture.episodes.len(),
@@ -232,4 +246,71 @@ pub fn run_ws_replay(
         "money": outcome.money,
         "recap": recap,
     }))
+}
+
+/// 单场窗 → 展示面摘要（Live 页档案卡行）。
+/// 发言人数 = 弹幕+SC 线的真实 mid 去重；金额口径与复盘合计点同源
+/// （事实层币轨原值——金瓜子→元的换算同尺不重出第二件）。
+fn summarize_capture(capture: &live_core::live_ws::episodes::WsWindowCapture) -> Value {
+    use live_core::live_ws::episodes::{
+        SOURCE_WS_DANMAKU, SOURCE_WS_GIFT, SOURCE_WS_GUARD_BUY, SOURCE_WS_SC, SOURCE_WS_TOAST,
+    };
+    use std::collections::BTreeSet;
+    let (mut danmaku, mut sc, mut guard_buys, mut toasts) = (0u64, 0u64, 0u64, 0u64);
+    let (mut paid_gifts, mut sc_paid) = (0u64, 0u64);
+    let (mut gift_yuan, mut sc_yuan) = (0.0f64, 0.0f64);
+    let mut speakers: BTreeSet<String> = BTreeSet::new();
+    for ep in &capture.episodes {
+        let facts = &ep.platform_facts;
+        let uid = facts
+            .get("sender_uid_mid")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        match ep.source.as_str() {
+            SOURCE_WS_DANMAKU => {
+                danmaku += 1;
+                if !uid.is_empty() {
+                    speakers.insert(uid.to_string());
+                }
+            }
+            SOURCE_WS_SC => {
+                sc += 1;
+                if !uid.is_empty() {
+                    speakers.insert(uid.to_string());
+                }
+                let price = facts.get("price").and_then(Value::as_f64).unwrap_or(0.0);
+                if price > 0.0 {
+                    sc_paid += 1;
+                    sc_yuan += price;
+                }
+            }
+            SOURCE_WS_GIFT => {
+                let total_coin = facts.get("total_coin").and_then(Value::as_i64).unwrap_or(0);
+                let gold = facts.get("coin_type").and_then(Value::as_str) == Some("gold");
+                if gold && total_coin > 0 {
+                    paid_gifts += 1;
+                    gift_yuan += total_coin as f64 / 1000.0;
+                }
+            }
+            SOURCE_WS_GUARD_BUY => guard_buys += 1,
+            SOURCE_WS_TOAST => toasts += 1,
+            _ => {}
+        }
+    }
+    json!({
+        "session": capture.session,
+        "lines": capture.episodes.len(),
+        "speakers": speakers.len(),
+        "danmaku": danmaku,
+        "super_chat": sc,
+        "counts": capture.counts,
+        "money": {
+            "paid_gifts": paid_gifts,
+            "gift_yuan": gift_yuan,
+            "sc_count": sc_paid,
+            "sc_yuan": sc_yuan,
+            "guard_buys": guard_buys,
+            "toasts": toasts,
+        },
+    })
 }

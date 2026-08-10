@@ -47,6 +47,52 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("采录场次窗（WS 实采卡）", () => {
+  it("ws_windows 缺档 → 「尚无采录场次」空态（场均真相不臆造）", async () => {
+    stubFetch(200, JSON.stringify({ live: null, ws_windows: null }));
+    renderLive();
+    await waitFor(() => expect(screen.getByTestId("ws-windows-empty")).toBeTruthy());
+  });
+
+  it("两场窗 → 各行真实价（含零付费礼物直白位）", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        live: { status: "empty", count: 0, records: [] },
+        ws_windows: {
+          generated_at: "2026-08-10T04:00:00+00:00",
+          windows: [
+            {
+              session: { start_timestamp: 1785672000, end_timestamp: 1785679200, rid: "ws:1785672000" },
+              lines: 123,
+              speakers: 7,
+              danmaku: 120,
+              super_chat: 0,
+              money: { paid_gifts: 0, gift_yuan: 0, sc_count: 0, sc_yuan: 0, guard_buys: 0, toasts: 0 },
+            },
+            {
+              session: { start_timestamp: 1785844555, end_timestamp: 1785861737, rid: "ws:1785844555" },
+              lines: 294,
+              speakers: 20,
+              danmaku: 255,
+              super_chat: 0,
+              money: { paid_gifts: 23, gift_yuan: 33.8, sc_count: 0, sc_yuan: 0, guard_buys: 3, toasts: 16 },
+            },
+          ],
+        },
+      }),
+    );
+    renderLive();
+    const table = await waitFor(() => screen.getByTestId("ws-windows-table"));
+    expect(table.textContent).toContain("7");
+    expect(table.textContent).toContain("120");
+    expect(table.textContent).toContain("零付费礼物");
+    expect(table.textContent).toContain("¥33.8（23 次）");
+    expect(table.textContent).toContain("3 / 16");
+    expect(screen.queryByTestId("ws-windows-empty")).toBeNull();
+  });
+});
+
 describe("Live 直播数据页（Z4）", () => {
   it("live 面缺档 → 档案面未建立 + 空态解说", async () => {
     stubFetch(200, JSON.stringify({ live: null }));

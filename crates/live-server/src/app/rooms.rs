@@ -124,6 +124,10 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
         // 直播数据页档案面：shared/live_records.json 整场记录原样透传
         //（status/count/records[]；空态 status="empty" 由前端解说）。
         "live": read_json(&root.join("shared").join("live_records.json")),
+        // 采录场次窗面：ws-replay 落盘的 ai/ws_windows.json —— 我们 WS 攒出的
+        // 真实场次档案（B站回放接口与我们的采录是两个独立事实源，不互相替补）。
+        // 缺文件 → null：前端呈现「尚无采录场」而非臆造。
+        "ws_windows": read_json(&root.join("ai").join("ws_windows.json")),
         // 图存量指标面（旧版报告顶部数字条）。
         "graph_stats": graph_stats,
         //（迭代细则 v1 §1）下播复盘卡——pipeline 落盘的 ai/recap.json

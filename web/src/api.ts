@@ -146,12 +146,38 @@ export interface OverviewView {
   situation?: SituationView;
   /** 迭代细则 v1 §1 验收钉：ai/recap.json 透传；缺文件 → null（前端「复盘尚未生成」）。 */
   recap?: import("./components/RecapCard").RecapPayload | null;
+  /** 采录场次窗面：ai/ws_windows.json 透传（ws-replay 落盘）；
+      缺文件 → null（前端「尚无采录场」——B站回放接口与本面是两个独立事实源，不互相替补）。 */
+  ws_windows?: WsWindowsPayload | null;
   /** BriefingCard refs 归属解析面 episode_id → 归属观众+标题；无图态 → {}。 */
   episode_index?: Record<string, { viewer_id?: string; title?: string | null }>;
   /** G2 表形态读面唯一源（discovery_leads 表）；型单源在 LeadsBlock。 */
   leads?: LeadsView;
   /** 双 run delta（baseline 臂同形）；页面现无消费面板 → 窄 unknown。 */
   delta?: unknown;
+}
+
+export interface WsWindowMoney {
+  paid_gifts?: number;
+  gift_yuan?: number;
+  sc_count?: number;
+  sc_yuan?: number;
+  guard_buys?: number;
+  toasts?: number;
+}
+
+export interface WsWindowView {
+  session?: { start_timestamp?: number; end_timestamp?: number; rid?: string };
+  lines?: number;
+  speakers?: number;
+  danmaku?: number;
+  super_chat?: number;
+  money?: WsWindowMoney;
+}
+
+export interface WsWindowsPayload {
+  generated_at?: string;
+  windows?: WsWindowView[];
 }
 
 export interface CollectionView {
