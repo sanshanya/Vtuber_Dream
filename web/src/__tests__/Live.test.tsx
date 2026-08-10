@@ -47,6 +47,44 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("当夜直播报告卡", () => {
+  it("缺档 → 三态空态「尚无当夜报告」", async () => {
+    stubFetch(200, JSON.stringify({ live: null, ws_windows: null, auto_collect: null, nightly_report: null }));
+    renderLive();
+    await waitFor(() => expect(screen.getByTestId("nightly-empty")).toBeTruthy());
+  });
+
+  it("有档 → 开窗全细值呈原值（含 cookie 健康与自动采录句）", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({
+        live: null,
+        ws_windows: null,
+        auto_collect: null,
+        nightly_report: {
+          generated_at: "2026-08-11T01:58:00+00:00",
+          window: { start_ts: 1786365737, end_ts: 1786381818 },
+          headline: "今晚 15 人来过",
+          speakers: 15,
+          fams: { danmaku: 255, gift: 23, toast: 16 },
+          paid_gift_count: 23,
+          paid_gift_yuan: 33.8,
+          cookie_health: "isLogin=false（SESSDATA 已过期）",
+          run_fire: "skipped: cookie已过期",
+        },
+      }),
+    );
+    renderLive();
+    const table = await waitFor(() => screen.getByTestId("nightly-table"));
+    expect(screen.getByTestId("nightly-headline").textContent).toBe("今晚 15 人来过");
+    expect(table.textContent).toContain("255");
+    expect(table.textContent).toContain("23 次 / ¥33.8");
+    expect(screen.getByTestId("nightly-cookie").textContent).toContain("SESSDATA 已过期");
+    expect(screen.getByTestId("nightly-run-fire").textContent).toContain("cookie已过期");
+    expect(screen.queryByTestId("nightly-empty")).toBeNull();
+  });
+});
+
 describe("自动采录开关", () => {
   it("缺档 → OFF 呈现 + 省 token 提示（不臆造开关位）", async () => {
     stubFetch(200, JSON.stringify({ live: null, ws_windows: null, auto_collect: null }));

@@ -19,7 +19,7 @@ use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
 use serde_json::json;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 
 use crate::registry::Registry;
 
@@ -154,14 +154,27 @@ pub fn build_app(state: AppState) -> Router {
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
         .with_state(state.clone());
 
-    let router = Router::new().nest("/api", api);
+    let router = Router::new().nest(
+        "/api",
+        api.fallback(|| async {
+            // API 深路径不得被外层 SPA 回退浇回 index.html（未知 API 必须诚实 404）。
+            (
+                StatusCode::NOT_FOUND,
+                Json(serde_json::json!({"error": "不存在"})),
+            )
+        }),
+    );
     // ServeDir 指向 web/dist；缺 dist → `/` 显示构建指引页（防静默 404）。
     // 消费 vite 预压缩产物——按 Accept-Encoding 协商 .br/.gz，无则回落原文件。
     if state.web_root.join("index.html").exists() {
+        // SPA 深链回退：非 /api 的 GET 非文件路径（/live、/leads…路由页面路径）一律
+        // 浇回 index.html——ServeDir 裸配只对真文件命中，深链全 404（2026-08-11 实锤）。
+        let root = status_root(state);
         router.fallback_service(
-            ServeDir::new(status_root(state))
+            ServeDir::new(&root)
                 .precompressed_gzip()
-                .precompressed_br(),
+                .precompressed_br()
+                .fallback(ServeFile::new(root.join("index.html"))),
         )
     } else {
         router.fallback(get(build_guide))

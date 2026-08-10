@@ -128,6 +128,10 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
         // 真实场次档案（B站回放接口与我们的采录是两个独立事实源，不互相替补）。
         // 缺文件 → null：前端呈现「尚无采录场」而非臆造。
         "ws_windows": read_json(&root.join("ai").join("ws_windows.json")),
+        // 当夜报告面：哨兵收播臂落盘的 ai/nightly_report.json（开窗式结构化报报——
+        // 与 /root/live/nightly_report.md 同源不同壳）。缺文件 → null：前端
+        // 「尚无当夜报告」三态，不臆造夜间战报。
+        "nightly_report": read_json(&root.join("ai").join("nightly_report.json")),
         // 图存量指标面（旧版报告顶部数字条）。
         "graph_stats": graph_stats,
         //（迭代细则 v1 §1）下播复盘卡——pipeline 落盘的 ai/recap.json

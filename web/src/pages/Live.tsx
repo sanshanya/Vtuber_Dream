@@ -180,6 +180,69 @@ export function Live({ roomId }: { roomId: string }) {
           </table>
         )}
       </section>
+      {/* 当夜报告面（哨兵开局自动件，开窗式结构化）：缺档/细值漂移各自具名，
+          恒不臆造。与下面 B站回放接口是两个事实源。 */}
+      <section className="section card" data-testid="nightly-report-card">
+        <div className="section-title">
+          <h2>当夜直播报告</h2>
+          <span className="muted small">哨兵自动落盘</span>
+        </div>
+        {overview.data?.nightly_report == null ? (
+          <div className="empty" data-testid="nightly-empty">
+            尚无当夜报告——哨兵收播收尾落盘那一刻即出（夜话每场一张）。
+          </div>
+        ) : (
+          (() => {
+            const n = overview.data!.nightly_report!;
+            const money =
+              typeof n.paid_gift_count === "number" && n.paid_gift_count > 0
+                ? `${n.paid_gift_count} 次 / ¥${(n.paid_gift_yuan ?? 0).toFixed(1)}`
+                : "零付费礼物";
+            return (
+              <table className="data-table" data-testid="nightly-table">
+                <tbody>
+                  <tr>
+                    <th>场次窗</th>
+                    <td>
+                      {fmtWindowClock(n.window?.start_ts)} → {fmtWindowClock(n.window?.end_ts)}
+                    </td>
+                  </tr>
+                  <tr>
+                    <th>headline</th>
+                    <td data-testid="nightly-headline">{n.headline ?? "—"}</td>
+                  </tr>
+                  <tr>
+                    <th>发言人数</th>
+                    <td>{fmtIntOrDash(n.speakers)}</td>
+                  </tr>
+                  <tr>
+                    <th>族账</th>
+                    <td data-testid="nightly-fams">
+                      {n.fams
+                        ? Object.entries(n.fams)
+                            .map(([k, v]) => `${k} ${v}`)
+                            .join("　")
+                        : "—"}
+                    </td>
+                  </tr>
+                  <tr>
+                    <th>付费礼物</th>
+                    <td>{money}</td>
+                  </tr>
+                  <tr>
+                    <th>cookie 健康</th>
+                    <td data-testid="nightly-cookie">{n.cookie_health ?? "—"}</td>
+                  </tr>
+                  <tr>
+                    <th>自动采录</th>
+                    <td data-testid="nightly-run-fire">{n.run_fire ?? "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
+            );
+          })()
+        )}
+      </section>
       <section className="section card">
         <div className="section-title">
           <h2>直播数据（B站回放接口）</h2>
@@ -199,7 +262,7 @@ export function Live({ roomId }: { roomId: string }) {
               OFF = 缺档/显 false；转动后哨兵收尾臂每次收播 fire 一场全量 run
               （kind=full；预算上限由 pipeline 自带保险丝管，本钮不再二道闸）。 */}
           <button
-            className="kind-btn"
+            className="toggle-btn"
             data-testid="auto-collect-toggle"
             aria-pressed={overview.data?.auto_collect?.enabled === true}
             onClick={async () => {

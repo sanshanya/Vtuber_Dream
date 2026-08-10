@@ -123,6 +123,85 @@ async fn missing_dist_returns_build_guide_not_silence() {
     assert!(text.contains("npm run build"), "{text}");
 }
 
+/// SPA 深链回退钉（2026-08-11 面板实锤 bug）：/live /leads 等路由页面的
+/// 路径直链/刷新一律 200 浇回 index.html；未知 API 仍 404（nailed——
+/// 不得把 API 与页面路径一起浇进 SPA）。
+#[tokio::test(flavor = "multi_thread")]
+async fn spa_deep_links_fall_back_to_index_but_unknown_api_still_404() {
+    // build_app 的分支在构建期判定（index.html 存在才挂 ServeDir）——
+    // html 必须在 build_app 之前就位，故本钉不复用 fixture()。
+    let tmp = tempfile::tempdir().unwrap();
+    let web_root = tmp.path().join("dist");
+    std::fs::create_dir_all(&web_root).unwrap();
+    std::fs::write(
+        web_root.join("index.html"),
+        "<!doctype html><title>spa</title><div id=root></div>",
+    )
+    .unwrap();
+    let config_path = tmp.path().join("config.yaml");
+    let out_dir = tmp.path().join("out");
+    std::fs::create_dir_all(&out_dir).unwrap();
+    std::fs::write(
+        &config_path,
+        common::yaml_template(
+            None,
+            "m5b-app",
+            "SESSDATA=test",
+            "k",
+            "http://127.0.0.1:9/v1",
+            "m5b-app",
+        )
+        .replace(
+            "OUTPUT_DIR",
+            &out_dir.display().to_string().replace('\\', "/"),
+        ),
+    )
+    .unwrap();
+    let fx_config_path = tmp.path().join("config.yaml");
+    let fx = Fixture {
+        _tmp: tmp,
+        app: build_app(AppState {
+            config_path,
+            web_root,
+            registry: live_server::registry::Registry::new(),
+            bilibili_hosts: None,
+            graph_artifact_lock: Default::default(),
+        }),
+        config_path: fx_config_path,
+    };
+
+    async fn body(app: &axum::Router, uri: &str) -> (u16, String) {
+        let request = Request::builder()
+            .uri(uri)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let response = app.clone().oneshot(request).await.unwrap();
+        let status = response.status().as_u16();
+        let text = String::from_utf8(
+            response
+                .into_body()
+                .collect()
+                .await
+                .unwrap()
+                .to_bytes()
+                .to_vec(),
+        )
+        .unwrap();
+        (status, text)
+    }
+
+    for deep in ["/live", "/leads", "/viewers", "/graph/rooms/983"] {
+        let (status, text) = body(&fx.app, deep).await;
+        assert_eq!(status, 200, "深链 {deep} 必须浇回 SPA");
+        assert!(
+            text.contains("<div id=root>"),
+            "深链 {deep} 须服务 index.html，实得：{text}"
+        );
+    }
+    let (status, _) = body(&fx.app, "/api/leads/nope").await;
+    assert_eq!(status, 404, "未知 API 不得浇进 SPA");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn existing_dist_serves_index() {
     let _tmp = tempfile::tempdir().unwrap();

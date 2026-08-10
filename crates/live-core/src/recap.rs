@@ -559,6 +559,7 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
     }
 
     // 评论按 ctime 落窗归场（细则：comment 用 ctime 定场次窗；归属到折叠界）。
+    let mut out_of_window_ctimes: Vec<i64> = Vec::new();
     for comment in &comments {
         let ctime = comment["ctime"].as_i64().unwrap_or(0);
         if ctime <= 0 {
@@ -581,11 +582,18 @@ pub fn compute_recap(store: &Store) -> Result<RecapCard> {
                 text: comment["text"].as_str().unwrap_or("").to_string(),
             }),
             None => {
-                unknown.push(format!(
-                    "评论落在所有场次窗外（ctime={ctime}），未计入四个数"
-                ));
+                out_of_window_ctimes.push(ctime);
             }
         }
+    }
+
+    if !out_of_window_ctimes.is_empty() {
+        out_of_window_ctimes.sort_unstable();
+        let count = out_of_window_ctimes.len();
+        let (first, last) = (out_of_window_ctimes[0], out_of_window_ctimes[count - 1]);
+        unknown.push(format!(
+            "{count} 条评论落在所有场次窗外（ctime 最早 {first}、最晚 {last}），未计入四个数"
+        ));
     }
 
     let current_lines: Vec<&LineRow> = lines

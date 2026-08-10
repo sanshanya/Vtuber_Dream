@@ -285,6 +285,12 @@ table.data-table td{vertical-align:middle}
 .tiered-guide a:hover{text-decoration:underline}
 /* 主钮旁预估行——一行小字（上限口径 + 墙钟带宽），缺席落「预估 —」不臆造。 */
 .run-estimate{line-height:1.6}
+/* 自动采录开关钮——自宽不拉满（action-bar 是 flex-column 会把裸 button 抻成整
+   宽条，2026-08-11 视觉巡检实锤）；pressed 真态走 accent 框同色。 */
+.toggle-btn{align-self:flex-start;border:1px solid var(--line);background:var(--panel);color:var(--text);border-radius:var(--r-sm);padding:8px 12px;cursor:pointer;font:inherit}
+.toggle-btn:hover{border-color:var(--accent)}
+.toggle-btn[aria-pressed=true]{border-color:var(--accent);color:var(--accent);font-weight:600}
+
 /* 舰长卡→关系卡四微件的微行 */
 .micro-line{font-size:var(--fs-xs);line-height:1.5;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:220px}
 /* ---- 追加段：存档页（存活 + 周健康 + 里程碑日历） ---- */

@@ -152,6 +152,8 @@ export interface OverviewView {
   /** 自动采录开关面：ai/auto_collect.json（唯一写面 = POST auto-collect）。
       缺文件 → null（从未设过——面板按 OFF 呈现，不臆造开关位）。 */
   auto_collect?: { enabled?: boolean; updated_at?: string } | null;
+  /** 当夜报告面：哨兵收播臂落盘 ai/nightly_report.json；缺档 → null（面板三态）。 */
+  nightly_report?: NightlyReportView | null;
   /** BriefingCard refs 归属解析面 episode_id → 归属观众+标题；无图态 → {}。 */
   episode_index?: Record<string, { viewer_id?: string; title?: string | null }>;
   /** G2 表形态读面唯一源（discovery_leads 表）；型单源在 LeadsBlock。 */
@@ -181,6 +183,18 @@ export interface WsWindowView {
 export interface WsWindowsPayload {
   generated_at?: string;
   windows?: WsWindowView[];
+}
+
+export interface NightlyReportView {
+  generated_at?: string;
+  window?: { start_ts?: number; end_ts?: number };
+  headline?: string | null;
+  speakers?: number;
+  fams?: Record<string, number>;
+  paid_gift_count?: number;
+  paid_gift_yuan?: number;
+  cookie_health?: string;
+  run_fire?: string;
 }
 
 export interface CollectionView {
