@@ -47,6 +47,68 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+describe("自动采录开关", () => {
+  it("缺档 → OFF 呈现 + 省 token 提示（不臆造开关位）", async () => {
+    stubFetch(200, JSON.stringify({ live: null, ws_windows: null, auto_collect: null }));
+    renderLive();
+    await waitFor(() => {
+      const btn = screen.getByTestId("auto-collect-toggle");
+      expect(btn.textContent).toBe("自动采录：关");
+      expect(btn.getAttribute("aria-pressed")).toBe("false");
+    });
+    expect(screen.getByTestId("auto-collect-hint").textContent).toContain("省 token");
+  });
+
+  it("显 true → ON 呈现 + aria-pressed", async () => {
+    stubFetch(
+      200,
+      JSON.stringify({ live: null, ws_windows: null, auto_collect: { enabled: true } }),
+    );
+    renderLive();
+    await waitFor(() => {
+      const btn = screen.getByTestId("auto-collect-toggle");
+      expect(btn.textContent).toBe("自动采录：开");
+      expect(btn.getAttribute("aria-pressed")).toBe("true");
+    });
+  });
+
+  it("点击 → POST 正确载荷 + 翻转到新终态（overview 重取后自成）", async () => {
+    let enabledNow = false;
+    const calls: Array<{ method?: string; url: string; body?: string }> = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input);
+        calls.push({ method: init?.method, url, body: init?.body as string | undefined });
+        if (url.includes("auto-collect")) {
+          const parsed = JSON.parse(String(init?.body)) as { enabled: boolean };
+          enabledNow = parsed.enabled;
+          return {
+            ok: true,
+            status: 200,
+            text: async () => JSON.stringify({ enabled: enabledNow, changed: true }),
+          } as Response;
+        }
+        return {
+          ok: true,
+          status: 200,
+          text: async () =>
+            JSON.stringify({ live: null, ws_windows: null, auto_collect: { enabled: enabledNow } }),
+        } as Response;
+      }),
+    );
+    renderLive();
+    await waitFor(() => expect(screen.getByTestId("auto-collect-toggle").textContent).toBe("自动采录：关"));
+    screen.getByTestId("auto-collect-toggle").click();
+    await waitFor(() =>
+      expect(screen.getByTestId("auto-collect-toggle").textContent).toBe("自动采录：开"),
+    );
+    const post = calls.find((c) => c.method === "POST" && c.url.includes("auto-collect"));
+    expect(post).toBeTruthy();
+    expect(post!.body).toBe(JSON.stringify({ enabled: true }));
+  });
+});
+
 describe("采录场次窗（WS 实采卡）", () => {
   it("ws_windows 缺档 → 「尚无采录场次」空态（场均真相不臆造）", async () => {
     stubFetch(200, JSON.stringify({ live: null, ws_windows: null }));

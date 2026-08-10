@@ -134,6 +134,9 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
         // 原样透传（四纯规则数 + AI 命名件 + 未知行）。缺文件 → null：前端呈现
         // 「复盘尚未生成」而非臆造（同一零猜测纪律）。
         "recap": read_json(&root.join("ai").join("recap.json")),
+        // 自动采录开关面：ai/auto_collect.json —— 缺文件 = 未设定（前端呈 OFF，
+        // 不臆造开关位；哨兵收尾臂只认本文件的 enabled:true）。
+        "auto_collect": read_json(&root.join("ai").join("auto_collect.json")),
         // BriefingCard ref → 归属观众树页的解析索引（无图态 → {} 空态）。
         "episode_index": episode_index,
         "collection": collection,
@@ -442,4 +445,75 @@ fn parse_reject_reason(body: Option<axum::body::Bytes>) -> AppResult<String> {
         ));
     }
     Ok(reason)
+}
+
+// ---------------------------------------------------------------------------
+// 自动采录开关：POST /api/rooms/:uid/auto-collect
+// ---------------------------------------------------------------------------
+
+/// 开关状态机=一个文件：`ai/auto_collect.json` {enabled, updated_at}。
+/// 只有文件在它档台 = 开关真态（圆灯旋钮不存 DB——哨兵 Python 侧零依赖
+/// 直读，不引入共享 schema 负担）。消费面 = 两读一写：
+/// - 面板 overview 透传本键（只读）
+/// - 哨兵收尾臂收播后读本键：enabled==true → 触发一场全量 run（kind=full）
+/// - 本端点 = 唯一写面。
+///
+/// 参数纪律（与 runs/lead 同尺）：body 必须合法 JSON object 且 enabled
+/// 必须是布尔——其余一律 422（坏参显式拒，无静默放过）。同一终态重放
+/// = 200（幂等旋钮转动，文件内容不动）。
+pub(super) async fn auto_collect_toggle(
+    State(state): State<AppState>,
+    Path(uid): Path<String>,
+    body: Option<axum::body::Bytes>,
+) -> AppResult<Json<Value>> {
+    let config = load_config(&state)?;
+    room_guard(&config, &uid)?;
+    let bytes = body.ok_or_else(|| {
+        fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "auto-collect 需要 JSON 体 {enabled: bool}——空体按 422",
+        )
+    })?;
+    let payload = serde_json::from_slice::<Value>(&bytes).map_err(|e| {
+        fail(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            &format!("JSON 解析失败：{e}"),
+        )
+    })?;
+    let enabled = payload
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .ok_or_else(|| {
+            fail(
+                StatusCode::UNPROCESSABLE_ENTITY,
+                "enabled 必须是布尔（true = 每次收播自动起一场全量 run）",
+            )
+        })?;
+
+    let root = data_root(&state)?;
+    let ai_dir = root.join("ai");
+    std::fs::create_dir_all(&ai_dir).map_err(internal)?;
+    let path = ai_dir.join("auto_collect.json");
+    let prior = read_json(&path);
+    let already = prior
+        .as_ref()
+        .and_then(|v| v.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(enabled);
+    let doc = json!({
+        "enabled": enabled,
+        "updated_at": live_core::episodes::now_iso(),
+    });
+    if !already {
+        std::fs::write(
+            &path,
+            serde_json::to_string_pretty(&doc).expect("开关文档可序列化"),
+        )
+        .map_err(internal)?;
+    }
+    Ok(Json(json!({
+        "enabled": enabled,
+        // 幂等位：同终态重放标 changed=false（与 leads 重放同文书）。
+        "changed": !already,
+    })))
 }

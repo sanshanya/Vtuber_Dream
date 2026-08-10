@@ -149,6 +149,9 @@ export interface OverviewView {
   /** 采录场次窗面：ai/ws_windows.json 透传（ws-replay 落盘）；
       缺文件 → null（前端「尚无采录场」——B站回放接口与本面是两个独立事实源，不互相替补）。 */
   ws_windows?: WsWindowsPayload | null;
+  /** 自动采录开关面：ai/auto_collect.json（唯一写面 = POST auto-collect）。
+      缺文件 → null（从未设过——面板按 OFF 呈现，不臆造开关位）。 */
+  auto_collect?: { enabled?: boolean; updated_at?: string } | null;
   /** BriefingCard refs 归属解析面 episode_id → 归属观众+标题；无图态 → {}。 */
   episode_index?: Record<string, { viewer_id?: string; title?: string | null }>;
   /** G2 表形态读面唯一源（discovery_leads 表）；型单源在 LeadsBlock。 */
@@ -315,6 +318,13 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
 
 export const api = {
   rooms: () => request<Room[]>("GET", "/rooms"),
+  /** 自动采录开关（唯一写面）：enabled → 哨兵收尾臂每次收场 fire 一场全量 run。 */
+  setAutoCollect: (roomId: string, enabled: boolean) =>
+    request<{ enabled: boolean; changed: boolean }>(
+      "POST",
+      `/rooms/${encodeURIComponent(roomId)}/auto-collect`,
+      { enabled },
+    ),
   overview: (roomId: string) =>
     request<OverviewView>("GET", `/rooms/${encodeURIComponent(roomId)}/overview`),
   viewers: (roomId: string) =>

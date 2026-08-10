@@ -136,6 +136,10 @@ pub fn build_app(state: AppState) -> Router {
             axum::routing::post(rooms::lead_reject),
         )
         .route(
+            "/rooms/:uid/auto-collect",
+            axum::routing::post(rooms::auto_collect_toggle),
+        )
+        .route(
             "/rooms/:uid/maintenance/entity_split",
             axum::routing::post(maintenance::maintenance_entity_split),
         )

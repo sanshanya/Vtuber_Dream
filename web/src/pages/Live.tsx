@@ -11,7 +11,7 @@
  * - error 分支独立错文并透传 errors 数组（不再撞「主播暂无回放列表」空态）；
  * - 场次表落地「观看/弹幕/在线」三列——仅当本场记录真实携带该字段才渲值，无则 —。
  */
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 
 import { api } from "../api";
 import { KindRunButton } from "../components/KindRunButton";
@@ -80,6 +80,7 @@ function fmtDuration(minutes: number | null): string {
 }
 
 export function Live({ roomId }: { roomId: string }) {
+  const queryClient = useQueryClient();
   const overview = useQuery({
     queryKey: ["overview", roomId],
     queryFn: () => api.overview(roomId),
@@ -194,6 +195,26 @@ export function Live({ roomId }: { roomId: string }) {
             kind="collect_streamer"
             note="事实层：重抓主播 profile/投稿/直播回放（本页数据源）。舰长 AI 结论不受影响（保留为参考，信源有变会被标注）。"
           />
+          {/* 自动采录开关（唯一写面 = POST /api/rooms/:uid/auto-collect）：
+              OFF = 缺档/显 false；转动后哨兵收尾臂每次收播 fire 一场全量 run
+              （kind=full；预算上限由 pipeline 自带保险丝管，本钮不再二道闸）。 */}
+          <button
+            className="kind-btn"
+            data-testid="auto-collect-toggle"
+            aria-pressed={overview.data?.auto_collect?.enabled === true}
+            onClick={async () => {
+              const next = overview.data?.auto_collect?.enabled !== true;
+              await api.setAutoCollect(roomId, next);
+              await queryClient.invalidateQueries({ queryKey: ["overview", roomId] });
+            }}
+          >
+            自动采录：{overview.data?.auto_collect?.enabled === true ? "开" : "关"}
+          </button>
+          <span className="muted small" data-testid="auto-collect-hint">
+            {overview.data?.auto_collect?.enabled === true
+              ? "每次收播自动起一场全量采集+感知（本场次指纹仅一次）"
+              : "收播只录不采——关了省 token，想看复盘再手动跑"}
+          </span>
         </div>
         {/* error 与 empty 分家——接口故障要透传 errors，不混进空态句式。 */}
         {live?.status === "error" ? (
