@@ -165,12 +165,14 @@ pub fn run_ws_replay(
     };
     emit(&format!("[回放] 读入 {} 份录播底稿…", paths.len()));
     let outcome = replay_jsonl(room_id, paths)?;
+    let total_lines: usize = outcome.captures.iter().map(|c| c.episodes.len()).sum();
     emit(&format!(
-        "[回放] 行账 {}/{}（跳 {}），窗内 {} 线，礼物 ¥{:.1} + SC ¥{:.1}，上舰 {} 播报 {}",
+        "[回放] 行账 {}/{}（跳 {}），分 {} 场，共 {} 线，礼物 ¥{:.1} + SC ¥{:.1}，上舰 {} 播报 {}",
         outcome.rows - outcome.skipped,
         outcome.rows,
         outcome.skipped,
-        outcome.capture.episodes.len(),
+        outcome.captures.len(),
+        total_lines,
         outcome.money.gift_yuan,
         outcome.money.sc_yuan,
         outcome.money.guard_count,
@@ -190,30 +192,40 @@ pub fn run_ws_replay(
             None,
         )
         .map_err(|err| format!("回放 run 开账失败：{err}"))?;
-    if let Err(err) = ingest_ws_window(&store, &graph_run, &outcome.capture) {
-        let _ = store.fail_run(&graph_run, &err.to_string(), false);
-        return Err(format!("回放线入账失败：{err}"));
+    // 逐窗入账（一场一 run 无关，幂等键撞库归 stable——同窗重放无重复行）。
+    for capture in &outcome.captures {
+        if let Err(err) = ingest_ws_window(&store, &graph_run, capture) {
+            let _ = store.fail_run(&graph_run, &err.to_string(), false);
+            return Err(format!("回放线入账失败：{err}"));
+        }
     }
     store
         .complete_run(&graph_run)
         .map_err(|err| format!("回放 run 结清失败：{err}"))?;
     emit(&format!(
-        "[回放] 入账完成（run={graph_run}，{} 线）",
-        outcome.capture.episodes.len()
+        "[回放] 入账完成（run={graph_run}，{} 场，{} 线）",
+        outcome.captures.len(),
+        total_lines
     ));
 
     emit("[回放] 刷新复盘卡…");
     let recap = live_core::recap::refresh_recap_card(&config.output_dir, emit)
         .map_err(|err| format!("复盘卡刷新失败：{err}"))?;
 
+    let window_json = |capture: &live_core::live_ws::episodes::WsWindowCapture| {
+        json!({
+            "lines": capture.episodes.len(),
+            "session": capture.session,
+            "unknowns": capture.unknowns,
+            "counts": capture.counts,
+            "end_reason": capture.end_reason,
+        })
+    };
+    let windows: Vec<Value> = outcome.captures.iter().map(window_json).collect();
     Ok(json!({
-        "ws_window": {
-            "lines": outcome.capture.episodes.len(),
-            "session": outcome.capture.session,
-            "unknowns": outcome.capture.unknowns,
-            "counts": outcome.capture.counts,
-            "end_reason": outcome.capture.end_reason,
-        },
+        // 兼容键（哨兵当夜报告同款老消费面）：末窗 = 最新场。
+        "ws_window": windows.last().cloned().unwrap_or(Value::Null),
+        "ws_windows": windows,
         "rows": outcome.rows,
         "skipped": outcome.skipped,
         "families": outcome.families,

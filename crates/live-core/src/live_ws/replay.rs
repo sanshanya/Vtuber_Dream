@@ -39,6 +39,12 @@ pub const UNKNOWN_FILE_TAIL: &str = "录播文件尾：下播/录制终止未区
 /// 取 1e11 为界（1973 前与 5138 后都错，但直播业务域不到）。
 const MS_THRESHOLD: i64 = 100_000_000_000;
 
+/// 分场段距：相邻事件 ts 差超过 2 小时 = 新一场（一晚直播中断 ≤ 秒级——blivedm
+/// 断流重连期间以 popularity/重发垫场；真场间隙必越此坪）。一稿多晚 = 多场多窗；
+/// 此前单窗压塌三晚 → 复盘「最近场」其实是全合账的语义缺陷（2026-08-10 实账
+/// 抓获：25 人/¥35 是全三场，真正本场是 20 人/¥33.8）。
+const SESSION_GAP_SECONDS: i64 = 2 * 3600;
+
 /// 金额摘要（报表层）：金瓜子→元的换算只在这里发生（1000:1，gold 才算付费）。
 #[derive(Debug, Default, Clone, PartialEq, serde::Serialize)]
 pub struct ReplayMoney {
@@ -56,10 +62,12 @@ pub struct ReplayMoney {
     pub toast_count: u64,
 }
 
-/// 回放产出：同轨窗（可直交 `ingest_ws_window`）+ 行账 + 金额摘要。
+/// 回放产出：同轨窗集（每场一窗，段距 ≥ 2h 分场——直接交 `ingest_ws_window`
+/// 逐窗入账）+ 行账 + 金额摘要。
 #[derive(Debug)]
 pub struct ReplayOutcome {
-    pub capture: WsWindowCapture,
+    /// 各场窗（按起点升序；末窗 = 最新场）。
+    pub captures: Vec<WsWindowCapture>,
     pub money: ReplayMoney,
     /// 读到的总行数（含被跳行）。
     pub rows: u64,
@@ -290,20 +298,43 @@ pub fn replay_jsonl(room_id: i64, paths: &[PathBuf]) -> Result<ReplayOutcome, St
     // 稳定排序：同 ts 保文件序（先到的行先落——双机位合并行间相对序无关幂等键）。
     events.sort_by_key(|(ts, _)| *ts);
 
-    let first_ts = events.first().map(|(ts, _)| *ts).unwrap_or(0);
-    let last_ts = events.last().map(|(ts, _)| *ts).unwrap_or(0);
-    let mut recorder = WsRecorder::attach(room_id, first_ts, 1)
-        .ok_or_else(|| "回放开窗失败（在播校验常量 1 拒）".to_string())?;
-    let mut money = ReplayMoney::default();
-    for (ts, ev) in &events {
-        fold_money(&mut money, ev);
-        // recv_ts 喂事件自身的 ts（回放面「收到时刻」= 行时刻，同标不造数）。
-        recorder.on_event(ev, *ts);
+    // 分场：相邻事件 gap > SESSION_GAP_SECONDS 即新窗（一晚直播不会出 2h 空场；
+    // 出 = 采录中断——那也本应分窗各自诚实收尾）。
+    let mut segments: Vec<Vec<(i64, WsEvent)>> = Vec::new();
+    let mut prev_ts: Option<i64> = None;
+    for pair in events {
+        match prev_ts {
+            Some(prev) if pair.0 - prev > SESSION_GAP_SECONDS => {
+                segments.last_mut().expect("段推空前必有旧段");
+                segments.push(Vec::new());
+            }
+            _ => {}
+        }
+        prev_ts = Some(pair.0);
+        match segments.last_mut() {
+            Some(seg) => seg.push(pair),
+            None => segments.push(vec![pair]),
+        }
     }
-    let mut capture = recorder.finish(&SessionEnd::Closed, last_ts);
-    capture.unknowns.push(UNKNOWN_FILE_TAIL.to_string());
+
+    let mut money = ReplayMoney::default();
+    let mut captures: Vec<WsWindowCapture> = Vec::with_capacity(segments.len());
+    for segment in segments {
+        let first_ts = segment.first().map(|(ts, _)| *ts).unwrap_or(0);
+        let last_ts = segment.last().map(|(ts, _)| *ts).unwrap_or(0);
+        let mut recorder = WsRecorder::attach(room_id, first_ts, 1)
+            .ok_or_else(|| "回放开窗失败（在播校验常量 1 拒）".to_string())?;
+        for (ts, ev) in &segment {
+            fold_money(&mut money, ev);
+            // recv_ts 喂事件自身的 ts（回放面「收到时刻」= 行时刻，同标不造数）。
+            recorder.on_event(ev, *ts);
+        }
+        let mut capture = recorder.finish(&SessionEnd::Closed, last_ts);
+        capture.unknowns.push(UNKNOWN_FILE_TAIL.to_string());
+        captures.push(capture);
+    }
     Ok(ReplayOutcome {
-        capture,
+        captures,
         money,
         rows: rows_total,
         skipped,
@@ -360,28 +391,26 @@ mod tests {
         assert_eq!(out.families.get("popularity"), Some(&1));
         assert_eq!(out.families.get("<untagged>"), None);
 
+        assert_eq!(out.captures.len(), 1, "同窗底稿必归单窗");
+        let cap = &out.captures[0];
         // 窗：起点=首行（popularity），终点=最大可行 ts。
         assert_eq!(
-            out.capture.session["start_timestamp"],
+            cap.session["start_timestamp"],
             serde_json::json!(1_700_000_000)
         );
         assert_eq!(
-            out.capture.session["end_timestamp"],
+            cap.session["end_timestamp"],
             serde_json::json!(1_700_000_050)
         );
         assert!(
-            out.capture
-                .unknowns
-                .iter()
-                .any(|u| u.contains("录播文件尾")),
+            cap.unknowns.iter().any(|u| u.contains("录播文件尾")),
             "文件尾未知行必须显形: {:?}",
-            out.capture.unknowns
+            cap.unknowns
         );
 
         // 五线 Episode：弹幕/SC/两礼物/上舰/进场（toast 两线皆跳）。
-        assert_eq!(out.capture.episodes.len(), 6);
-        let gift = out
-            .capture
+        assert_eq!(cap.episodes.len(), 6);
+        let gift = cap
             .episodes
             .iter()
             .find(|e| e.source == SOURCE_WS_GIFT)
@@ -393,8 +422,7 @@ mod tests {
         assert_eq!(gift.platform_facts["total_coin"], serde_json::json!(200));
         assert_eq!(gift.platform_facts["coin_type"], serde_json::json!("gold"));
         assert_eq!(gift.platform_facts["ts"], serde_json::json!(1_700_000_020));
-        let dan = out
-            .capture
+        let dan = cap
             .episodes
             .iter()
             .find(|e| e.source == SOURCE_WS_DANMAKU)
@@ -405,10 +433,7 @@ mod tests {
             "毫秒底稿归一秒"
         );
         assert!(
-            !out.capture
-                .episodes
-                .iter()
-                .any(|e| e.source == SOURCE_WS_TOAST),
+            !cap.episodes.iter().any(|e| e.source == SOURCE_WS_TOAST),
             "uid=0 播报无身份锚不得落 Episode"
         );
 
@@ -421,7 +446,7 @@ mod tests {
         assert_eq!(out.money.toast_count, 0, "两 toast 皆被跳不算行数");
 
         // 人气只进 counts（最新值）。
-        assert_eq!(out.capture.counts.get("popularity_latest"), Some(&42));
+        assert_eq!(cap.counts.get("popularity_latest"), Some(&42));
     }
 
     #[test]
@@ -454,15 +479,65 @@ mod tests {
         // 4 行全黎、窗跨全程，重放 Episodes 同窗两份同键行（图层去重）。
         assert_eq!(out.rows, 4);
         assert_eq!(out.skipped, 0);
-        assert_eq!(out.capture.episodes.len(), 4);
+        assert_eq!(out.captures.len(), 1, "无缝两稿仍归单窗");
+        assert_eq!(out.captures[0].episodes.len(), 4);
         assert_eq!(
-            out.capture.session["start_timestamp"],
+            out.captures[0].session["start_timestamp"],
             serde_json::json!(1_700_000_000)
         );
         assert_eq!(
-            out.capture.session["end_timestamp"],
+            out.captures[0].session["end_timestamp"],
             serde_json::json!(1_700_000_009)
         );
+    }
+
+    #[test]
+    fn replay_gap_over_two_hours_splits_into_two_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_tmp(
+            &dir,
+            "two.jsonl",
+            concat!(
+                r#"{"t":"danmaku","uid":1,"uname":"甲","text":"早场","ts":1700000000000}"#,
+                "
+",
+                r#"{"t":"danmaku","uid":1,"uname":"甲","text":"早场尾","ts":1700001800000}"#,
+                "
+",
+                r#"{"t":"danmaku","uid":2,"uname":"乙","text":"晚场","ts":1700010000000}"#,
+                "
+",
+            ),
+        );
+        let out = replay_jsonl(9222, &[path]).expect("分场回放");
+        assert_eq!(out.captures.len(), 2, ">2h 段距必分双窗");
+        let (first, second) = (&out.captures[0], &out.captures[1]);
+        assert_eq!(first.episodes.len(), 2);
+        assert_eq!(
+            first.session["start_timestamp"],
+            serde_json::json!(1_700_000_000)
+        );
+        assert_eq!(
+            first.session["end_timestamp"],
+            serde_json::json!(1_700_001_800)
+        );
+        assert_eq!(second.episodes.len(), 1);
+        assert_eq!(
+            second.session["start_timestamp"],
+            serde_json::json!(1_700_010_000)
+        );
+        assert_eq!(
+            second.session["end_timestamp"],
+            serde_json::json!(1_700_010_000)
+        );
+        // 每窗都独立挂文件尾未知行
+        for cap in &out.captures {
+            assert!(
+                cap.unknowns.iter().any(|u| u.contains("录播文件尾")),
+                "每窗各自挂文件尾: {:?}",
+                cap.unknowns
+            );
+        }
     }
 
     #[test]
