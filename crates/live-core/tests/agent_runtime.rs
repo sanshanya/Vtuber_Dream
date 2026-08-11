@@ -987,6 +987,7 @@ async fn from_ai_config_transport_5xx_also_exactly_inner_budget() {
             run_retries: 0,
             retry_backoff_seconds: 0.0,
             viewer_token_budget: 200_000,
+            wrap_up_reminder_turn: None,
             max_parallel_viewers: 4,
             max_llm_rpm: 0,
             fold_trigger_tokens: 0,
@@ -1359,4 +1360,107 @@ fn maybe_fold_keep_tail_turns_zero_folds_all_without_panic() {
     assert!(digest.contains("[历史折叠 · P2-γ]"), "{digest}");
     assert!(digest.contains("第 1..=2 轮"), "两轮全折的区段钉: {digest}");
     assert!(digest.contains("t1") && digest.contains("t2"), "{digest}");
+}
+
+/// 催交软封顶（官规 2026-08-12）：自然段 rounds>threshold 时注入一次
+/// 「停调查、速交卷」user 提醒——粘一次即止，历史自持，forced 段无须催。
+#[tokio::test(flavor = "multi_thread")]
+async fn wrap_up_reminder_injected_once_after_threshold() {
+    let server = MockServer::start().await;
+    // 4 轮剧本：前两轮照常调查；第 3 轮过线（threshold=2）→ 请求必见催交；
+    // 第 3 轮仍调查（模型可无视提醒——提醒非强制）;第 4 轮终局交卷。
+    mount_turn(
+        &server,
+        messages_len(2),
+        assistant_tool_call("c1", "get_probe_seed", json!({}), None),
+    )
+    .await;
+    mount_turn(
+        &server,
+        messages_len(4),
+        assistant_tool_call(
+            "c2",
+            "multiply_probe_seed",
+            json!({"seed": 7, "factor": 2}),
+            None,
+        ),
+    )
+    .await;
+    mount_turn(
+        &server,
+        messages_len(7),
+        assistant_tool_call(
+            "c3",
+            "multiply_probe_seed",
+            json!({"seed": 7, "factor": 2}),
+            None,
+        ),
+    )
+    .await;
+    mount_turn(
+        &server,
+        messages_len(9),
+        assistant_tool_call(
+            "c4",
+            "submit_probe_result",
+            json!({"submission": {"a": 7, "b": 14, "total": 21, "note": "催交后交卷"}}),
+            None,
+        ),
+    )
+    .await;
+
+    let runtime = test_runtime(&server).with_wrap_up_reminder_turn(Some(2));
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let tmp = tempfile::tempdir().unwrap();
+    let trace_path = tmp.path().join("traces/wrap-up.jsonl");
+    let mut trace = Trace::new(Some(trace_path.clone()));
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("催交后应被终局接受");
+    assert_eq!(outcome.final_output, "accepted");
+    assert_eq!(outcome.submission.total, 21);
+    assert_eq!(trace.stats.llm_calls, 4);
+
+    let requests = server.received_requests().await.expect("captured requests");
+    assert_eq!(requests.len(), 4);
+    let bodies: Vec<Value> = requests
+        .iter()
+        .map(|r| serde_json::from_slice(&r.body).unwrap())
+        .collect();
+    let nudge = "催交：您已调查超过 2 轮。";
+    for body in &bodies[..2] {
+        assert!(!body.to_string().contains(nudge), "过线前禁催交: {body}");
+    }
+    // 第 3 轮：催交注入 = 末位 user，并指名终局工具。
+    let third = &bodies[2];
+    let third_msgs = third["messages"].as_array().unwrap();
+    let last_msg = third_msgs.last().unwrap();
+    assert_eq!(last_msg["role"].as_str(), Some("user"));
+    let nudge_text = last_msg["content"].as_str().unwrap_or("");
+    assert!(nudge_text.contains(nudge), "{nudge_text}");
+    assert!(nudge_text.contains("submit_probe_result"), "{nudge_text}");
+    // 第 4 轮：历史自持同一副本，不再二次注入。
+    let fourth_text = bodies[3].to_string();
+    assert_eq!(
+        fourth_text.matches(nudge).count(),
+        1,
+        "催交只能注入一次: {fourth_text}"
+    );
+
+    // trace 露头：wrap_up_reminder 恰好一条，轮次/门槛/终局名三键齐全。
+    let trace_text = std::fs::read_to_string(&trace_path).expect("trace file");
+    let events: Vec<Value> = trace_text
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    let reminders: Vec<&Value> = events
+        .iter()
+        .filter(|e| e["event"] == "wrap_up_reminder")
+        .collect();
+    assert_eq!(reminders.len(), 1, "催交事件唯一: {trace_text}");
+    assert_eq!(reminders[0]["round"], 3);
+    assert_eq!(reminders[0]["threshold"], 2);
+    assert_eq!(reminders[0]["terminal_tool"], "submit_probe_result");
 }

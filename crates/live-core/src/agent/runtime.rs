@@ -283,6 +283,9 @@ pub struct AgentRuntime {
     replay_window: Option<u32>,
     /// 中间轮折叠配置；None=不折叠（默认关）。
     fold: Option<FoldConfig>,
+    /// 催交线（2026-08-12 官规）：None=不催（默认）；Some(t)=自然段 rounds>t 时
+    /// 向历史注入一次「停调查、速交卷」user 提醒（粘住一次，历史自持）。
+    wrap_up_reminder_turn: Option<usize>,
     /// 全局 LLM 请求漏桶；None = 不限速（config max_llm_rpm=0 默认）。
     throttle: Option<Arc<Throttle>>,
 }
@@ -324,6 +327,7 @@ impl AgentRuntime {
             ai.reasoning.replay_content,
             ai.reasoning.replay_window,
             ai.agent.fold_config(),
+            ai.agent.wrap_up_reminder_turn.map(|turn| turn as usize),
         ))
     }
 
@@ -355,10 +359,11 @@ impl AgentRuntime {
             replay_reasoning,
             None,
             None,
+            None,
         )
     }
 
-    // 工厂收敛点：8 参是对 AgentRuntimeConfig 的 1:1 装配，不再向外扩散（pipeline 同例）。
+    // 工厂收敛点：9 参是对 AgentRuntimeConfig 的 1:1 装配，不再向外扩散（pipeline 同例）。
     #[allow(clippy::too_many_arguments)]
     fn build(
         client: async_openai::Client<async_openai::config::OpenAIConfig>,
@@ -369,6 +374,7 @@ impl AgentRuntime {
         replay_reasoning: bool,
         replay_window: Option<u32>,
         fold: Option<FoldConfig>,
+        wrap_up_reminder_turn: Option<usize>,
     ) -> Self {
         Self {
             client,
@@ -383,6 +389,7 @@ impl AgentRuntime {
             replay_reasoning,
             replay_window,
             fold,
+            wrap_up_reminder_turn,
             throttle: None,
         }
     }
@@ -391,6 +398,14 @@ impl AgentRuntime {
     /// 两者同时关掉则等价现行行为（全量 / 不剥）。
     pub fn with_replay_window(mut self, k: u32) -> Self {
         self.replay_window = Some(k);
+        self
+    }
+
+    /// 构造器——催交线。None=不催（现行行为）；Some(t)=自然段 rounds>t 时
+    /// 注入一次催交 user 提醒。from_ai_config 由 build 直接装配；
+    /// 本口专供 for_test 测试接缝翻转。
+    pub fn with_wrap_up_reminder_turn(mut self, turn: Option<usize>) -> Self {
+        self.wrap_up_reminder_turn = turn;
         self
     }
 
@@ -507,9 +522,12 @@ impl AgentRuntime {
             ctx,
             max_turns,
             token_budget,
+            wrap_up_reminder_turn,
+            terminal_name,
             trace,
         } = args;
         let mut rounds: usize = 0;
+        let mut wrap_up_reminded = false;
         loop {
             rounds += 1;
             if rounds > max_turns {
@@ -517,6 +535,28 @@ impl AgentRuntime {
                     turns: rounds,
                     cap: max_turns,
                 }));
+            }
+            // 催交（官规 2026-08-12）：自然段 rounds 过线 → 注入一次 user 提醒。
+            // 粘住一次即止——历史自持提醒副本；只催不代答，终局仍由模型自己交。
+            if let Some(threshold) = wrap_up_reminder_turn
+                && rounds > threshold
+                && !wrap_up_reminded
+            {
+                wrap_up_reminded = true;
+                history.push(OaiMessage::user(format!(
+                    "催交：您已调查超过 {threshold} 轮。请停止发起新的调查工具调用，\
+                     基于已收集的证据立即调用 {terminal_name} 提交结论；\
+                     证据不足的条目如实标注「未见证据」，不要留白。"
+                )));
+                trace.write(
+                    "wrap_up_reminder",
+                    json!({
+                        "agent": agent_name,
+                        "round": rounds,
+                        "threshold": threshold,
+                        "terminal_tool": terminal_name,
+                    }),
+                );
             }
             trace.stats.llm_calls += 1;
             trace.write(
@@ -648,6 +688,10 @@ struct RoundArgs<'a, C: RunCtx> {
     max_turns: usize,
     /// None=不设预算；Some(budget)=累计 total_tokens 超限即熔断。
     token_budget: Option<u32>,
+    /// 催交线（自然段专属；forced 续跑传 None——已收窄至只剩终局工具，无须再催）。
+    wrap_up_reminder_turn: Option<usize>,
+    /// 催交文案要指名终局工具——由 run_toolcall_agent 从 spec 抄入。
+    terminal_name: &'a str,
     trace: &'a mut Trace,
 }
 
@@ -705,6 +749,8 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
                 ctx,
                 max_turns: plan.max_turns,
                 token_budget: plan.token_budget,
+                wrap_up_reminder_turn: runtime.wrap_up_reminder_turn,
+                terminal_name: &terminal_name,
                 trace,
             })
             .await;
@@ -739,6 +785,8 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
                         ctx,
                         max_turns: forced_turns,
                         token_budget: plan.token_budget,
+                        wrap_up_reminder_turn: None,
+                        terminal_name: &terminal_name,
                         trace,
                     })
                     .await;

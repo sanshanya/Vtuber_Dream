@@ -109,6 +109,7 @@ fn test_config(root: &Path, uri: &str, resume: bool) -> Config {
                 run_retries: 0,
                 retry_backoff_seconds: 0.0,
                 viewer_token_budget: 200_000,
+                wrap_up_reminder_turn: None,
                 max_parallel_viewers: 4,
                 max_llm_rpm: 0,
                 fold_trigger_tokens: 0,
