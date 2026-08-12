@@ -310,3 +310,18 @@ table.data-table td{vertical-align:middle}
 .rejected-list li{margin:2px 0}
 details.badge>summary{list-style:none}
 details.badge>summary::-webkit-details-marker{display:none}
+
+/* ---- 舰长态势感知结构化（R3 二次加工：九个结构字段分块落座 + 散文折段） ---- */
+.ai-perception{margin-top:16px}
+.prose{max-width:78ch}
+.prose p{margin:0 0 8px;font-size:var(--fs-sm);line-height:1.9}
+.chips{display:flex;flex-wrap:wrap;gap:4px}
+.chip{padding:2px 8px;border:1px solid var(--line);border-radius:999px;background:var(--panel2);font-size:var(--fs-xs);line-height:1.6}
+.muted-chip{color:var(--muted)}
+.perception-block{margin-top:16px}
+.perception-block h4{margin:0 0 4px;font-size:var(--fs-sm);font-weight:600;color:var(--muted)}
+.perception-list{margin:0;padding-left:16px;font-size:var(--fs-sm);line-height:1.8}
+.action-card{margin-top:8px;padding:8px 12px;border:1px solid var(--line);border-radius:var(--r-sm);background:var(--panel2)}
+.action-card .action-title{font-size:var(--fs-sm);font-weight:600}
+.action-card .action-detail{margin-top:4px;font-size:var(--fs-sm);line-height:1.75;color:var(--muted)}
+.action-evi{margin:6px 0 0}

@@ -7,8 +7,156 @@ import { MentionText } from "../components/MentionText";
 import { SingleViewerRunButton } from "../components/SingleViewerRunButton";
 import { fmtTime } from "../format";
 
-/** 个人树：viewer 卡 + ai 缓存卡 + Episode 时间线（mention 高亮）。
- * 行型 EpisodeRow/MentionRow 的家在 api.ts（F3 收口：本文件只对真型消费，不再断言 any[]）。 */
+/** LLM 可执行建议件（conversation_openers / content_ideas 共有形状）。 */
+type ActionItem = { title: string; detail: string; evidence: number };
+
+const asStrList = (value: unknown): string[] =>
+  Array.isArray(value)
+    ? value.filter((x): x is string => typeof x === "string" && x.trim() !== "")
+    : [];
+
+const asActions = (value: unknown): ActionItem[] =>
+  Array.isArray(value)
+    ? value
+        .map((x) => {
+          if (typeof x !== "object" || x === null) return null;
+          const rec = x as Record<string, unknown>;
+          const title = typeof rec.title === "string" ? rec.title : "";
+          const detail = typeof rec.detail === "string" ? rec.detail : "";
+          const evidence = Array.isArray(rec.evidence_mention_ids)
+            ? rec.evidence_mention_ids.length
+            : 0;
+          return title || detail ? { title, detail, evidence } : null;
+        })
+        .filter((x): x is ActionItem => x !== null)
+    : [];
+
+/** 画像散文折段：LLM 单段长文按「整体画像」类收口句自然成两段；
+ * 无收口锚 → 原样单段（呈现层容许失败，不对语义做脆切）。 */
+const splitSummary = (text: string): string[] =>
+  text
+    .split(/(?=(?:整体画像|整体来看|总体而言|综合来看|综合画像)[：:])/)
+    .map((part) => part.trim())
+    .filter((part) => part !== "");
+
+function ActionCard({ item, testId }: { item: ActionItem; testId: string }) {
+  return (
+    <div className="action-card" data-testid={testId}>
+      <div className="action-title">{item.title}</div>
+      {item.detail !== "" && <div className="action-detail">{item.detail}</div>}
+      {item.evidence > 0 && (
+        <div className="badges action-evi">
+          <span className="badge fact">证据×{item.evidence}</span>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** AI 感知结构化块（R3 二次加工）：submission 的九个结构化字段分块落座，
+ *  散文只留画像一段；空块整体隐身（缺席即无，不臆造分区）。 */
+function AiPerceptionCard({ analysis }: { analysis: Record<string, unknown> }) {
+  const summary = typeof analysis.profile_summary === "string" ? analysis.profile_summary : "";
+  const paras = summary === "" ? [] : splitSummary(summary);
+  const prefs = asStrList(analysis.content_preferences);
+  const changes = asStrList(analysis.recent_changes);
+  const hypotheses = asStrList(analysis.hypotheses);
+  const openers = asActions(analysis.conversation_openers);
+  const ideas = asActions(analysis.content_ideas);
+  const cautions = asStrList(analysis.cautions);
+  const enrichments = asStrList(analysis.enrichment_targets);
+  if (
+    [paras, prefs, changes, hypotheses, openers, ideas, cautions, enrichments].every(
+      (list) => list.length === 0,
+    )
+  ) {
+    return null;
+  }
+  return (
+    <div className="card ai-perception" data-testid="ai-perception-card">
+      <div className="badges">
+        <span className="badge ai">AI 推断 · 非事实面</span>
+      </div>
+      {paras.length > 0 && (
+        <div className="prose" data-testid="profile-summary">
+          {paras.map((para, index) => (
+            <p key={index}>{para}</p>
+          ))}
+        </div>
+      )}
+      {prefs.length > 0 && (
+        <section className="perception-block" data-testid="block-prefs">
+          <h4>内容偏好（{prefs.length}）</h4>
+          <div className="chips">
+            {prefs.map((x, i) => (
+              <span className="chip" key={i}>
+                {x}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+      {changes.length > 0 && (
+        <section className="perception-block" data-testid="block-changes">
+          <h4>近期变化（{changes.length}）</h4>
+          <ul className="perception-list">
+            {changes.map((x, i) => (
+              <li key={i}>{x}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {openers.length > 0 && (
+        <section className="perception-block" data-testid="block-openers">
+          <h4>可聊开场（{openers.length}）</h4>
+          {openers.map((item, i) => (
+            <ActionCard item={item} testId={`opener-${i}`} key={i} />
+          ))}
+        </section>
+      )}
+      {ideas.length > 0 && (
+        <section className="perception-block" data-testid="block-ideas">
+          <h4>内容点子（{ideas.length}）</h4>
+          {ideas.map((item, i) => (
+            <ActionCard item={item} testId={`idea-${i}`} key={i} />
+          ))}
+        </section>
+      )}
+      {hypotheses.length > 0 && (
+        <section className="perception-block" data-testid="block-hypotheses">
+          <h4>假说（{hypotheses.length}·均未经确证）</h4>
+          <ul className="perception-list">
+            {hypotheses.map((x, i) => (
+              <li key={i}>{x}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+      {enrichments.length > 0 && (
+        <section className="perception-block" data-testid="block-enrich">
+          <h4>待补证（{enrichments.length}）</h4>
+          <div className="chips">
+            {enrichments.map((x, i) => (
+              <span className="chip muted-chip" key={i}>
+                {x}
+              </span>
+            ))}
+          </div>
+        </section>
+      )}
+      {cautions.length > 0 && (
+        <section className="perception-block" data-testid="block-cautions">
+          <h4>AI 自陈注意（{cautions.length}）</h4>
+          <ul className="perception-list muted">
+            {cautions.map((x, i) => (
+              <li key={i}>{x}</li>
+            ))}
+          </ul>
+        </section>
+      )}
+    </div>
+  );
+}
 export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
   const tree = useQuery({
     queryKey: ["tree", roomId, vid],
@@ -58,9 +206,11 @@ export function ViewerTree({ roomId, vid }: { roomId: string; vid: string }) {
             {/* 时效位：旧 AI 结论保留作参考但信源已翻 → 感知区块亮标不重删。 */}
             {aiStale === true && <AiStaleBadge testId="ai-stale-badge-tree" />}
           </div>
-          {ai?.analysis?.profile_summary ? <p>{String(ai.analysis.profile_summary)}</p> : null}
         </div>
       </div>
+
+      {/* 感知结构化块（原裸 <p> 散文糊位）：有物才出场，无物静默。 */}
+      {ai?.analysis ? <AiPerceptionCard analysis={ai.analysis} /> : null}
 
       <div className="section card">
         <h3>Episode 时间线（{episodes.length}）</h3>
