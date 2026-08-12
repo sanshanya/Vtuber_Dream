@@ -185,3 +185,38 @@ describe("ViewerTree AI 感知结构化块（R3 二次加工）", () => {
     expect(screen.queryByTestId("ai-perception-card")).toBeNull();
   });
 });
+
+describe("ViewerTree 画像句段编组（R3-2：无收口锚长文不再一坨）", () => {
+  it("长文无锚 → 按句号边界均匀成段，每段非空、除末段外以句号收", async () => {
+    const sentence = "这是第若干句用来验证分段行为的完整陈述。";
+    const longText = sentence.repeat(18); // 18×19字 = 342字，约 3~4 段
+    renderTree({ ai: { status: "complete", analysis: { profile_summary: longText } } });
+    await waitFor(() => expect(screen.getByTestId("profile-summary")).toBeTruthy());
+    const paras = Array.from(
+      screen.getByTestId("profile-summary").querySelectorAll("p"),
+    ).map((p) => p.textContent ?? "");
+    expect(paras.length).toBeGreaterThanOrEqual(3);
+    expect(paras.length).toBeLessThanOrEqual(5);
+    for (const [index, para] of paras.entries()) {
+      expect(para.length).toBeGreaterThan(0);
+      if (index < paras.length - 1) {
+        expect(para.endsWith("。")).toBe(true);
+      }
+    }
+    // 拼回 = 原文（机械切不丢字）。
+    expect(paras.join("")).toBe(longText);
+  });
+
+  it("长文带收口锚 → 收口段独立成段且以锚句起头", async () => {
+    const body = "验证用的正文完整陈述句。".repeat(12);
+    const longText = `${body}整体画像：收口总结独立成段。`;
+    renderTree({ ai: { status: "complete", analysis: { profile_summary: longText } } });
+    await waitFor(() => expect(screen.getByTestId("profile-summary")).toBeTruthy());
+    const paras = Array.from(
+      screen.getByTestId("profile-summary").querySelectorAll("p"),
+    ).map((p) => p.textContent ?? "");
+    expect(paras.length).toBeGreaterThanOrEqual(2);
+    expect(paras[paras.length - 1].startsWith("整体画像：")).toBe(true);
+    expect(paras.join("")).toBe(longText);
+  });
+});

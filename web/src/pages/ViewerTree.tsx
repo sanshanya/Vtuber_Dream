@@ -31,12 +31,32 @@ const asActions = (value: unknown): ActionItem[] =>
         .filter((x): x is ActionItem => x !== null)
     : [];
 
-/** 画像散文折段：LLM 单段长文按「整体画像」类收口句自然成两段；
- * 无收口锚 → 原样单段（呈现层容许失败，不对语义做脆切）。 */
+/** 画像散文折段：先按「整体画像」类收口锚分意群（有锚才分），群内再按句号
+ * 边界编组为均匀小段（约 PARA_CHARS 字一段、只切在句末标点后，不丢字不改序）；
+ * 无收口锚 + 无句号 → 原样单段（呈现层容许失败）。 */
+const PARA_CHARS = 100;
+
+const SENTENCE_RE = /[^。！？!?]+[。！？!?]+[‘”’”』」》）)】]?/g;
+
+const groupSentences = (part: string): string[] => {
+  const sentences = part.match(SENTENCE_RE) ?? [part];
+  const groups: string[] = [];
+  let current = "";
+  for (const sentence of sentences) {
+    current += sentence;
+    if (current.length >= PARA_CHARS) {
+      groups.push(current.trim());
+      current = "";
+    }
+  }
+  if (current.trim() !== "") groups.push(current.trim());
+  return groups.filter((group) => group !== "");
+};
+
 const splitSummary = (text: string): string[] =>
   text
     .split(/(?=(?:整体画像|整体来看|总体而言|综合来看|综合画像)[：:])/)
-    .map((part) => part.trim())
+    .flatMap((part) => groupSentences(part.trim()))
     .filter((part) => part !== "");
 
 function ActionCard({ item, testId }: { item: ActionItem; testId: string }) {
