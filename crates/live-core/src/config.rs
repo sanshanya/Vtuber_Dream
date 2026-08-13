@@ -118,11 +118,6 @@ pub struct AgentRuntimeConfig {
     /// 单观众 token 预算熔断：默认 200_000（u32 域，非负），该 viewer agent
     /// 每轮 LLM 请求后核对累计 total_tokens，超限即触顶终止并记 viewer_failure。
     pub viewer_token_budget: u32,
-    /// 催交线（2026-08-12 官规）：自然段调查轮数超过该值时，向历史注入一次
-    /// 「停止新调查、立即以现有证据交终局」的 user 提醒（粘住一次，历史自持）；
-    /// None=不催（默认）。只催不编造——轮数硬墙仍不存在，唯一刹车依旧是
-    /// viewer_token_budget 保险丝（situation 段无保险丝，此键是它唯一的刹车）。
-    pub wrap_up_reminder_turn: Option<u32>,
     /// 闸门一：并行 viewer agent 上限（Semaphore 许可数）。默认 4
     /// （Python asyncio.Semaphore(4)，ADR-0004 同构；INVESTIGATE_CONCURRENCY 为其锚）。
     pub max_parallel_viewers: i64,
@@ -353,9 +348,13 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
     let ai = mapping(&raw, "ai", None)?;
     let report = mapping(&raw, "report", None)?;
 
+    let runtime = mapping(ai, "agent", None)?;
     let removed_keys: Vec<String> = [
         (collection, &["max_video_tag_requests"][..]),
         (ai, &["max_tokens", "max_evidence_per_viewer"][..]),
+        // 2026-08-13：单键催交线退役——三级阶梯（13 劝/37 限期/40 必收）收敛入
+        // runtime.rs 常量；轮数语义由官规统一裁决，不再留给各部署各自为政。
+        (runtime, &["wrap_up_reminder_turn"][..]),
     ]
     .into_iter()
     .flat_map(|(section, names)| {
@@ -575,13 +574,6 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
                     0,
                     u32::MAX,
                 ),
-                // 0 不作静默钳（钳成 1 = 每轮即催，污染官规语义）——低界硬拒。
-                wrap_up_reminder_turn: match optional_integer(runtime, "wrap_up_reminder_turn")? {
-                    Some(v) if v < 1 => {
-                        return Err(ConfigError::new("'wrap_up_reminder_turn' must be >= 1"));
-                    }
-                    other => other.map(|v| v as u32),
-                },
                 fold_trigger_tokens: clamped_u32(
                     integer(runtime, "fold_trigger_tokens", 0, Some(0))?,
                     0,
@@ -676,25 +668,20 @@ mod tests {
         assert!(err.to_string().contains("viewer_token_budget"), "{err}");
     }
 
-    /// `ai.agent.wrap_up_reminder_turn` 缺省 None（不催）；覆写生效；拒 0 与负值。
+    /// 2026-08-13：单键催交线退役为 removed 键——三级阶梯（13 劝/37 限期/40 必收）
+    /// 收敛入 runtime 常量；旧部署残留必须给出具名错误（杜绝第二次无声死键）。
     #[test]
-    fn wrap_up_reminder_turn_default_none_override_and_reject_zero() {
-        let ok = load_config(write_temp(EXAMPLE_YAML).path()).unwrap();
-        assert_eq!(ok.ai.agent.wrap_up_reminder_turn, None);
-
-        let overridden = EXAMPLE_YAML.replace(
+    fn wrap_up_reminder_turn_is_a_removed_key() {
+        let bad = EXAMPLE_YAML.replace(
             "    run_retries: 2",
             "    run_retries: 2\n    wrap_up_reminder_turn: 24",
         );
-        let ok2 = load_config(write_temp(&overridden).path()).unwrap();
-        assert_eq!(ok2.ai.agent.wrap_up_reminder_turn, Some(24));
-
-        let bad = EXAMPLE_YAML.replace(
-            "    run_retries: 2",
-            "    run_retries: 2\n    wrap_up_reminder_turn: 0",
-        );
         let err = load_config(write_temp(&bad).path()).unwrap_err();
-        assert!(err.to_string().contains("wrap_up_reminder_turn"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("removed configuration key: wrap_up_reminder_turn"),
+            "{err}"
+        );
     }
 
     /// 删码专项：ai.api 白名单只剩 chat_completions（responses 死分支已拔）——

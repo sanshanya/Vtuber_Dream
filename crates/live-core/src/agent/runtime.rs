@@ -265,6 +265,25 @@ pub const FORCED_TURNS_CAP: usize = 16;
 /// 不为精确计费，只为「何时开始折叠」的触发信号。
 pub const CHARS_PER_TOKEN: usize = 4;
 
+/// 催交阶梯（官规 2026-08-13）：(注入轮次, 文案)。三级只催不代答——质量护栏
+/// 是收口话术恒指「证据不足标未见证据」，交卷主动权始终在模型。
+/// 烈度递进：13=建议收口（方向仍自由）；37=限期「再 4 轮内交卷」；
+/// 40=终极「下一轮必须交卷」。{terminal} 运行时替换为终局工具名。
+const WRAP_UP_LADDER: [(usize, &str); 3] = [
+    (
+        13,
+        "进度提醒：您已调查超过 12 轮。若现有证据足以支撑结论，请尽快收束调查方向并调用 {terminal} 交卷；确需补充的关键证据仍可再查，但请避免宽泛漫游。",
+    ),
+    (
+        37,
+        "收口限期：您已调查超过 36 轮。请在 4 轮以内（不晚于第 40 轮）调用 {terminal} 交卷：只在已收集证据范围内完善结论，不再开启新方向。",
+    ),
+    (
+        40,
+        "最终要求：下一轮必须调用 {terminal} 交卷。基于已收集的证据如实总结；证据不足的条目如实标注「未见证据」，不要留白。",
+    ),
+];
+
 pub fn truncate_chars(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
 }
@@ -283,9 +302,6 @@ pub struct AgentRuntime {
     replay_window: Option<u32>,
     /// 中间轮折叠配置；None=不折叠（默认关）。
     fold: Option<FoldConfig>,
-    /// 催交线（2026-08-12 官规）：None=不催（默认）；Some(t)=自然段 rounds>t 时
-    /// 向历史注入一次「停调查、速交卷」user 提醒（粘住一次，历史自持）。
-    wrap_up_reminder_turn: Option<usize>,
     /// 全局 LLM 请求漏桶；None = 不限速（config max_llm_rpm=0 默认）。
     throttle: Option<Arc<Throttle>>,
 }
@@ -327,7 +343,6 @@ impl AgentRuntime {
             ai.reasoning.replay_content,
             ai.reasoning.replay_window,
             ai.agent.fold_config(),
-            ai.agent.wrap_up_reminder_turn.map(|turn| turn as usize),
         ))
     }
 
@@ -359,11 +374,10 @@ impl AgentRuntime {
             replay_reasoning,
             None,
             None,
-            None,
         )
     }
 
-    // 工厂收敛点：9 参是对 AgentRuntimeConfig 的 1:1 装配，不再向外扩散（pipeline 同例）。
+    // 工厂收敛点：8 参是对 AgentRuntimeConfig 的 1:1 装配，不再向外扩散（pipeline 同例）。
     #[allow(clippy::too_many_arguments)]
     fn build(
         client: async_openai::Client<async_openai::config::OpenAIConfig>,
@@ -374,7 +388,6 @@ impl AgentRuntime {
         replay_reasoning: bool,
         replay_window: Option<u32>,
         fold: Option<FoldConfig>,
-        wrap_up_reminder_turn: Option<usize>,
     ) -> Self {
         Self {
             client,
@@ -389,7 +402,6 @@ impl AgentRuntime {
             replay_reasoning,
             replay_window,
             fold,
-            wrap_up_reminder_turn,
             throttle: None,
         }
     }
@@ -398,14 +410,6 @@ impl AgentRuntime {
     /// 两者同时关掉则等价现行行为（全量 / 不剥）。
     pub fn with_replay_window(mut self, k: u32) -> Self {
         self.replay_window = Some(k);
-        self
-    }
-
-    /// 构造器——催交线。None=不催（现行行为）；Some(t)=自然段 rounds>t 时
-    /// 注入一次催交 user 提醒。from_ai_config 由 build 直接装配；
-    /// 本口专供 for_test 测试接缝翻转。
-    pub fn with_wrap_up_reminder_turn(mut self, turn: Option<usize>) -> Self {
-        self.wrap_up_reminder_turn = turn;
         self
     }
 
@@ -522,12 +526,12 @@ impl AgentRuntime {
             ctx,
             max_turns,
             token_budget,
-            wrap_up_reminder_turn,
+            wrap_up_ladder,
             terminal_name,
             trace,
         } = args;
         let mut rounds: usize = 0;
-        let mut wrap_up_reminded = false;
+        let mut wrap_stage: usize = 0;
         loop {
             rounds += 1;
             if rounds > max_turns {
@@ -536,24 +540,24 @@ impl AgentRuntime {
                     cap: max_turns,
                 }));
             }
-            // 催交（官规 2026-08-12）：自然段 rounds 过线 → 注入一次 user 提醒。
-            // 粘住一次即止——历史自持提醒副本；只催不代答，终局仍由模型自己交。
-            if let Some(threshold) = wrap_up_reminder_turn
-                && rounds > threshold
-                && !wrap_up_reminded
+            // 催交阶梯（官规 2026-08-13）：自然段到点即注入一条 user 提醒，
+            // 13 劝 / 37 限期 / 40 必收——只催不代答，终局仍由模型自己交。
+            if wrap_up_ladder
+                && wrap_stage < WRAP_UP_LADDER.len()
+                && rounds >= WRAP_UP_LADDER[wrap_stage].0
             {
-                wrap_up_reminded = true;
-                history.push(OaiMessage::user(format!(
-                    "催交：您已调查超过 {threshold} 轮。请停止发起新的调查工具调用，\
-                     基于已收集的证据立即调用 {terminal_name} 提交结论；\
-                     证据不足的条目如实标注「未见证据」，不要留白。"
-                )));
+                let (inject_round, template) = WRAP_UP_LADDER[wrap_stage];
+                wrap_stage += 1;
+                history.push(OaiMessage::user(
+                    template.replace("{terminal}", terminal_name),
+                ));
                 trace.write(
                     "wrap_up_reminder",
                     json!({
                         "agent": agent_name,
                         "round": rounds,
-                        "threshold": threshold,
+                        "ladder_stage": wrap_stage,
+                        "inject_round": inject_round,
                         "terminal_tool": terminal_name,
                     }),
                 );
@@ -688,8 +692,9 @@ struct RoundArgs<'a, C: RunCtx> {
     max_turns: usize,
     /// None=不设预算；Some(budget)=累计 total_tokens 超限即熔断。
     token_budget: Option<u32>,
-    /// 催交线（自然段专属；forced 续跑传 None——已收窄至只剩终局工具，无须再催）。
-    wrap_up_reminder_turn: Option<usize>,
+    /// 催交阶梯开关（自然段恒 true——官规 2026-08-13 三级阶梯；
+    /// forced 续跑传 false：已收窄至只剩终局工具，无须再催）。
+    wrap_up_ladder: bool,
     /// 催交文案要指名终局工具——由 run_toolcall_agent 从 spec 抄入。
     terminal_name: &'a str,
     trace: &'a mut Trace,
@@ -749,7 +754,7 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
                 ctx,
                 max_turns: plan.max_turns,
                 token_budget: plan.token_budget,
-                wrap_up_reminder_turn: runtime.wrap_up_reminder_turn,
+                wrap_up_ladder: true,
                 terminal_name: &terminal_name,
                 trace,
             })
@@ -785,7 +790,7 @@ pub async fn run_toolcall_agent<C: RunCtx + Send, S: for<'de> Deserialize<'de>>(
                         ctx,
                         max_turns: forced_turns,
                         token_budget: plan.token_budget,
-                        wrap_up_reminder_turn: None,
+                        wrap_up_ladder: false,
                         terminal_name: &terminal_name,
                         trace,
                     })
