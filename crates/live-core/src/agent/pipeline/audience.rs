@@ -327,6 +327,12 @@ pub(crate) async fn run_audience_stage(
         "input": audience_input_hash_material(&input),
     }));
     let cache_path = config.output_dir.join("ai").join("situation.json");
+    // 败态旁车档（2026-08-13 官规「failed 不覆盖 last_good」）：失败轮只写此档，
+    // 优态 situation.json 原样保全；成功轮写面时顺手清除——sidecar 存在 ≡ 最近一轮败。
+    let failure_path = config
+        .output_dir
+        .join("ai")
+        .join("situation.last_failure.json");
     if !force && config.ai.agent.resume {
         let cached = storage::read_json(&cache_path).ok().flatten();
         if let Some(cached) = cached.as_ref() {
@@ -376,6 +382,9 @@ pub(crate) async fn run_audience_stage(
                 );
                 if errors.is_empty() {
                     progress_say(knobs, "[AI] 复用整体Situation");
+                    // 复用=最新事实面完整在案——陈旧败态档必同撤（否则 sidecar 永驻、
+                    // 简报卡给成品盖「上轮失败」的鬼影章）。
+                    let _ = std::fs::remove_file(&failure_path);
                     let runtime = cached
                         .get("runtime")
                         .filter(|v| v.is_object())
@@ -466,14 +475,19 @@ pub(crate) async fn run_audience_stage(
                 }),
             )
             .map_err(PipelineError::Storage);
+            // 优态落盘即成最新事实面——撤掉旧败态档，勿让历史失败给新成品盖阴。
+            if write.is_ok() {
+                let _ = std::fs::remove_file(&failure_path);
+            }
             (
                 write.map(|()| (overall, runtime_payload, cache_tally)),
                 research,
             )
         }
         Err(err) => {
+            // 败态改道（官规 2026-08-13）：优态 situation.json 原样保全，败因落旁车档。
             let _ = storage::write_json(
-                &cache_path,
+                &failure_path,
                 &json!({
                     "status": "failed",
                     "input_hash": input_hash,
@@ -481,7 +495,12 @@ pub(crate) async fn run_audience_stage(
                     "elapsed_seconds": elapsed,
                     "runtime": runtime_payload,
                     "error": err.to_string(),
+                    "failed_at": crate::episodes::now_iso(),
                 }),
+            );
+            progress_say(
+                knobs,
+                &format!("[AI] situation 本轮失败已落旁车档（优态保全不当陪葬）：{err}"),
             );
             (Err(PipelineError::Message(err.to_string())), research)
         }

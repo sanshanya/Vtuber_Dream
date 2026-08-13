@@ -162,3 +162,66 @@ describe("D5 纯件：episodeKindWord / groupRefsByHolder", () => {
     ]);
   });
 });
+
+describe("BriefingCard 败态旁车档（官规 2026-08-13「failed 不覆盖 last_good」）", () => {
+  const FAILURE = {
+    status: "failed",
+    error: "整体Situation failed after 3 attempts: chat transport: http transport: request build",
+    model: "deepseek-v4-flash",
+    failed_at: "2026-08-12T18:17:08Z",
+    elapsed_seconds: 11.2,
+  };
+
+  it("空态+败因 → 败因附注显形（时间+摘要），触发钮不陪葬", () => {
+    mount({
+      analysis: undefined,
+      situationStatus: "failed",
+      aiCompletedAt: null,
+      stale: false,
+      lastFailure: FAILURE,
+      episodeIndex: {},
+      nameOf: NAME_OF,
+    });
+    const note = screen.getByTestId("briefing-failure-note");
+    expect(note.textContent).toContain("上一轮刷新失败");
+    expect(note.textContent).toContain("request build");
+    expect(screen.getByRole("button").textContent).toContain("主播 AI 分析");
+  });
+
+  it("就绪+败因 → 徽标盖「本卡为上次成品」，简报照常出；徽标 title 载完整 error", async () => {
+    mount({
+      situationStatus: "complete",
+      aiCompletedAt: "2026-08-11T16:59:17Z",
+      stale: false,
+      lastFailure: FAILURE,
+      episodeIndex: { "ep-1": { viewer_id: "u1", title: "异环实况", source: "bangumi" } },
+      nameOf: NAME_OF,
+      analysis: {
+        front_brief: {
+          sentences: [
+            { text: "观众甲围绕《异环》持续升温。", episode_refs: ["ep-1"], coverage_time_range: ["2026-08-01", "2026-08-04"] },
+          ],
+        },
+      },
+    });
+    const note = screen.getByTestId("briefing-failure-note");
+    expect(note.textContent).toContain("本卡为上次成品");
+    expect(note.getAttribute("title")).toBe(FAILURE.error);
+    await screen.findByTestId("briefing-list");
+  });
+
+  it("无旁车档 → 两态皆无败因徽标；error 空串按无档静默", () => {
+    mount({ analysis: {}, situationStatus: "complete", aiCompletedAt: null, stale: false, episodeIndex: {}, nameOf: NAME_OF });
+    expect(screen.queryByTestId("briefing-failure-note")).toBeNull();
+    mount({
+      analysis: undefined,
+      situationStatus: "failed",
+      aiCompletedAt: null,
+      stale: false,
+      lastFailure: { status: "failed", error: "  " },
+      episodeIndex: {},
+      nameOf: NAME_OF,
+    });
+    expect(screen.queryByTestId("briefing-failure-note")).toBeNull();
+  });
+});

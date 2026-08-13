@@ -1494,3 +1494,140 @@ async fn pipeline_recap_naming_failure_leaves_honest_card() {
         "未知行要补这笔账: {unknown:?}"
     );
 }
+
+// ---------------------------------------------------------------------------
+// 10. 官规「failed 不覆盖 last_good」（2026-08-13）：situation 败态只落旁车档
+//     situation.last_failure.json，优态一字不动；下一轮成功自清旁车——
+//     sidecar 存在 ≡ 最近一轮败。诱因实战：集群被人为关停正撞自动 run，
+//     败态覆盖前日简报，面板卡空。
+
+/// 本钉专用：不带 expect 计数的 200 回合 mock——三幕结构（成→败→愈）的
+/// 请求曲线依赖缓存命中路径，mount 计数既脆也非本钉货物。
+async fn mount_uncounted(
+    server: &MockServer,
+    predicate: impl Fn(&Value) -> bool + Send + Sync + 'static,
+    response: Value,
+) {
+    Mock::given(wiremock::matchers::method("POST"))
+        .and(wiremock::matchers::path("/chat/completions"))
+        .and(BodyPred(predicate))
+        .respond_with(ResponseTemplate::new(200).set_body_json(response))
+        .mount(server)
+        .await;
+}
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn situation_failure_spares_last_good_and_self_clears_on_success() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, e2) = episode_ids(tmp.path());
+    mount_uncounted(
+        &server,
+        name_gate("黄金观众甲"),
+        assistant_tool_call(
+            "call-v1",
+            "submit_viewer_perception",
+            json!({"submission": viewer_submission("g1", &e1, G1_MENTION, "异环")}),
+            None,
+        ),
+    )
+    .await;
+    mount_uncounted(
+        &server,
+        name_gate("黄金观众乙"),
+        assistant_tool_call(
+            "call-v2",
+            "submit_viewer_perception",
+            json!({"submission": viewer_submission("g2", &e2, G2_MENTION, "明日方舟")}),
+            None,
+        ),
+    )
+    .await;
+    let store = open_store(tmp.path());
+    seed_entity(&store);
+    drop(store);
+    mount_uncounted(
+        &server,
+        audience_gate(),
+        assistant_tool_call(
+            "call-a1",
+            "submit_audience_situation",
+            json!({"submission": audience_submission(&["g1", "g2"])}),
+            None,
+        ),
+    )
+    .await;
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut PipelineKnobs::default(),
+    )
+    .await
+    .expect("green run");
+    let situation_path = tmp.path().join("ai/situation.json");
+    let failure_path = tmp.path().join("ai/situation.last_failure.json");
+    assert!(!failure_path.exists(), "优态轮后旁车档不当在场");
+
+    // 缓存相杀改写：situation.json 的 input_hash 手改伪值 → complete_cache 判失配必重跑
+    // （audience hash 件含过程指标摘出，改 viewer 分析正文咬不动）；viewer 侧不动——
+    // 败局服务器若收到 viewer 请求，500 次数即超钉。
+    let mut situation = read(&situation_path);
+    situation["input_hash"] = json!("deadbeef-cache-buster");
+    std::fs::write(
+        &situation_path,
+        serde_json::to_string_pretty(&situation).unwrap(),
+    )
+    .unwrap();
+    let good_text = std::fs::read_to_string(&situation_path).unwrap();
+    let dead = MockServer::start().await;
+    // 不计内层重试次数（瞬时错次数是 chat 内层脸；本钉只关心败态改道语义）。
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(
+            ResponseTemplate::new(500).set_body_json(json!({"error": {"message": "server boom"}})),
+        )
+        .mount(&dead)
+        .await;
+    let err = run_pipeline(
+        test_config(tmp.path(), &dead.uri(), true),
+        &analysis,
+        false,
+        &mut PipelineKnobs::default(),
+    )
+    .await
+    .expect_err("audience 必败");
+    assert!(err.to_string().contains("整体Situation"), "err={err}");
+
+    // 官规①：优态一字未动。
+    let after = std::fs::read_to_string(&situation_path).unwrap();
+    assert_eq!(after, good_text, "败局轮严禁触碰优态 situation.json");
+    // 官规②：败因落旁车档（状态/错误/失败时刻三键齐全）。
+    let failure = read(&failure_path);
+    assert_eq!(failure["status"], "failed");
+    assert!(
+        failure["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("server boom"),
+        "{failure}"
+    );
+    assert!(
+        failure["failed_at"].is_string(),
+        "失败时间戳必落: {failure}"
+    );
+
+    // 官规③：下一轮成功自清旁车档；优态经原路由覆写为新成品。
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut PipelineKnobs::default(),
+    )
+    .await
+    .expect("heal run");
+    assert!(!failure_path.exists(), "成功轮必须撤下旧败态档");
+    let healed = read(&situation_path);
+    assert_eq!(healed["status"], "complete");
+}

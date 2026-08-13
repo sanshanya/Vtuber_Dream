@@ -148,6 +148,9 @@ fn room_overview_blocking(state: &AppState, uid: &str) -> AppResult<Json<Value>>
         // situation 保留（deprecated）= BriefingCard 的 front_brief 数据源
         // （API 兼容）；「态势项」胶囊/宏观折叠组等前台直呈已整段退役——勿新挂直呈消费。
         "situation": read_json(&root.join("ai").join("situation.json")),
+        // 败态旁车档（官规 2026-08-13「failed 不覆盖 last_good」）：存在 ≡ 最近一轮败，
+        // 简报卡盖「上轮刷新失败」徽标并续展上次成品；成功轮自清除。
+        "situation_last_failure": read_json(&root.join("ai").join("situation.last_failure.json")),
         "leads": {
             // summary 键零消费者（FE 不渲、真消费者是 pipeline annex）——砍。
             "totals": {

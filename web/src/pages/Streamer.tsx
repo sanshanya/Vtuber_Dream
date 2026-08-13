@@ -148,6 +148,7 @@ export function Streamer({ roomId }: { roomId: string }) {
         situationStatus={situation.status}
         aiCompletedAt={ai.completed_at ?? null}
         stale={(viewers.data ?? []).some((row) => row.ai_stale === true)}
+        lastFailure={data.situation_last_failure ?? null}
         episodeIndex={(data.episode_index ?? {}) as Record<string, EpisodeIndexEntry>}
         nameOf={new Map((viewers.data ?? []).map((row) => [row.uid, row.name ?? row.uid]))}
       />

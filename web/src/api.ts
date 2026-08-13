@@ -144,6 +144,9 @@ export interface OverviewView {
   ai?: AiJobView;
   /** ai/situation.json 透传（audience 段产物）。 */
   situation?: SituationView;
+  /** 败态旁车档 ai/situation.last_failure.json：存在 ≡ 最近一轮败，
+      成功轮自清（官规 2026-08-13「failed 不覆盖 last_good」）；缺档 → null。 */
+  situation_last_failure?: SituationFailureView | null;
   /** 迭代细则 v1 §1 验收钉：ai/recap.json 透传；缺文件 → null（前端「复盘尚未生成」）。 */
   recap?: import("./components/RecapCard").RecapPayload | null;
   /** 采录场次窗面：ai/ws_windows.json 透传（ws-replay 落盘）；
@@ -218,6 +221,15 @@ export interface SituationView {
   /** LLM 产物形状漂移（无 schema 校验）——消费侧护栏取值。
    *  deprecated：前台直呈已退役； surviving 唯一消费=BriefingCard 的 front_brief。 */
   analysis?: Record<string, unknown> | null;
+}
+
+/** ai/situation.last_failure.json——败态旁车档（优态保全后的失败事实面）。 */
+export interface SituationFailureView {
+  status?: string;
+  error?: string;
+  model?: string;
+  failed_at?: string;
+  elapsed_seconds?: number;
 }
 
 /** viewers/{uid}.json 原料形状（前进式取用：已知键字面量 + 透传租约）。 */

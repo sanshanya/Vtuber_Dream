@@ -15,6 +15,7 @@
  * 双查询（viewers/overview）下沉为 props——父页已持同 key 数据，
  * 卡不再自备数据源（纯呈现件，测试免 QueryClient/fetch stub）。
  */
+import type { SituationFailureView } from "../api";
 import { fmtTime } from "../format";
 import { AiStaleBadge } from "./AiStaleBadge";
 import { KindRunButton } from "./KindRunButton";
@@ -118,6 +119,7 @@ export function BriefingCard({
   situationStatus,
   aiCompletedAt,
   stale,
+  lastFailure,
   episodeIndex,
   nameOf,
 }: {
@@ -126,6 +128,8 @@ export function BriefingCard({
   aiCompletedAt?: string | null;
   /** 任一舰长信源已更新（ai_stale）→ 简报基底过时，盖时效章。 */
   stale: boolean;
+  /** 败态旁车档（overview.situation_last_failure 透传）：存在 ≡ 最近一轮败。 */
+  lastFailure?: SituationFailureView | null;
   /** 归属解析面（overview.episode_index 透传）：episode_id → {viewer_id, title}。 */
   episodeIndex: Record<string, EpisodeIndexEntry>;
   /** 观众 uid → 显示名（viewers 行透传）。 */
@@ -133,6 +137,11 @@ export function BriefingCard({
 }) {
   const index = episodeIndex;
   const sentences = situationStatus === "complete" ? parseBrief(analysis) : null;
+  // 败因徽标素材：两键缺一即静默（形状漂移按无档处理——缺席即无纪律）。
+  const failureNote =
+    lastFailure && typeof lastFailure.error === "string" && lastFailure.error.trim() !== ""
+      ? { error: lastFailure.error.trim(), at: lastFailure.failed_at }
+      : null;
 
   // 态 1：未生成。
   if (situationStatus !== "complete" || analysis === undefined) {
@@ -143,7 +152,16 @@ export function BriefingCard({
           <span className="badge ai">AI 结论</span>
         </div>
         <div className="empty" data-testid="briefing-empty-slot">
-          简报空缺——跑一轮「主播 AI 分析」后此处给出带出处的一句话结论。
+          {/* 败因全量直呈（截断会把病因截走——80 字掐头正是"request build"
+              被掐掉的教训）；长文本自然折行。 */}
+          {failureNote ? (
+            <span data-testid="briefing-failure-note">
+              简报未生成——上一轮刷新失败（{fmtTime(failureNote.at)}）：
+              {failureNote.error}。跑一轮「主播 AI 分析」重试。
+            </span>
+          ) : (
+            "简报空缺——跑一轮「主播 AI 分析」后此处给出带出处的一句话结论。"
+          )}
         </div>
         <div className="action-bar">
           <KindRunButton kind="ai_audience" note="认知层：基于现有各舰长感知（幂等缓存）重推整体简报与行动建议。" />
@@ -159,6 +177,16 @@ export function BriefingCard({
         <span className="badge ai" title="front_brief 字段：结论先行、句句带出处（AI 推断层）">
           AI 结论
         </span>
+        {failureNote && (
+          // 优态保全章：上方成品是上次成果，最近一轮刷新失败——败因入 title 全量留档。
+          <span
+            className="badge warn"
+            data-testid="briefing-failure-note"
+            title={failureNote.error}
+          >
+            上轮刷新失败（{fmtTime(failureNote.at)}）——本卡为上次成品
+          </span>
+        )}
         <span className="muted small" data-testid="briefing-timestamp">
           生成于 {fmtTime(aiCompletedAt)}
         </span>
