@@ -148,3 +148,35 @@ pub async fn mount_turn(
 // P2-δ：mount_tool_choice_rejected_400 已删——DeepSeek 拒 tool_choice 行为是
 // 「只放行 auto」的永远形态，多做一次 P2-β 误报也无意义；等相关观测改签
 // 由「超时/瞬时」挂模直接接走，不依赖具名工具路由剧本。
+
+/// completion JSON → 拟真 SSE 文本（message → 单 delta + finish_reason 空块
+/// ＋usage 末块＋[DONE]）。钉件手搓分块序列之外的兜底转换器——生产语义：
+/// 流式重组装面与非流式响应面等键等价（删码刀11）。
+pub fn sse_of(completion: Value) -> String {
+    let choice0 = &completion["choices"][0];
+    let delta = serde_json::json!({
+        "content": choice0["message"]["content"],
+        "reasoning_content": choice0["message"]["reasoning_content"],
+        "tool_calls": choice0["message"]["tool_calls"],
+    });
+    let mut out = String::new();
+    out.push_str("data: ");
+    out.push_str(
+        &serde_json::json!({"choices":[{"index":0,"delta":delta,"finish_reason":null}]})
+            .to_string(),
+    );
+    out.push_str("\n\n");
+    out.push_str("data: ");
+    out.push_str(
+        &serde_json::json!({"choices":[{"index":0,"delta":{},"finish_reason":choice0["finish_reason"]}]})
+            .to_string(),
+    );
+    out.push_str("\n\n");
+    if let Some(usage) = completion.get("usage").filter(|usage| !usage.is_null()) {
+        out.push_str("data: ");
+        out.push_str(&serde_json::json!({"choices":[],"usage":usage}).to_string());
+        out.push_str("\n\n");
+    }
+    out.push_str("data: [DONE]\n\n");
+    out
+}

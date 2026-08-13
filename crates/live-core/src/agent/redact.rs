@@ -1,52 +1,16 @@
-//! 安全批：LLM 传输错误的脱敏。
+//! 安全批：LLM 传输错误的脱敏唯一件。
 //!
 //! 红线（AGENTS.md 明确禁止）：reasoning_content 与 api_key 片段永不进 trace/日志/终态。
-//! 事故路径：async-openai 的 `OpenAIError::JSONDeserialize` Display 全量携带响应体
-//! （网关把 200 改成坏形状时，body 中已生成的 assistant/reasoning 文本随错误原文
-//! 进 trace.jsonl 与 stdout）；`ApiErrorResponse` 透传服务端 message
-//! （401 惯常回吐 key 片段）；`StreamError::UnknownEvent` Debug 回显 SSE payload。
-//! 本模块把 OpenAIError 压成 "kind + 状态码 + 截断脱敏 message" 三件套，
-//! 与原 `BilibiliError::NotJson{endpoint}` 刻意丢 body 的设计同型。
-
-use async_openai::error::OpenAIError;
+//! 2026-08-13 删码刀11 前本卷主件是 OpenAIError 分类压制——手驾流式后错误面收成
+//! ChatWireError 三分（transport.rs），本卷只留文本级出口：sk- 打码 + 截断。
+//! 2xx 坏形状照旧固定文案（body 一个字都不抄），与非流式时代 JSONDeserialize 臂同型。
 
 /// 截断上限（message 只需足以辨认错误类别；body/payload 永远不抄）。
 pub const REDACT_MESSAGE_MAX_CHARS: usize = 120;
 
-/// OpenAIError → 脱敏描述。只保留：类别名、HTTP 状态码、`sk-` 打头片段打码后的短 message。
-/// 凡 Display 可能携带响应体/SSE payload 的变体，只留类别词，不抄原文。
-pub fn redact_openai_error(err: &OpenAIError) -> String {
-    match err {
-        // body 全文可能被响应体污染 → 完全丢弃，只留类别。
-        OpenAIError::JSONDeserialize(..) => {
-            "failed to deserialize api response (body redacted)".to_string()
-        }
-        OpenAIError::ApiError(resp) => format!(
-            "api error {}: {} (code: {})",
-            resp.status_code,
-            mask_secrets(&resp.api_error.message),
-            resp.api_error.code.as_deref().unwrap_or("")
-        ),
-        OpenAIError::Reqwest(req) => format!(
-            "http transport: {}",
-            if req.is_timeout() {
-                "timeout"
-            } else if req.is_connect() {
-                "connect"
-            } else if req.is_request() {
-                "request build"
-            } else {
-                "other"
-            }
-        ),
-        // UnknownEvent 的 Display Debug 回显 SSE 事件 payload → 类别化，不抄。
-        OpenAIError::StreamError(_) => "stream error (payload redacted)".to_string(),
-        other => format!("openai error: {}", mask_secrets(&other.to_string())),
-    }
-}
-
-/// `sk-` 打头的 key 片段打码；截断到可诊断长度。
-fn mask_secrets(message: &str) -> String {
+/// 文本级脱敏：`sk-` 打头的 key 片段打码；截断到可诊断长度。
+/// 唯一出口——任何要进错误面/trace 的服务端原文都必须过本函数。
+pub fn scrub_text(message: &str) -> String {
     let mut masked = String::new();
     let mut rest = message;
     while let Some(index) = rest.find("sk-") {
@@ -63,37 +27,17 @@ fn mask_secrets(message: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use async_openai::error::ApiErrorResponse;
-
-    fn api_err(message: &str) -> OpenAIError {
-        OpenAIError::ApiError(ApiErrorResponse {
-            status_code: reqwest13::StatusCode::UNAUTHORIZED,
-            api_error: async_openai::error::ApiError {
-                message: message.to_string(),
-                r#type: Some("invalid_request_error".to_string()),
-                param: None,
-                code: Some("invalid_api_key".to_string()),
-            },
-        })
-    }
 
     #[test]
-    fn api_error_message_masked_and_truncated() {
-        let out = redact_openai_error(&api_err("Incorrect API key provided: sk-abcd1234efgh5678"));
+    fn key_fragment_masked_and_truncated() {
+        let out = scrub_text("Incorrect API key provided: sk-abcd1234efgh5678");
         assert!(out.contains("sk-***"), "{out}");
         assert!(!out.contains("abcd1234"), "{out}");
-        assert!(out.contains("401"), "{out}");
-        assert!(out.contains("invalid_api_key"), "{out}");
     }
 
     #[test]
-    fn json_deserialize_drops_body() {
-        let err = OpenAIError::JSONDeserialize(
-            serde_json::from_str::<serde_json::Value>("{").unwrap_err(),
-            "raw body with reasoning_content leaked".to_string(),
-        );
-        let out = redact_openai_error(&err);
-        assert!(!out.contains("reasoning_content"), "{out}");
-        assert!(out.contains("redacted"), "{out}");
+    fn truncation_caps_message_length() {
+        let out = scrub_text(&"x".repeat(500));
+        assert_eq!(out.chars().count(), REDACT_MESSAGE_MAX_CHARS, "{out}");
     }
 }

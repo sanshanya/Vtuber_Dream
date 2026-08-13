@@ -14,16 +14,20 @@
 //!   [`FORCED_TURNS_MIN..=FORCED_TURNS_CAP`]；
 //!   两轮仍无 accepted → attempt 失败（`NoTerminal`）计入线性退避重试；
 //! - 重试：共 `retries+1` 次 attempt，线性退避 `backoff_seconds * attempt`；HTTP 层瞬时错
-//!   （timeout/connect/本轮发送失败/408/409/429/5xx）只在 `chat()` 内层 ≤[`transport::HTTP_EXTRA_ATTEMPTS`]
-//!   次压住——429/5xx 形态恢复前提：body 是 OpenAI 错误 JSON；裸文本 body 解析为
-//!   JSONDeserialize 形态属非瞬时，单次即败（钉见 agent_runtime.rs）——与 Python
-//!   httpx 状态码驱动的差异已入偏差单；
+//!   （timeout/connect/本轮发送失败/流中断/408/409/429/5xx）只在 `chat()` 内层
+//!   ≤[`transport::HTTP_EXTRA_ATTEMPTS`] 次压住——删码刀11（2026-08-13）起按状态码
+//!   驱动（与 Python httpx 同口径：裸文本 body 的 429 照重试，body 只供脱敏文案；
+//!   旧 async-openai「OpenAI 错误 JSON 才可重试」偏差单注销）；
 //! - reasoning_content：BYO 消息结构体全程往返（回放上送）。`replay_reasoning=false` 时
 //!   落历史前剥离；**永不写入 trace**；
 //! - Trace：JSONL 元数据（time/event/agent/token 三元组/tool 名+tool_call_id/result_chars
 //!   /elapsed_ms）——S0 漏埋教训：tool 名与显式耗时是必填字段，不接受 None。
 //!
-//! 传输 = async-openai `create_byot`：请求与响应均 BYO 类型（ADR 2026-08-04 源码级验证）。
+//! 传输 = 手驾流式（删码刀11，2026-08-13）：900s 空闲墙实证——非流式响应生成期
+//! 全程零字节，链路空闲超时准点 14:58~15:00 斩连（reconcile round-25 四连斩在案）；
+//! SSE 逐 token 带字节流动（流式探针 16+ 分钟跨墙实证）。reqwest 直发 +
+//! SSE/JSON 按 content-type 自动分派——relay 无视 stream 位回落非流式时原形状直解。
+//! BYO wire 类型对齐 Python agents SDK 实际出网 JSON（ADR 2026-08-04 源码级验证）。
 //! 设计与 Python 的已知偏差（书面）：tools 数组在 forced 续跑中收窄为仅终局（Python 同义：
 //! forced Agent 只挂终局工具），dispatch 仍按名字查表——比原文献节约一次 handler 迁移问题。
 
@@ -41,7 +45,8 @@ use super::throttle::Throttle;
 mod transport;
 
 use transport::{
-    HTTP_EXTRA_ATTEMPTS, OaiToolDef, OaiToolDefFn, http_backoff, is_transient, retry_after_seconds,
+    ChatWireError, HTTP_EXTRA_ATTEMPTS, OaiStreamOptions, OaiToolDef, OaiToolDefFn,
+    RETRY_AFTER_MAX_SECONDS, StreamAssembly, absorb_event, http_backoff, transport_kind,
 };
 pub use transport::{
     OaiChatRequest, OaiChatResponse, OaiChoice, OaiMessage, OaiThinking, OaiToolCall, OaiToolFn,
@@ -289,7 +294,11 @@ pub fn truncate_chars(text: &str, limit: usize) -> String {
 }
 
 pub struct AgentRuntime {
-    client: async_openai::Client<async_openai::config::OpenAIConfig>,
+    /// 手驾传输三件套（删码刀11：async-openai 客户层整体退役——它只有非流式/create
+    /// 与状态码语义不合两条死路；BYO wire + reqwest 直发后 retry 判定/脱敏全在自家）。
+    http: reqwest13::Client,
+    base_url: String,
+    api_key: String,
     model: String,
     max_tokens: i64,
     reasoning_effort: Option<String>,
@@ -325,17 +334,10 @@ impl AgentRuntime {
             .timeout(Duration::from_secs_f64(ai.timeout_seconds.max(1.0)))
             .build()
             .map_err(|err| AgentRuntimeError::Transport(err.to_string()))?;
-        let config = async_openai::config::OpenAIConfig::new()
-            .with_api_base(&ai.base_url)
-            .with_api_key(&ai.api_key);
-        // parity 红线：重试主权唯一属于 chat() 内层（HTTP_EXTRA_ATTEMPTS）。
-        // 0.41.3 默认 ReqwestExecutor 内嵌 OpenAIRetryLayer(max_retries=3)——
-        // 必须显式换成纯传输 ReqwestService，否则瞬时错请求数 ×4（M4-C 实测 12/agent）。
-        // with_http_service 只换 executor、不换 request_client——请求仍由内部
-        // 默认 client 构造；超时等行为唯一由本 service client 在 execute 阶段决定。
         Ok(Self::build(
-            async_openai::Client::with_config(config)
-                .with_http_service(async_openai::middleware::ReqwestService::new(http)),
+            http,
+            &ai.base_url,
+            &ai.api_key,
             &ai.model,
             ai.max_output_tokens,
             ai.reasoning.enabled,
@@ -354,10 +356,6 @@ impl AgentRuntime {
         reasoning_enabled: bool,
         replay_reasoning: bool,
     ) -> Self {
-        let config = async_openai::config::OpenAIConfig::new()
-            .with_api_base(base_url)
-            .with_api_key("test");
-        // 同 from_ai_config：禁默认 executor 隐藏重试层（见该处注释）。
         // 裸 client 必须有超时护栏——否则「挂起 server」剧本永不返回，
         // 失真地挂死测试本体；30s 与现存 wiremock delay 剧本（毫秒级）相容。
         let http = reqwest13::Client::builder()
@@ -365,8 +363,9 @@ impl AgentRuntime {
             .build()
             .expect("for_test client build");
         Self::build(
-            async_openai::Client::with_config(config)
-                .with_http_service(async_openai::middleware::ReqwestService::new(http)),
+            http,
+            base_url,
+            "test",
             model,
             max_tokens,
             reasoning_enabled,
@@ -377,10 +376,12 @@ impl AgentRuntime {
         )
     }
 
-    // 工厂收敛点：8 参是对 AgentRuntimeConfig 的 1:1 装配，不再向外扩散（pipeline 同例）。
+    // 工厂收敛点：10 参是对 AgentRuntimeConfig 的 1:1 装配，不再向外扩散（pipeline 同例）。
     #[allow(clippy::too_many_arguments)]
     fn build(
-        client: async_openai::Client<async_openai::config::OpenAIConfig>,
+        http: reqwest13::Client,
+        base_url: &str,
+        api_key: &str,
         model: &str,
         max_tokens: i64,
         reasoning_enabled: bool,
@@ -390,7 +391,9 @@ impl AgentRuntime {
         fold: Option<FoldConfig>,
     ) -> Self {
         Self {
-            client,
+            http,
+            base_url: base_url.trim_end_matches('/').to_string(),
+            api_key: api_key.to_string(),
             model: model.to_string(),
             max_tokens,
             reasoning_effort: if reasoning_enabled && !effort.is_empty() {
@@ -426,9 +429,11 @@ impl AgentRuntime {
         self
     }
 
-    /// 单次 chat + 瞬时重试。非流式 + 网关超时：以 retry 兜住（S0 实测 0 失败）。
-    /// 过闸放行后才出网（许可即请求，1:1）；退避升级为指数 + 全区间抖动，
-    /// 429/503 携带 Retry-After 时取其秒数（封顶 RETRY_AFTER_MAX_SECONDS）与指数退避取大者。
+    /// 单次 chat + 瞬时重试。流式手驾（2026-08-13 删码刀11：900s 空闲墙实证——
+    /// 非流式响应生成期全程零字节，链路空闲超时准点 14:58~15:00 四连斩；SSE
+    /// 逐 token 带字节流动，探针 16+ 分钟跨墙实证）。relay 无视 stream 回落
+    /// 非流式 JSON 时原形状直解。瞬时判定三分见 transport::ChatWireError；
+    /// 过闸放行后才出网；退避=指数+全区间抖动，Retry-After 头直读取大者。
     pub async fn chat(
         &self,
         request: &OaiChatRequest,
@@ -436,29 +441,87 @@ impl AgentRuntime {
         if let Some(throttle) = &self.throttle {
             throttle.acquire().await;
         }
-        let mut last_error: Option<async_openai::error::OpenAIError> = None;
+        let mut last_error: Option<ChatWireError> = None;
         let mut retry_after: Option<f64> = None;
         for attempt in 0..=HTTP_EXTRA_ATTEMPTS {
             if attempt > 0 {
                 tokio::time::sleep(http_backoff(attempt, retry_after)).await;
             }
-            match self.client.chat().create_byot(request).await {
+            match self.chat_once(request).await {
                 Ok(response) => return Ok(response),
                 Err(err) => {
-                    if !is_transient(&err) || attempt == HTTP_EXTRA_ATTEMPTS {
-                        // 安全 M1：原文可能携带响应体/key 片段 → 脱敏后进错误面（红线 §11）。
-                        return Err(AgentRuntimeError::Transport(
-                            super::redact::redact_openai_error(&err),
-                        ));
+                    if !err.is_transient() || attempt == HTTP_EXTRA_ATTEMPTS {
+                        return Err(AgentRuntimeError::Transport(err.redact()));
                     }
-                    retry_after = retry_after_seconds(&err);
+                    retry_after = err.retry_after();
                     last_error = Some(err);
                 }
             }
         }
         Err(AgentRuntimeError::Transport(
-            super::redact::redact_openai_error(&last_error.expect("loop 至少一次")),
+            last_error.expect("loop 至少一次").redact(),
         ))
+    }
+
+    /// 单发出网：SSE 重组装 / 非流式直解按 content-type 自动分派。
+    async fn chat_once(&self, request: &OaiChatRequest) -> Result<OaiChatResponse, ChatWireError> {
+        use futures_util::StreamExt;
+        let url = format!("{}/chat/completions", self.base_url);
+        let response = self
+            .http
+            .post(&url)
+            .bearer_auth(&self.api_key)
+            .header("accept", "text/event-stream")
+            .json(request)
+            .send()
+            .await
+            .map_err(|err| ChatWireError::Transport(transport_kind(&err)))?;
+        let status = response.status();
+        if !status.is_success() {
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|text| text.trim().parse::<f64>().ok())
+                .filter(|seconds| *seconds <= RETRY_AFTER_MAX_SECONDS);
+            let body = response.text().await.unwrap_or_default();
+            return Err(ChatWireError::api(status, retry_after, &body));
+        }
+        let is_sse = response
+            .headers()
+            .get(reqwest13::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| value.starts_with("text/event-stream"));
+        if !is_sse {
+            // 非流式回补：relay 无视 stream 位 / 存量 mock 面——形状照旧直解；
+            // 坏形状（body 一字不抄）同旧 JSONDeserialize 臂语义：单次即败。
+            let body = response
+                .text()
+                .await
+                .map_err(|err| ChatWireError::Transport(transport_kind(&err)))?;
+            return serde_json::from_str(&body).map_err(|_| ChatWireError::Shape("body"));
+        }
+        let mut assembly = StreamAssembly::default();
+        // 字节面切块：UTF-8 多字节可能横跨 TCP chunk——只在完整事件边界换 str，
+        // 绝无半字撕裂（事件定界符 "\n\n" 是纯 ASCII）。
+        let mut raw: Vec<u8> = Vec::new();
+        let mut stream = response.bytes_stream();
+        while let Some(item) = stream.next().await {
+            // 900s 墙斩连 / 网络抖断在此显形——恒瞬时重试（整机重来比一发贵）。
+            let bytes = item.map_err(|_| ChatWireError::Transport("stream body"))?;
+            raw.extend_from_slice(&bytes);
+            while let Some(at) = raw.windows(2).position(|pair| pair == b"\n\n") {
+                let event: Vec<u8> = raw.drain(..at).collect();
+                raw.drain(..2);
+                absorb_event(&mut assembly, &event)?;
+            }
+        }
+        // 收尾完整性：无 [DONE] 且无 finish_reason = 静默杀连的半截流（chunked
+        // 无长度，尾包即收）——判瞬时重上，绝不把截断品交卷入账。
+        if !assembly.done && assembly.finish_reason.is_none() {
+            return Err(ChatWireError::Transport("stream truncated"));
+        }
+        Ok(assembly.finish())
     }
 
     // ── 历史管理（窗化+折叠+估算）已拆到 `super::history` ──────────────
@@ -510,6 +573,10 @@ impl AgentRuntime {
             } else {
                 None
             },
+            stream: true,
+            stream_options: Some(OaiStreamOptions {
+                include_usage: true,
+            }),
         }
     }
 

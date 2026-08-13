@@ -107,12 +107,266 @@ pub struct OaiChatRequest {
     /// Python `extra_body={"thinking":{"type":"enabled"}}` 顶层展平位。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(super) thinking: Option<OaiThinking>,
+    /// 2026-08-13 删码刀11：恒 true——流式是 900s 空闲墙的唯一解法（非流式
+    /// 响应体生成期零字节，链路空闲超时准点斩连；SSE 逐 token 带字节流动）。
+    pub(super) stream: bool,
+    /// 末块携带 usage（支出账实耗真相源）—— relay 不透传则 usage=None 诚实缺，
+    /// 绝不本地臆造 token 数。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(super) stream_options: Option<OaiStreamOptions>,
 }
 
 #[derive(Debug, Clone, Serialize)]
 pub struct OaiThinking {
     #[serde(rename = "type")]
     pub(super) thinking_type: &'static str, // "enabled"
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(super) struct OaiStreamOptions {
+    pub(super) include_usage: bool,
+}
+
+// ---------------------------------------------------------------------------
+// 流式分块重组装入面（chat.completion.chunk → 非流式等价物；只取重组装所需键）
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct OaiChunkDeltaToolFn {
+    #[serde(default)]
+    pub(super) name: Option<String>,
+    #[serde(default)]
+    pub(super) arguments: Option<String>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct OaiChunkDeltaToolCall {
+    #[serde(default)]
+    pub(super) index: usize,
+    #[serde(default)]
+    pub(super) id: Option<String>,
+    #[serde(default)]
+    pub(super) function: Option<OaiChunkDeltaToolFn>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+pub(super) struct OaiChunkDelta {
+    #[serde(default)]
+    pub(super) content: Option<String>,
+    #[serde(default)]
+    pub(super) reasoning_content: Option<String>,
+    #[serde(default)]
+    pub(super) tool_calls: Option<Vec<OaiChunkDeltaToolCall>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct OaiChunkChoice {
+    #[serde(default)]
+    pub(super) delta: OaiChunkDelta,
+    #[serde(default)]
+    pub(super) finish_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(super) struct OaiChunk {
+    #[serde(default)]
+    pub(super) choices: Vec<OaiChunkChoice>,
+    /// stream_options.include_usage=true 时的末块 usage；relay 不透传则 None。
+    #[serde(default)]
+    pub(super) usage: Option<OaiUsage>,
+}
+
+// ---------------------------------------------------------------------------
+// chat_once 线级错误（手驾流式后的瞬时判定唯一源；2026-08-13 前 = OpenAIError 同职责）
+// ---------------------------------------------------------------------------
+
+/// 失败三分：HTTP 非 2xx（状态码驱动内层重试——与 Python httpx 同口径；本刀从
+/// async-openai「body 能解出 OpenAI 错误 JSON 才重试」的怪异口径摆回）；传输层
+/// （timeout/connect/流中断）恒瞬时；2xx 形状坏单次即败（同旧 JSONDeserialize 判）。
+/// 文本出口一律已过 redact::scrub_text（key 片段打码 + 120 字截断）。
+pub(super) enum ChatWireError {
+    Api {
+        status: reqwest13::StatusCode,
+        message: String,
+        code: String,
+        retry_after: Option<f64>,
+    },
+    Transport(&'static str),
+    Shape(&'static str),
+}
+
+impl ChatWireError {
+    pub(super) fn is_transient(&self) -> bool {
+        match self {
+            // Python openai SDK `_should_retry` 同型：408/409/429/5xx 内层重试。
+            Self::Api { status, .. } => {
+                matches!(status.as_u16(), 408 | 409 | 429) || status.is_server_error()
+            }
+            Self::Transport(_) => true,
+            Self::Shape(_) => false,
+        }
+    }
+
+    pub(super) fn retry_after(&self) -> Option<f64> {
+        match self {
+            Self::Api { retry_after, .. } => *retry_after,
+            _ => None,
+        }
+    }
+
+    pub(super) fn redact(&self) -> String {
+        match self {
+            // 与 async-openai 旧字面同款（「api error 502 Bad Gateway:  (code: )」）——
+            // 生产判读肌肉记忆与既有钉件双留，勿动形。
+            Self::Api {
+                status,
+                message,
+                code,
+                ..
+            } => format!("api error {status}: {message} (code: {code})"),
+            Self::Transport(kind) => format!("http transport: {kind}"),
+            Self::Shape(kind) => format!("failed to deserialize api response ({kind} redacted)"),
+        }
+    }
+}
+
+impl ChatWireError {
+    /// 非 2xx body → Api：error.message/code 拾取（缺 = 空串，与生产实录
+    /// 「api error 502 Bad Gateway:  (code: )」同形）；message 当即脱敏——
+    /// 401 惯常回吐 key 片段（红线 §11）。
+    pub(super) fn api(status: reqwest13::StatusCode, retry_after: Option<f64>, body: &str) -> Self {
+        let parsed = serde_json::from_str::<Value>(body).ok();
+        let pick = |path: &str| {
+            parsed
+                .as_ref()
+                .and_then(|value| value.pointer(path))
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_string()
+        };
+        Self::Api {
+            status,
+            message: crate::agent::redact::scrub_text(&pick("/error/message")),
+            code: pick("/error/code"),
+            retry_after,
+        }
+    }
+}
+
+/// reqwest 错误 → 四分类（与 async-openai 旧字面同款——错误面钉件/判读记忆双留）。
+pub(super) fn transport_kind(err: &reqwest13::Error) -> &'static str {
+    if err.is_timeout() {
+        "timeout"
+    } else if err.is_connect() {
+        "connect"
+    } else if err.is_request() {
+        "request build"
+    } else {
+        "other"
+    }
+}
+
+/// SSE 重组装器：content/reasoning 逐块拼、tool_calls 按 index 跨块合流、
+/// usage 取末块、[DONE]/finish_reason 收旗——产物与非流式等键等价。
+#[derive(Default)]
+pub(super) struct StreamAssembly {
+    content: String,
+    reasoning: String,
+    calls: Vec<OaiToolCall>,
+    pub(super) finish_reason: Option<String>,
+    usage: Option<OaiUsage>,
+    pub(super) done: bool,
+}
+
+impl StreamAssembly {
+    fn absorb(&mut self, chunk: OaiChunk) {
+        if let Some(usage) = chunk.usage {
+            self.usage = Some(usage);
+        }
+        for choice in chunk.choices {
+            if choice.finish_reason.is_some() {
+                self.finish_reason = choice.finish_reason;
+            }
+            let delta = choice.delta;
+            if let Some(text) = delta.content {
+                self.content.push_str(&text);
+            }
+            if let Some(text) = delta.reasoning_content {
+                self.reasoning.push_str(&text);
+            }
+            for call in delta.tool_calls.unwrap_or_default() {
+                if self.calls.len() <= call.index {
+                    self.calls.resize_with(call.index + 1, || OaiToolCall {
+                        id: String::new(),
+                        tool_type: "function".to_string(),
+                        function: OaiToolFn {
+                            name: String::new(),
+                            arguments: String::new(),
+                        },
+                    });
+                }
+                let slot = &mut self.calls[call.index];
+                if let Some(id) = call.id {
+                    slot.id = id;
+                }
+                if let Some(function) = call.function {
+                    if let Some(name) = function.name {
+                        slot.function.name = name;
+                    }
+                    if let Some(arguments) = function.arguments {
+                        slot.function.arguments.push_str(&arguments);
+                    }
+                }
+            }
+        }
+    }
+
+    pub(super) fn finish(self) -> OaiChatResponse {
+        let calls: Vec<OaiToolCall> = self
+            .calls
+            .into_iter()
+            .filter(|call| !call.id.is_empty() || !call.function.name.is_empty())
+            .collect();
+        OaiChatResponse {
+            choices: vec![OaiChoice {
+                message: OaiMessage {
+                    role: "assistant".to_string(),
+                    // 流式分块不存在即缺席=空——与非流式 null/缺席同义，下游
+                    // 「content: Option」消费面零分叉。
+                    content: (!self.content.is_empty()).then_some(self.content),
+                    reasoning_content: (!self.reasoning.is_empty()).then_some(self.reasoning),
+                    tool_calls: (!calls.is_empty()).then_some(calls),
+                    tool_call_id: None,
+                },
+                finish_reason: self.finish_reason,
+            }],
+            usage: self.usage,
+        }
+    }
+}
+
+/// 单 SSE 事件块（已按 \n\n 定界的完整事件）→ 逐行 data 吸收。
+/// [DONE] 置终旗；畸形 data json 判 Shape（非瞬时——垃圾该快败，同旧
+/// StreamError 非瞬时判）。
+pub(super) fn absorb_event(
+    assembly: &mut StreamAssembly,
+    event: &[u8],
+) -> Result<(), ChatWireError> {
+    let text = String::from_utf8_lossy(event);
+    for line in text.lines() {
+        let Some(data) = line.strip_prefix("data:") else {
+            continue;
+        };
+        let data = data.trim();
+        if data == "[DONE]" {
+            assembly.done = true;
+            continue;
+        }
+        let chunk: OaiChunk =
+            serde_json::from_str(data).map_err(|_| ChatWireError::Shape("sse event"))?;
+        assembly.absorb(chunk);
+    }
+    Ok(())
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -157,24 +411,11 @@ pub struct OaiChatResponse {
 /// 单次 chat 的最差吸收窗 ≈15s+请求往返×5，足以活过冷加载分钟级窗口。
 pub(super) const HTTP_EXTRA_ATTEMPTS: usize = 4;
 /// HTTP 内层重试基础退避（秒）。attempt n 的退避为 base * 2^(n-1) + jitter，
-/// 封顶 BACKOFF_CAP_SECONDS；Retry-After 头（经 redact 消息信标回传）优先并向下取 max。
+/// 封顶 BACKOFF_CAP_SECONDS；Retry-After 头（手驾后直读，无需消息信标）向下取 max。
 const HTTP_BACKOFF_BASE_SECONDS: f64 = 1.0;
 const HTTP_BACKOFF_CAP_SECONDS: f64 = 30.0;
 /// Retry-After 秒数的可接受上限；超过则放弃重试（避免单 agent 挂死整批）。
-const RETRY_AFTER_MAX_SECONDS: f64 = 60.0;
-
-pub(super) fn is_transient(err: &async_openai::error::OpenAIError) -> bool {
-    use async_openai::error::OpenAIError;
-    match err {
-        OpenAIError::Reqwest(err) => err.is_timeout() || err.is_connect() || err.is_request(),
-        // Python openai SDK `_should_retry` 同型：408/409/429/5xx 内层重试（≤ HTTP_EXTRA_ATTEMPTS）。
-        OpenAIError::ApiError(resp) => {
-            matches!(resp.status_code.as_u16(), 408 | 409 | 429)
-                || resp.status_code.is_server_error()
-        }
-        _ => false,
-    }
-}
+pub(super) const RETRY_AFTER_MAX_SECONDS: f64 = 60.0;
 
 /// 内层重试退避 = 指数（base·2^(attempt-1)，封顶 30s）× 全区间抖动。
 /// Retry-After 提供时与指数退避取大者。抖动由 attempt 索引确定的轻量哈希产生——
@@ -206,27 +447,4 @@ fn jitter_fraction(attempt: usize) -> f64 {
     state = (state ^ (state >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
     let mixed = state ^ (state >> 31);
     (mixed >> 11) as f64 / (1u64 << 53) as f64
-}
-
-/// 从 429/503 错误提取 Retry-After 秒数。
-/// async-openai 的 ApiError 不暴露响应头，退而求其次：redact 已在消息中保留
-/// "Retry-After: <秒>" 片段时解析之；仅 429/503 状态尝试（其他状态无该语义）。
-pub(super) fn retry_after_seconds(err: &async_openai::error::OpenAIError) -> Option<f64> {
-    use async_openai::error::OpenAIError;
-    let OpenAIError::ApiError(resp) = err else {
-        return None;
-    };
-    if !matches!(resp.status_code.as_u16(), 429 | 503) {
-        return None;
-    }
-    let message = crate::agent::redact::redact_openai_error(err);
-    let marker = "Retry-After:";
-    let start = message.find(marker)? + marker.len();
-    let token: String = message[start..]
-        .trim_start()
-        .chars()
-        .take_while(|c| c.is_ascii_digit() || *c == '.')
-        .collect();
-    let seconds: f64 = token.parse().ok()?;
-    (seconds <= RETRY_AFTER_MAX_SECONDS).then_some(seconds)
 }

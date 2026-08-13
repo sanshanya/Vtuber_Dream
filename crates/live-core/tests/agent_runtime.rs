@@ -634,44 +634,54 @@ async fn http_502_cold_start_storm_recovers_within_inner_retry() {
     assert_eq!(trace.stats.llm_calls, 1, "瞬时压制不烧 turn");
 }
 
-/// 429 + 裸文本 body → 错误解析为 JSONDeserialize 形态 → 非瞬时 → 单次即败。
-/// 钉的是**现行**语义：状态码驱动的内层恢复只在 body 是 OpenAI 错误 JSON 时成立
-/// （对照 `http_429_then_200_recovers_within_inner_retry`）。与 Python httpx 状态码
-/// 驱动相左是已登记的偏差单，本钉防静默漂移。
+/// 翻案钉（删码刀11，2026-08-13）：429 + 裸文本 body 现在**状态码驱动重试**——
+/// 旧钉「body 非 OpenAI 错误 JSON → JSONDeserialize 非瞬时 → 单次即败」是
+/// async-openai 解析口径的古怪副作用（与 Python httpx 状态码驱动相左的已登记偏差），
+/// 手驾传输后偏差注销：408/409/429/5xx 一律按状态码判定瞬时，body 只供脱敏文案。
 #[tokio::test(flavor = "multi_thread")]
-async fn http_429_bare_text_body_is_not_retried() {
+async fn http_429_bare_text_body_retries_by_status_now() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     let server = MockServer::start().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
     Mock::given(wiremock::matchers::method("POST"))
-        .respond_with(ResponseTemplate::new(429).set_body_string("rate limit hit"))
-        .expect(1) // JSONDeserialize 非瞬时族 → 无内层重试
+        .respond_with(move |_: &Request| {
+            if counter_clone.fetch_add(1, Ordering::SeqCst) == 0 {
+                ResponseTemplate::new(429).set_body_string("rate limit hit")
+            } else {
+                ResponseTemplate::new(200).set_body_json(assistant_tool_call(
+                    "call-ok",
+                    "submit_probe_result",
+                    json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+                    None,
+                ))
+            }
+        })
+        .expect(2) // 状态码驱动：429 裸文本也进内层重试，第二发落地
         .mount(&server)
         .await;
     let runtime = test_runtime(&server);
     let mut spec = probe_spec();
     let mut ctx = ProbeContext::new(7);
     let mut trace = Trace::none();
-    let err = run_toolcall_agent::<ProbeContext, ProbeResult>(
-        &runtime,
-        &mut spec,
-        plan("开始", 4),
-        &mut ctx,
-        &mut trace,
-    )
-    .await
-    .expect_err("429 裸文本 body 按现行语义不可恢复");
-    let text = err.to_string();
-    assert!(text.contains("chat transport"), "{text}");
-    assert!(text.contains("1 attempts"), "{text}");
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("429 裸文本按状态码重试后必须恢复");
+    assert_eq!(outcome.submission.total, 21);
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
+    assert_eq!(trace.stats.llm_calls, 1, "瞬时压制不烧 turn");
 }
 
 // ---------------------------------------------------------------------------
 // 三维闸门（限速漏桶 + Retry-After 尊重 + 指数退避确定性缝）
 // ---------------------------------------------------------------------------
 
-/// Retry-After 信标被尊重——429 body message 携带 "Retry-After: 1" 时，
-/// 重试前实睡 ≥ 该秒数（抖动经 VTD_LIVE_CORE_TEST_JITTER_SEED 钉 0 消噪）。
-/// 局限（书面）：async-openai 的 ApiError 不透传响应头，信标只好从 redact 保留的
-/// message 段截取；真实网关若仅走 header，本机制降级为纯指数退避。
+/// Retry-After 被尊重——429 时重试前实睡 ≥ 该秒数（抖动经
+/// VTD_LIVE_CORE_TEST_JITTER_SEED 钉 0 消噪）。删码刀11 后信标 = header 直读
+/// （旧链 async-openai 不透传 header 只得从 message 截——已删；本钉两路同给，
+/// header 优先语义不变）。
 #[tokio::test(flavor = "multi_thread")]
 async fn http_429_retry_after_hint_is_honored() {
     unsafe { std::env::set_var("VTD_LIVE_CORE_TEST_JITTER_SEED", "0") };
@@ -1437,4 +1447,88 @@ async fn wrap_up_ladder_injects_three_stage_reminders() {
         assert_eq!(reminders[i - 1]["inject_round"], inject);
         assert_eq!(reminders[i - 1]["terminal_tool"], "submit_probe_result");
     }
+}
+
+// ---------------------------------------------------------------------------
+// 删码刀11 流式面：SSE 重组装 + 截断判瞬时（900s 空闲墙主刀口的双钉）
+// ---------------------------------------------------------------------------
+
+/// SSE 重组装正剧本：content/reasoning 跨块拼合、tool_calls 按 index 跨块
+/// 合流、usage 末块入账、[DONE] 收尾——装配产物与非流式响应等键等价。
+#[tokio::test(flavor = "multi_thread")]
+async fn sse_stream_reassembles_full_completion() {
+    let server = MockServer::start().await;
+    let sse = concat!(
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"想一\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"reasoning_content\":\"想二\"},\"finish_reason\":null}]}\n\n",
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-sse\",\"type\":\"function\",\"function\":{\"name\":\"submit_probe_result\",\"arguments\":\"{\\\"submission\\\":\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"a\\\":7,\\\"b\\\":14,\\\"total\\\":21}}\"}}]},\"finish_reason\":null}]}\n\n",
+        "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+        "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":5,\"total_tokens\":15}}\n\n",
+        "data: [DONE]\n\n",
+    );
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(
+            // set_body_raw(body, content_type) 一步定体定型——另起
+            // set_body_string + insert_header 会留双值 content-type。
+            ResponseTemplate::new(200).set_body_raw(sse, "text/event-stream"),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("SSE 重组装后探针必须落地");
+    assert_eq!(
+        outcome.submission.total, 21,
+        "跨块合流的 arguments 必须可解"
+    );
+    // usage 末块入账（stream_options.include_usage 的交付面）。
+    assert_eq!(trace.stats.input_tokens, 10);
+    assert_eq!(trace.stats.output_tokens, 5);
+    assert_eq!(trace.stats.llm_calls, 1);
+}
+
+/// 截断剧：首流无 [DONE] 无 finish_reason（静默杀连的半截形态）→ 判瞬时重试，
+/// 第二发完整 SSE 成功。钉的是「绝不把截断品交卷入账」——900s 墙幸存判定。
+#[tokio::test(flavor = "multi_thread")]
+async fn sse_truncated_stream_retries_instead_of_submitting_half() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let server = MockServer::start().await;
+    let counter = Arc::new(AtomicUsize::new(0));
+    let counter_clone = counter.clone();
+    Mock::given(wiremock::matchers::method("POST"))
+        .respond_with(move |_: &Request| {
+            let body = if counter_clone.fetch_add(1, Ordering::SeqCst) == 0 {
+                // 半截流：只有半拉工具参数，没有收尾旗。
+                "data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-half\",\"type\":\"function\",\"function\":{\"name\":\"submit_probe_result\",\"arguments\":\"{\\\"submission\\\":\"}}]},\"finish_reason\":null}]}\n\n".to_string()
+            } else {
+                common::sse_of(common::assistant_tool_call(
+                    "call-ok",
+                    "submit_probe_result",
+                    json!({"submission": {"a": 7, "b": 14, "total": 21}}),
+                    None,
+                ))
+            };
+            ResponseTemplate::new(200).set_body_raw(body, "text/event-stream")
+        })
+        .expect(2)
+        .mount(&server)
+        .await;
+    let runtime = test_runtime(&server);
+    let mut spec = probe_spec();
+    let mut ctx = ProbeContext::new(7);
+    let mut trace = Trace::none();
+    let outcome: live_core::agent::runtime::RunOutcome<ProbeResult> =
+        run_toolcall_agent(&runtime, &mut spec, plan("开始", 8), &mut ctx, &mut trace)
+            .await
+            .expect("半截流判瞬时后第二发必须落地");
+    assert_eq!(outcome.submission.total, 21);
+    assert_eq!(counter.load(Ordering::SeqCst), 2);
 }
