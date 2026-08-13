@@ -2,6 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { lazy, Suspense } from "react";
 
 import { api, type OverviewView } from "./api";
+import { AdminLockHost } from "./components/AdminLockHost";
 import { RunStatusBadge } from "./components/RunButton";
 import { matchRoute, useHashPath, type PageId } from "./router";
 
@@ -125,6 +126,8 @@ export default function App() {
       <footer className="container footer">
         公开信息感知原型 · 平台事实、AI语义、状态判断和行动建议分层展示
       </footer>
+      {/* 写面口令弹窗宿主——全壳唯一，api 层 401 事件唤醒（口令落仓后用户重点原按钮）。 */}
+      <AdminLockHost />
     </>
   );
 }

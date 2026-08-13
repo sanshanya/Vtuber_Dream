@@ -115,6 +115,7 @@ fn test_config(root: &Path, uri: &str, resume: bool) -> Config {
             run_budget_cny: None,
         },
         report_title: "t".into(),
+        admin_token: String::new(),
     }
 }
 

@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use axum::Router;
-use axum::extract::DefaultBodyLimit;
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Json, Response};
 use axum::routing::get;
@@ -116,6 +116,43 @@ where
     }
 }
 
+/// 写面口令闸（2026-08-13 官规：线上触发 AI 更新须过密码）：config.admin_token
+/// 非空时，所有非 GET/HEAD 的 /api 请求须携 `x-admin-token` 头与真值一致，否则
+/// 一律 401 同形 {error}；GET 数据面恒公共只读。口令按请求现读 config.yaml——
+/// 与全站 load_config 同一现读语义（改口令免重启）；头值与真值都绝不进错误文案。
+/// 口径注：HTTP 头值 `to_str` 只收 visible ASCII，非 ASCII 口令会视同未提供——
+/// 部署文案请引导 ASCII（前端口令框 placeholder 同一句）。
+async fn admin_gate(
+    State(state): State<AppState>,
+    request: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Response {
+    use axum::http::Method;
+    if matches!(request.method(), &Method::GET | &Method::HEAD) {
+        return next.run(request).await;
+    }
+    let token = match load_config(&state) {
+        Ok(config) => config.admin_token,
+        Err(error) => return error.into_response(),
+    };
+    if token.is_empty() {
+        return next.run(request).await;
+    }
+    let presented = request
+        .headers()
+        .get("x-admin-token")
+        .and_then(|value| value.to_str().ok());
+    if presented == Some(token.as_str()) {
+        next.run(request).await
+    } else {
+        AppFail::new(
+            StatusCode::UNAUTHORIZED,
+            "写面已上锁：请提供 x-admin-token 管理口令",
+        )
+        .into_response()
+    }
+}
+
 pub fn build_app(state: AppState) -> Router {
     let api = Router::new()
         .route("/rooms", get(rooms::rooms_list))
@@ -152,6 +189,10 @@ pub fn build_app(state: AppState) -> Router {
         .route("/runs", axum::routing::post(runs::runs_post))
         .route("/runs/:id", get(runs::run_get))
         .layer(DefaultBodyLimit::max(MAX_REQUEST_BODY_BYTES))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            admin_gate,
+        ))
         .with_state(state.clone());
 
     let router = Router::new().nest(

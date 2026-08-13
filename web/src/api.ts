@@ -30,6 +30,29 @@ export function isApiError(error: unknown): error is ApiError {
   return error instanceof ApiError;
 }
 
+/** 写面口令仓（2026-08-13 官规「线上触发 AI 更新须过密码」）：
+ *  口令存 localStorage；非 GET 请求挂 x-admin-token 头（HTTP 头只容 visible
+ *  ASCII——口令框已引导 ASCII）；401 → 立刻清仓 + 发事件唤醒壳层口令框，
+ *  用户输入落仓后重点原按钮即可（不做透明重放：写操作不该被无感重发）。 */
+const TOKEN_KEY = "vtuber.admin_token";
+export const ADMIN_TOKEN_REQUIRED_EVENT = "vtuber.admin-token-required";
+
+export function setAdminToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
+}
+
+export function clearAdminToken(): void {
+  localStorage.removeItem(TOKEN_KEY);
+}
+
+function adminToken(): string | null {
+  try {
+    return localStorage.getItem(TOKEN_KEY);
+  } catch {
+    return null;
+  }
+}
+
 export interface Room {
   id: string;
   project_name: string;
@@ -317,12 +340,24 @@ export interface BudgetInfo {
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["content-type"] = "application/json";
+  if (method !== "GET") {
+    const token = adminToken();
+    if (token) headers["x-admin-token"] = token;
+  }
   const response = await fetch(`${API_BASE}${path}`, {
     method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    headers: Object.keys(headers).length > 0 ? headers : undefined,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await response.text();
+  // 口令闸（服务端 401 {error}）：清掉可能已失效的存仓口令 + 唤醒壳层弹框，
+  // 之后仍走统一 {error} 文案抛出——页面报错面与口令框互不抢戏。
+  if (response.status === 401) {
+    clearAdminToken();
+    window.dispatchEvent(new CustomEvent(ADMIN_TOKEN_REQUIRED_EVENT));
+  }
   // HTML 错误页/半截代理体曾直接崩 JSON.parse 成裸 SyntaxError 糊脸。
   let payload: unknown = null;
   if (text.length > 0) {

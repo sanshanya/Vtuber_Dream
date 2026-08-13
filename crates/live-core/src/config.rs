@@ -178,6 +178,11 @@ pub struct Config {
     pub perception: PerceptionConfig,
     pub ai: AiConfig,
     pub report_title: String,
+    /// 写面管理口令（2026-08-13 官规：线上触发 AI 更新须过闸）。空串=不上锁
+    /// （本地/测试现状一字不动）；非空时所有非 GET/HEAD 的 /api/* 须携
+    /// `x-admin-token` 头与之一致。密级同 cookie——只活于部署机 config.yaml，
+    /// 永不回显（config 读面白名单不转发本键）、永不入库、永不进日志/错误文案。
+    pub admin_token: String,
 }
 
 static EMPTY_MAPPING: std::sync::LazyLock<Value> =
@@ -598,6 +603,8 @@ pub fn load_config(path: impl AsRef<Path>) -> Result<Config, ConfigError> {
             api,
         },
         report_title,
+        // 顶级标量；string() 自带 trim。空=不上锁（闸判在 live-server app.rs admin_gate）。
+        admin_token: string(&raw, "admin_token", ""),
     })
 }
 

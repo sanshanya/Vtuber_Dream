@@ -94,6 +94,7 @@ fn test_config(root: &Path) -> Config {
             run_budget_cny: None,
         },
         report_title: "t".into(),
+        admin_token: String::new(),
     }
 }
 

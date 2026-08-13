@@ -6,7 +6,7 @@
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, api, budgetBlockOf, isApiError } from "../api";
+import { ADMIN_TOKEN_REQUIRED_EVENT, ApiError, api, budgetBlockOf, isApiError, setAdminToken } from "../api";
 
 function stubFetch(status: number, body: string) {
   const fake = {
@@ -110,5 +110,42 @@ describe("预算面客户端与析取（删码刀3 收口：薄预估面 + 四�
     expect(
       budgetBlockOf({ budget_block: { ...block, estimated_cny: "3.0" } }),
     ).toBeNull();
+  });
+});
+
+describe("写面口令挂头/401 钩（官规 2026-08-13）", () => {
+  afterEach(() => {
+    localStorage.clear();
+  });
+
+  it("非 GET：仓有口令 → 挂 x-admin-token 头", async () => {
+    setAdminToken("swordfish");
+    const spy = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, status: 200, text: async () => "{}" }) as Response);
+    vi.stubGlobal("fetch", spy);
+    await api.setAutoCollect("983", true);
+    const init = spy.mock.calls[0]?.[1] as RequestInit;
+    expect((init.headers as Record<string, string>)["x-admin-token"]).toBe("swordfish");
+  });
+
+  it("GET：永不挂口令头（读面公共只读）", async () => {
+    setAdminToken("swordfish");
+    const spy = vi.fn(async (_url: string, _init?: RequestInit) => ({ ok: true, status: 200, text: async () => "[]" }) as Response);
+    vi.stubGlobal("fetch", spy);
+    await api.rooms();
+    const init = spy.mock.calls[0]?.[1] as RequestInit;
+    expect(init.headers).toBeUndefined();
+  });
+
+  it("401 → 清仓 + 发唤醒事件 + ApiError 透服务端文案", async () => {
+    setAdminToken("stale-token");
+    stubFetch(401, JSON.stringify({ error: "写面已上锁：请提供 x-admin-token 管理口令" }));
+    const seen: string[] = [];
+    window.addEventListener(ADMIN_TOKEN_REQUIRED_EVENT, () => seen.push("fired"));
+    const error: unknown = await api.startRun({ kind: "full" }).catch((thrown: unknown) => thrown);
+    expect(isApiError(error)).toBe(true);
+    expect((error as ApiError).status).toBe(401);
+    expect((error as ApiError).message).toContain("写面已上锁");
+    expect(localStorage.getItem("vtuber.admin_token")).toBeNull();
+    expect(seen).toEqual(["fired"]);
   });
 });

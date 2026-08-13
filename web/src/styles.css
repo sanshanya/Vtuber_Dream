@@ -325,3 +325,16 @@ details.badge>summary::-webkit-details-marker{display:none}
 .action-card .action-title{font-size:var(--fs-sm);font-weight:600}
 .action-card .action-detail{margin-top:4px;font-size:var(--fs-sm);line-height:1.75;color:var(--muted)}
 .action-evi{margin:6px 0 0}
+
+/* 写面口令弹窗（官规 2026-08-13：线上触发写面须过密码） */
+.admin-lock-veil{position:fixed;inset:0;background:rgba(5,8,14,.6);display:grid;place-items:center;z-index:70}
+.admin-lock{width:min(380px,92vw)}
+.admin-lock h3{margin:0 0 8px}
+.admin-lock-hint{margin:0 0 12px;color:var(--muted);font-size:var(--fs-sm)}
+.admin-lock input{width:100%;box-sizing:border-box;background:var(--panel2);color:var(--text);
+  border:1px solid var(--line);border-radius:var(--r-sm);padding:8px 10px}
+.admin-lock-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.admin-lock-actions button{border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 16px;
+  background:var(--panel);color:var(--text);cursor:pointer}
+.admin-lock-actions button[type=submit]{background:var(--accent);border-color:var(--accent);color:#fff}
+.admin-lock-actions button[type=submit]:disabled{opacity:.45;cursor:not-allowed}

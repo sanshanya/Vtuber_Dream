@@ -267,6 +267,7 @@ fn test_config(root: &Path, budget: i64) -> Config {
             run_budget_cny: None,
         },
         report_title: "t".into(),
+        admin_token: String::new(),
     }
 }
 
