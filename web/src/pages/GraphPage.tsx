@@ -226,10 +226,17 @@ function communityColor(communityId: unknown): string {
   return COMMUNITY_PALETTE[hash % COMMUNITY_PALETTE.length];
 }
 
-/** style 预设。isEgo=true（局部图）保留全员标签（一跳邻域规模可读）；
- *  整体图启用 degree LOD（删码刀13 去岩浆三件之一：degree<2 默认隐名，
- *  悬停/选中恒显——选中/悬停规则排位在此 LOD 之后，后写赢）。 */
-function stylePreset(isEgo: boolean): Stylesheet[] {
+/**
+ * 局部图也上 LOD 的规模闸：2026-08-14 chrome-headless 实证（viewer 14213360，
+ * 118 节点星形 ego）——全标签在小邻域可读，≥60 节点即成汤；悬停/选中/搜索
+ * 定位是名字的就地取道口，故大图一律隐低度名。
+ */
+export const EGO_LABEL_LOD_MIN_NODES = 60;
+
+/** style 预设。degree LOD（删码刀13 去岩浆三件之一：degree<2 默认隐名，
+ *  悬停/选中恒显——选中/悬停规则排位在 LOD 之后，后写赢）；
+ *  isEgo=true 且节点数 < EGO_LABEL_LOD_MIN_NODES 时保留全员标签（小邻域可读）。 */
+function stylePreset(isEgo: boolean, nodeCount: number): Stylesheet[] {
   return [
     {
       selector: "node",
@@ -249,11 +256,11 @@ function stylePreset(isEgo: boolean): Stylesheet[] {
         "background-color": "#94a3b8",
       },
     },
-    ...(isEgo
+    ...(isEgo && nodeCount < EGO_LABEL_LOD_MIN_NODES
       ? []
       : ([
           {
-            // 删码刀13：degree LOD——低邻居节点默认隐名（整体图首屏去岩浆主力）。
+            // 删码刀13：degree LOD——低邻居节点默认隐名（首屏去岩浆主力）。
             selector: "node[degree < 2]",
             style: { label: "" },
           } as Stylesheet,
@@ -404,7 +411,7 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
     const cy = cytoscape({
       container: mount.current,
       elements: shaped,
-      style: stylePreset(Boolean(vid)),
+      style: stylePreset(Boolean(vid), shaped.length),
       layout: fcoseOptions(shaped.length),
     });
     cyRef.current = cy;

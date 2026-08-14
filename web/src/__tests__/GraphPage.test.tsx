@@ -327,7 +327,7 @@ describe("删码刀13：fcose + LOD + 工具条", () => {
     expect(selectors).toContain("node[community_id]");
   });
 
-  it("ego 局部图不加 degree<2 LOD（一跳邻域规模本就显名）", async () => {
+  it("ego 局部图小规模（<60 节点）不加 degree<2 LOD（一跳邻域规模本就显名）", async () => {
     stubFetch({ elements: ELEMENTS });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });
     render(
@@ -340,6 +340,29 @@ describe("删码刀13：fcose + LOD + 工具条", () => {
       .map((rule) => rule.selector)
       .join("|");
     expect(selectors).not.toContain("node[degree < 2]");
+  });
+
+  it("ego 局部图 ≥60 节点同样上 degree<2 LOD（14213360 星形 118 节点实证成汤）", async () => {
+    // 61 片叶子挂一根 hub——star 拓扑的大 ego 局部图。
+    const hub = { data: { id: "viewer:hub", label: "14213360", kind: "Viewer", degree: 61, properties: { viewer_id: "hub" } } };
+    const leaves = Array.from({ length: 61 }, (_, i) => ({
+      data: { id: `entity:game:e${i}`, label: `实体${i}`, kind: "Entity", degree: 1, properties: {} },
+    }));
+    const edges = leaves.map((leaf, i) => ({
+      data: { id: `edge:e${i}`, source: "viewer:hub", target: leaf.data.id, predicate: "INTERESTED_IN", confidence: 0.9 },
+    }));
+    stubFetch({ elements: [hub, ...leaves, ...edges] });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphPage roomId="983" vid="hub" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("graph-a11y")).toBeTruthy());
+    const selectors = (mockCy.lastInit.style as Array<{ selector?: string }>)
+      .map((rule) => rule.selector)
+      .join("|");
+    expect(selectors).toContain("node[degree < 2]");
   });
 
   it("工具条：kind 芯片开关（off 态 + aria-pressed 翻转 + 清单计数收窄）与滑杆改值", async () => {
