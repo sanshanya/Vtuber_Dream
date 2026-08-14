@@ -14,12 +14,24 @@ const mockCy = vi.hoisted(() => ({
   handlers: {} as Record<string, (event: any) => void>,
   selectedCalls: [] as string[],
   inits: 0,
+  lastInit: null as any,
+  layoutRuns: [] as string[],
+  useCalls: 0,
 }));
 
-vi.mock("cytoscape", () => ({
-  __esModule: true,
-  default: () => {
+vi.mock("cytoscape", () => {
+  const collectionStub: any = {
+    forEach: () => collectionStub,
+    toggleClass: () => collectionStub,
+    addClass: () => collectionStub,
+    removeClass: () => collectionStub,
+    filter: () => collectionStub,
+    not: () => collectionStub,
+    length: 0,
+  };
+  const cytoscapeFn: any = (opts: any) => {
     mockCy.inits += 1;
+    mockCy.lastInit = opts;
     return {
       on: (evt: string, selector: string, cb: (event: any) => void) => {
         mockCy.handlers[`${evt}:${selector}`] = cb;
@@ -34,9 +46,24 @@ vi.mock("cytoscape", () => ({
           });
         },
       }),
+      layout: (opts: any) => ({
+        run: () => {
+          mockCy.layoutRuns.push(String(opts?.name ?? ""));
+        },
+      }),
+      fit: () => {},
+      center: () => {},
+      batch: (fn: () => void) => fn(),
+      nodes: () => collectionStub,
+      edges: () => collectionStub,
+      elements: () => collectionStub,
     };
-  },
-}));
+  };
+  cytoscapeFn.use = () => {
+    mockCy.useCalls += 1;
+  };
+  return { __esModule: true, default: cytoscapeFn };
+});
 
 import { describeNode, GraphPage, graphLayoutIterations, markStreamer } from "../pages/GraphPage";
 
@@ -111,6 +138,8 @@ beforeEach(() => {
   mockCy.handlers = {};
   mockCy.selectedCalls = [];
   mockCy.inits = 0;
+  mockCy.lastInit = null;
+  mockCy.layoutRuns = [];
 });
 
 afterEach(() => {
@@ -280,5 +309,66 @@ describe("Z6/P0-6：整体图折叠提示", () => {
     renderGraph();
     await screen.findByTestId("graph-fold-hint");
     expect(screen.getByTestId("graph-fold-hint").textContent).toContain("默认折叠视图");
+  });
+});
+
+describe("删码刀13：fcose + LOD + 工具条", () => {
+  it("布局 = fcose；整体图 style 含 degree<2 LOD 与 .dimmed/.filtered 规则", async () => {
+    stubFetch({ elements: ELEMENTS });
+    renderGraph();
+    await waitFor(() => expect(screen.getByTestId("graph-a11y")).toBeTruthy());
+    expect(mockCy.lastInit.layout.name).toBe("fcose");
+    const selectors = (mockCy.lastInit.style as Array<{ selector?: string }>)
+      .map((rule) => rule.selector)
+      .join("|");
+    expect(selectors).toContain("node[degree < 2]");
+    expect(selectors).toContain(".dimmed");
+    expect(selectors).toContain(".filtered");
+    expect(selectors).toContain("node[community_id]");
+  });
+
+  it("ego 局部图不加 degree<2 LOD（一跳邻域规模本就显名）", async () => {
+    stubFetch({ elements: ELEMENTS });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: 0 } } });
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphPage roomId="983" vid="demo-1" />
+      </QueryClientProvider>,
+    );
+    await waitFor(() => expect(screen.getByTestId("graph-a11y")).toBeTruthy());
+    const selectors = (mockCy.lastInit.style as Array<{ selector?: string }>)
+      .map((rule) => rule.selector)
+      .join("|");
+    expect(selectors).not.toContain("node[degree < 2]");
+  });
+
+  it("工具条：kind 芯片开关（off 态 + aria-pressed 翻转 + 清单计数收窄）与滑杆改值", async () => {
+    stubFetch({ elements: ELEMENTS });
+    renderGraph();
+    await waitFor(() => expect(screen.getByTestId("graph-toolbar")).toBeTruthy());
+    // present kinds 自动成席（Viewer/Entity/Weird 三席）。
+    const viewerChip = screen.getByTestId("graph-kind-Viewer");
+    expect(viewerChip.getAttribute("aria-pressed")).toBe("true");
+    fireEvent.click(viewerChip);
+    expect(screen.getByTestId("graph-kind-Viewer").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByTestId("graph-kind-Viewer").className).toContain("off");
+    // 清单计数跟随（Viewer 席下有两席 demo-1/9001 → 隐 2 剩 2/4）与 a11y 列表同窄。
+    expect(screen.getByTestId("graph-toolbar").textContent).toContain("2/4 节点");
+    // 滑杆改值回显。
+    fireEvent.change(screen.getByTestId("graph-conf-range"), { target: { value: "60" } });
+    expect(screen.getByTestId("graph-conf-value").textContent).toBe("60");
+    // 重排钮再走一次 fcose。
+    mockCy.layoutRuns = [];
+    fireEvent.click(screen.getByTestId("graph-relayout"));
+    expect(mockCy.layoutRuns).toContain("fcose");
+  });
+
+  it("搜索回车定位：contains 命中首件 → 走 a11y 同一路 select", async () => {
+    stubFetch({ elements: ELEMENTS });
+    renderGraph();
+    await waitFor(() => expect(screen.getByTestId("graph-search")).toBeTruthy());
+    fireEvent.change(screen.getByTestId("graph-search"), { target: { value: "异环" } });
+    fireEvent.keyDown(screen.getByTestId("graph-search"), { key: "Enter" });
+    expect(mockCy.selectedCalls).toContain("entity:game:e1");
   });
 });

@@ -1,7 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import cytoscape from "cytoscape";
+import fcose from "cytoscape-fcose";
 import type * as cytoscapeTypes from "cytoscape";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+
+// 删码刀13：fcose 布局注册（谱布局播种 + 力导向抛光——cose 单发一锅烩的
+// 成熟替代见 iVis-at-Bilkent 仓）。use 幂等注册一次。
+cytoscape.use(fcose);
 
 // @types/cytoscape 是 export= 形如：值走默认导入（可调用），类型走命名空间导入。
 // 注：包内 `type Stylesheet = StylesheetStyle | StylesheetCSS` 别名经 namespace
@@ -52,6 +57,18 @@ const EDGE_LABELS: Record<string, string> = {
 const GRAPH_LAYOUT_THRESHOLD_NODES = 500;
 const GRAPH_LAYOUT_ITERATIONS_SMALL = 1000;
 const GRAPH_LAYOUT_ITERATIONS_LARGE = 400;
+
+/** fcose 布局选项单件（init / 过滤重排 / 重排钮 同源；vitest 经 numIter 定点）。 */
+function fcoseOptions(nodeCount: number) {
+  return {
+    name: "fcose",
+    quality: "default",
+    numIter: graphLayoutIterations(nodeCount),
+    animate: false,
+    idealEdgeLength: nodeCount > GRAPH_LAYOUT_THRESHOLD_NODES ? 90 : 70,
+    nodeRepulsion: 20000,
+  } as const;
+}
 
 /** 节点数 → cose numIter（vitest 唯一定点）。 */
 export function graphLayoutIterations(nodeCount: number): number {
@@ -196,7 +213,23 @@ export function describeNode(
   return rows.length > 0 ? rows : null;
 }
 
-function stylePreset(): Stylesheet[] {
+/** 社区环调色板：community_id 稳定哈希取色（kind 填充色是事实/AI 分层语义，
+ *  环色只做编组提示，绝不冲层色）。 */
+const COMMUNITY_PALETTE = [
+  "#f59e0b", "#10b981", "#38bdf8", "#f472b6", "#a3e635", "#fb7185",
+  "#22d3ee", "#e879f9", "#facc15", "#34d399", "#93c5fd", "#fda4af",
+];
+function communityColor(communityId: unknown): string {
+  const text = typeof communityId === "string" ? communityId : "";
+  let hash = 0;
+  for (const ch of text) hash = (hash * 31 + (ch.codePointAt(0) ?? 0)) >>> 0;
+  return COMMUNITY_PALETTE[hash % COMMUNITY_PALETTE.length];
+}
+
+/** style 预设。isEgo=true（局部图）保留全员标签（一跳邻域规模可读）；
+ *  整体图启用 degree LOD（删码刀13 去岩浆三件之一：degree<2 默认隐名，
+ *  悬停/选中恒显——选中/悬停规则排位在此 LOD 之后，后写赢）。 */
+function stylePreset(isEgo: boolean): Stylesheet[] {
   return [
     {
       selector: "node",
@@ -216,6 +249,15 @@ function stylePreset(): Stylesheet[] {
         "background-color": "#94a3b8",
       },
     },
+    ...(isEgo
+      ? []
+      : ([
+          {
+            // 删码刀13：degree LOD——低邻居节点默认隐名（整体图首屏去岩浆主力）。
+            selector: "node[degree < 2]",
+            style: { label: "" },
+          } as Stylesheet,
+        ] as Stylesheet[])),
     ...Object.entries(KIND_COLORS).map(
       ([kind, color]): Stylesheet => ({
         selector: `node[kind = "${kind}"]`,
@@ -238,9 +280,20 @@ function stylePreset(): Stylesheet[] {
       },
     },
     {
+      // 社区环（删码刀13）：CNM 编组提示——data 函数逐节点取调色板色。
+      selector: "node[community_id]",
+      style: {
+        "border-width": 2,
+        "border-opacity": 0.85,
+        "border-color": (ele: { data: (key: string) => unknown }) =>
+          communityColor(ele.data("community_id")),
+      },
+    },
+    {
       selector: "edge",
       style: {
-        label: "data(edge_label)",
+        // 删码刀13：边标签默认隐——只留高置信与选中（岩浆二号凶手伏法）。
+        label: "",
         "font-size": 8,
         "min-zoomed-font-size": 7,
         color: "#8b949e",
@@ -262,6 +315,10 @@ function stylePreset(): Stylesheet[] {
       },
     },
     {
+      selector: "edge[confidence >= 0.8], edge:selected",
+      style: { label: "data(edge_label)" },
+    },
+    {
       // 关闭的兴趣态：虚线降级（图例在 styles.css legend）。
       selector: 'edge[properties_status = "closed"]',
       style: { "line-style": "dashed", opacity: 0.55 },
@@ -271,8 +328,23 @@ function stylePreset(): Stylesheet[] {
       style: { "line-color": "#15803d", "target-arrow-color": "#15803d" },
     },
     {
+      // 悬停显名（LOD 之后落位——后写赢隐名规则）。
+      selector: "node.hover, node:selected",
+      style: { label: "data(label)" },
+    },
+    {
       selector: "node:selected",
       style: { "border-width": 2, "border-color": "#dbeafe" },
+    },
+    {
+      // hover 邻域聚焦：非邻域降暗。
+      selector: ".dimmed",
+      style: { opacity: 0.12 },
+    },
+    {
+      // 过滤钳（工具条三件套：kind 开关 / 置信度滑杆 共用此类）。
+      selector: ".filtered",
+      style: { display: "none" },
     },
   ];
 }
@@ -306,6 +378,11 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
     [rawElements, streamerUid],
   );
 
+  // 删码刀13 工具条三件套状态（过滤钳共用 filtered 类——见 stylePreset 尾）。
+  const [hiddenKinds, setHiddenKinds] = useState<ReadonlySet<string>>(new Set());
+  const [minConfidence, setMinConfidence] = useState(0);
+  const [search, setSearch] = useState("");
+
   useEffect(() => {
     if (!mount.current || elements.length === 0) return;
     // cy 随新数据重建 → 侧栏选中态必须清，不得残留旧节点 JSON。
@@ -327,8 +404,8 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
     const cy = cytoscape({
       container: mount.current,
       elements: shaped,
-      style: stylePreset(),
-      layout: { name: "cose", numIter: graphLayoutIterations(shaped.length), animate: false },
+      style: stylePreset(Boolean(vid)),
+      layout: fcoseOptions(shaped.length),
     });
     cyRef.current = cy;
     cy.on("select", "node", (event) => {
@@ -340,11 +417,49 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
       setSelected(null);
       setSelectedData(null);
     });
+    // hover 邻域聚焦：非邻域降暗 + 悬停显名（LOD 隐名规则的悬停豁免）。
+    cy.on("mouseover", "node", (event) => {
+      const node = event.target;
+      const neighborhood = node.closedNeighborhood();
+      cy.elements()
+        .not(neighborhood)
+        .forEach((el) => {
+          el.addClass("dimmed");
+        });
+      node.addClass("hover");
+    });
+    cy.on("mouseout", "node", () => {
+      cy.elements().forEach((el) => {
+        el.removeClass("dimmed");
+      });
+      cy.nodes().forEach((el) => {
+        el.removeClass("hover");
+      });
+    });
     return () => {
       cyRef.current = null;
       cy.destroy();
     };
   }, [elements]);
+
+  // 过滤钳施加器：kind 开关 + 置信度滑杆改完即刻落 filtered 类并重排可见集
+  // （隐藏节点不占 fcose 位——过滤就是排布漏斗，不是遮罩）。
+  useEffect(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    cy.batch(() => {
+      cy.nodes().forEach((node) => {
+        node.toggleClass("filtered", hiddenKinds.has(String(node.data("kind"))));
+      });
+      cy.edges().forEach((edge) => {
+        const confidence = edge.data("confidence");
+        const cutoff =
+          typeof confidence === "number" && confidence * 100 < minConfidence;
+        edge.toggleClass("filtered", cutoff);
+      });
+    });
+    cy.layout(fcoseOptions(elements.length)).run();
+  }, [elements, hiddenKinds, minConfidence]);
 
   // 节点清单（边不入册）与身份推导（边谓词 → 角色信号）。
   const nodeIndex = elements
@@ -378,6 +493,28 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
       : "";
   const detailRows = selected ? describeNode(selectedData, identitySignals(selected)) : null;
 
+  // 工具条出件——present kinds 自动成席；搜索定位走 a11y 同一路（selectNode）。
+  const kinds = [...new Set(nodeIndex.map((node) => node.kind))].sort();
+  const visibleNodeIndex = nodeIndex.filter((node) => !hiddenKinds.has(node.kind));
+  const toggleKind = (kind: string) => {
+    setHiddenKinds((previous) => {
+      const next = new Set(previous);
+      if (next.has(kind)) next.delete(kind);
+      else next.add(kind);
+      return next;
+    });
+  };
+  const locate = () => {
+    const needle = search.trim().toLowerCase();
+    if (!needle) return;
+    const hit = nodeIndex.find((node) => node.label.toLowerCase().includes(needle));
+    if (!hit) return;
+    selectNode(hit.id);
+    const cy = cyRef.current;
+    const target = cy?.$id(hit.id);
+    if (cy && target && target.length > 0) cy.center(target);
+  };
+
   if (graph.isLoading) return <div className="state-loading">载入图谱…</div>;
   if (graph.isError)
     return (
@@ -407,12 +544,68 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
       {elements.length === 0 ? (
         <div className="empty">图尚无元素（先跑完 Audience 阶段）</div>
       ) : (
-        <div className="graph-layout">
-          <div className="card canvas-wrap">
-            <div ref={mount} className="graph-canvas" data-testid="graph-canvas" />
-            {/* canvas 本身不可聚焦——外叠一份 hidden-but-focusable 节点清单（Enter = 点选）。 */}
-            <ul className="graph-a11y" data-testid="graph-a11y" aria-label="图节点清单（回车选中查看详情）">
-              {nodeIndex.map((node) => (
+        <>
+          <div className="graph-toolbar card" data-testid="graph-toolbar">
+            <input
+              data-testid="graph-search"
+              placeholder="搜节点名，回车定位"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") locate();
+              }}
+            />
+            <span className="chips">
+              {kinds.map((kind) => (
+                <button
+                  key={kind}
+                  type="button"
+                  className={`chip${hiddenKinds.has(kind) ? " off" : ""}`}
+                  data-testid={`graph-kind-${kind}`}
+                  aria-pressed={!hiddenKinds.has(kind)}
+                  onClick={() => toggleKind(kind)}
+                >
+                  {kind}
+                </button>
+              ))}
+            </span>
+            <label className="graph-conf">
+              置信度 ≥
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={5}
+                value={minConfidence}
+                data-testid="graph-conf-range"
+                onChange={(event) => setMinConfidence(Number(event.target.value))}
+              />
+              <span data-testid="graph-conf-value">{minConfidence}</span>
+            </label>
+            <button
+              type="button"
+              data-testid="graph-relayout"
+              onClick={() => cyRef.current?.layout(fcoseOptions(elements.length)).run()}
+            >
+              重排
+            </button>
+            <button
+              type="button"
+              data-testid="graph-fit"
+              onClick={() => cyRef.current?.fit()}
+            >
+              复位
+            </button>
+            <span className="muted small">
+              {visibleNodeIndex.length}/{nodeIndex.length} 节点
+            </span>
+          </div>
+          <div className="graph-layout">
+            <div className="card canvas-wrap">
+              <div ref={mount} className="graph-canvas" data-testid="graph-canvas" />
+              {/* canvas 本身不可聚焦——外叠一份 hidden-but-focusable 节点清单（Enter = 点选）。 */}
+              <ul className="graph-a11y" data-testid="graph-a11y" aria-label="图节点清单（回车选中查看详情）">
+                {visibleNodeIndex.map((node) => (
                 <li
                   key={node.id}
                   tabIndex={0}
@@ -466,6 +659,7 @@ export function GraphPage({ roomId, vid }: { roomId: string; vid?: string }) {
             )}
           </div>
         </div>
+        </>
       )}
     </section>
   );

@@ -338,3 +338,13 @@ details.badge>summary::-webkit-details-marker{display:none}
   background:var(--panel);color:var(--text);cursor:pointer}
 .admin-lock-actions button[type=submit]{background:var(--accent);border-color:var(--accent);color:#fff}
 .admin-lock-actions button[type=submit]:disabled{opacity:.45;cursor:not-allowed}
+
+/* 图页工具条（删码刀13：fcose+LOD+过滤搜索滑杆） */
+.graph-toolbar{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 12px;margin-bottom:12px}
+.graph-toolbar input[data-testid=graph-search]{background:var(--panel2);color:var(--text);
+  border:1px solid var(--line);border-radius:var(--r-sm);padding:6px 10px;min-width:180px}
+.graph-toolbar .chip.off{opacity:.4}
+.graph-toolbar button:not(.chip){background:var(--panel);color:var(--text);
+  border:1px solid var(--line);border-radius:var(--r-sm);padding:5px 12px;cursor:pointer}
+.graph-conf{display:flex;align-items:center;gap:6px;font-size:var(--fs-sm);color:var(--muted)}
+.graph-conf input[type=range]{width:110px}
