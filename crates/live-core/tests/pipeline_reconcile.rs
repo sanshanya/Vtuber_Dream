@@ -368,49 +368,71 @@ fn open_store(root: &Path) -> Store {
 }
 
 // ---------------------------------------------------------------------------
-// 1. 绿跑 + 尾门：merge 碎片回源 + drop ai 噪音；usage 不含 reconcile；server 恰 4 请求
+// 1. 自动带（删码刀12）：同键严格碰撞零 LLM 直并；无候选 → 裁决带整带跳过
 // ---------------------------------------------------------------------------
 
-#[tokio::test(flavor = "multi_thread")]
-async fn pipeline_reconcile_tail_gate_runs_and_lands_merges_drops() {
-    let server = MockServer::start().await;
-    let (tmp, analysis) = setup_root().await;
-    let (e1, e2) = episode_ids(tmp.path());
+/// 布景：两个 canonical 全等的 ai 碎片（碰撞组；零边零别名 → degree 并列，
+/// 字节序小者 ent-auto-a 按目标排序为正主）。
+fn seed_collision_pair(store: &Store) {
+    for id in ["ent-auto-a", "ent-auto-b"] {
+        store.conn.execute(
+            "INSERT INTO entities(entity_id,canonical_name,normalized_name,entity_type,description,source_kind,properties_json,first_seen_at,last_seen_at) \
+             VALUES(?1,'分身壳甲','分身壳甲','游戏','','ai','{}','2000-01-01T00:00:00+00:00','2000-01-01T00:00:01+00:00')",
+            [id],
+        ).unwrap();
+    }
+}
+
+async fn mount_green_run(server: &MockServer, tmp: &Path) {
+    let (e1, e2) = episode_ids(tmp);
     mount_viewer_ok(
-        &server,
+        server,
         "黄金观众甲",
         viewer_submission("g1", &e1, G1_MENTION, "异环"),
     )
     .await;
     mount_viewer_ok(
-        &server,
+        server,
         "黄金观众乙",
         viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
     )
     .await;
-    mount_audience_ok(&server, &["g1", "g2"]).await;
+    mount_audience_ok(server, &["g1", "g2"]).await;
+}
+
+fn entity_exists(store: &Store, id: &str) -> bool {
+    store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM entities WHERE entity_id=?",
+            [id],
+            |row| row.get::<_, i64>(0),
+        )
+        .unwrap()
+        == 1
+}
+
+fn maintenance_run_count(store: &Store) -> i64 {
+    store
+        .conn
+        .query_row(
+            "SELECT COUNT(*) FROM graph_runs WHERE kind='maintenance'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_reconcile_auto_band_merges_strict_collision_without_llm() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    mount_green_run(&server, tmp.path()).await;
     let store = open_store(tmp.path());
     seed_entity(&store);
     seed_noise(&store);
+    seed_collision_pair(&store);
     drop(store);
-
-    // AI 的归并裁决（terminal tool call）——ID/存在性/类型校验全在程序侧。
-    let (m1, m2) = mention_ids();
-    let ent_g1 = fragment_entity_id("g1", "游戏", &m1);
-    let ent_g2 = fragment_entity_id("g2", "游戏", &m2);
-    mount_reconcile_ok(
-        &server,
-        "call-r1",
-        json!({
-            "merges": [{
-                "target_entity_id": ent_g1,
-                "source_entity_ids": [ent_g2],
-                "rationale": "两名观众的碎片证据均指向同一段演示事实，证据链独立可追溯。",
-            }],
-            "drops": [{"entity_id": "ent-noise", "rationale": "无任何事实承载的纯展示噪音。"}]
-        }),
-    )
-    .await;
 
     let mut knobs = PipelineKnobs::default();
     let result = run_pipeline(
@@ -420,108 +442,80 @@ async fn pipeline_reconcile_tail_gate_runs_and_lands_merges_drops() {
         &mut knobs,
     )
     .await
-    .expect("green run with reconcile");
-
+    .expect("green run with auto band");
     assert_eq!(result["status"], "complete");
-    // viewer2 + audience1 计入 usage；reconcile 阻塞在尾门不算入 aggregate。
-    assert_eq!(result["usage"]["llm_requests"], 3);
-    assert_eq!(result["usage"]["input_tokens"], 30);
-    // server 上恰 4 次请求：viewers(2) + audience(1) + reconcile(1)。
-    let total_requests = server.received_requests().await.unwrap().len();
-    assert_eq!(total_requests, 4, "v1/v2/audience/reconcile 各一次");
+    assert_eq!(result["usage"]["llm_requests"], 3, "usage 不含 reconcile");
+    // 观众×2 + audience×1 = 3：碰撞对被自动带直并；碎片名互不相似 → 候选空 →
+    // 裁决带整带零调用（成本官规：无活不烧 LLM）。
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        3,
+        "自动带直并零 LLM"
+    );
 
     let store = open_store(tmp.path());
-    // merge 落账：碎片 ent_g2 被删，目标 ent_g1 存活；drop 删掉噪音实体。
-    // 注册表里还含 baseline 的其他平台类实体（bilibili_category/tags/creator 等），
-    // 故用成员断言而非全表相等。
-    let existing: Vec<String> = store
-        .conn
-        .prepare("SELECT entity_id FROM entities ORDER BY entity_id")
-        .and_then(|mut stmt| {
-            stmt.query_map([], |row| row.get(0))
-                .map(|rows| rows.collect::<Result<Vec<_>, _>>().unwrap())
-        })
-        .unwrap();
-    let existing_set: std::collections::HashSet<String> = existing.iter().cloned().collect();
-    for id in [ent_g1.clone(), SEED_ENTITY.to_string()] {
-        assert!(
-            existing_set.contains(&id),
-            "{id} 应存在（merge 目标 / 种子），实际 {existing:?}"
-        );
+    assert!(entity_exists(&store, "ent-auto-a"), "正主存活");
+    assert!(
+        !entity_exists(&store, "ent-auto-b"),
+        "碰撞碎片已被自动带吸收"
+    );
+    // 两碎片均撞上基线平台道同名实体（异环/明日方舟皆有平台 tag——跨型严格
+    // 碰撞恰是自动带最高价猎物）：碎片各被吸收进平台正主，全表同名实体各存
+    // 一件，活跃 REFERS_TO 边均重指。
+    let (m1, m2) = mention_ids();
+    let survivor_of = |name: &str| -> (String, String) {
+        let rows: Vec<(String, String)> = {
+            let mut stmt = store
+                .conn
+                .prepare("SELECT entity_id,source_kind FROM entities WHERE canonical_name=?")
+                .unwrap();
+            stmt.query_map([name], |row| Ok((row.get(0)?, row.get(1)?)))
+                .unwrap()
+                .collect::<Result<Vec<_>, _>>()
+                .unwrap()
+        };
+        assert_eq!(rows.len(), 1, "{name} 全表只存正主一件：{rows:?}");
+        rows.into_iter().next().unwrap()
+    };
+    for (mention_id, fragment, name) in [
+        (&m1, fragment_entity_id("g1", "游戏", &m1), "异环"),
+        (&m2, fragment_entity_id("g2", "游戏", &m2), "明日方舟"),
+    ] {
+        let (survivor, kind) = survivor_of(name);
+        assert_ne!(survivor, fragment, "{name} 的碎片应被吸收");
+        assert_eq!(kind, "platform_fact", "{name} 正主 = 平台道实体");
+        assert!(!entity_exists(&store, &fragment));
+        let refers_to: String = store
+            .conn
+            .query_row(
+                "SELECT target_id FROM edges WHERE source_id=? AND predicate='REFERS_TO' \
+                 AND source_kind='grounded_ai' AND valid_to IS NULL",
+                [mention_id],
+                |row| row.get(0),
+            )
+            .expect("mention 的活跃 REFERS_TO 边应存在");
+        assert_eq!(refers_to, survivor, "{name} 的 mention 边应重指正主");
     }
-    for id in [ent_g2.clone(), "ent-noise".to_string()] {
-        assert!(
-            !existing_set.contains(&id),
-            "{id} 应已删除，实际 {existing:?}"
-        );
-    }
-    // m2 的 REFERS_TO 活跃边被合并重指到 ent_g1。
-    let target: String = store
-        .conn
-        .query_row(
-            "SELECT target_id FROM edges WHERE source_id=? AND predicate='REFERS_TO' \
-             AND source_kind='grounded_ai' AND valid_to IS NULL",
-            [&m2],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert_eq!(target, ent_g1, "merge 后 m2 的 REFERS_TO 重指到 ent_g1");
-    // 维护 run 记账：reconcile 外层 + 单次 merge 内层（entity_merge 自查重）各一次。
-    let maint: i64 = store
-        .conn
-        .query_row(
-            "SELECT COUNT(*) FROM graph_runs WHERE kind='maintenance'",
-            [],
-            |row| row.get(0),
-        )
-        .unwrap();
-    assert!(maint >= 1, "merge 必须落维护 run 记账");
+    // 无关实体一概不扰：聚合种子、噪音外壳原样（自动带不发 drop）。
+    assert!(entity_exists(&store, SEED_ENTITY));
+    assert!(entity_exists(&store, "ent-noise"));
+    assert!(maintenance_run_count(&store) >= 1, "自动带照旧记账");
     drop(store);
-
-    // 尾门进度声（可选观测）：progress_say 走 stderr，不断言。
 }
 
 // ---------------------------------------------------------------------------
-// 2. resume 重启：碎片被 run2 重新铸造 → minted>0 → 尾门独立 server 再出 1 次
+// 2. resume 收敛：碎片缓存重铸 → 尾门再开（零 LLM）→ 自动带状态级幂等收敛
 // ---------------------------------------------------------------------------
 
 #[tokio::test(flavor = "multi_thread")]
-async fn pipeline_resume_refires_reconcile_once() {
+async fn pipeline_resume_auto_band_is_silent_and_idempotent() {
     let server1 = MockServer::start().await;
     let (tmp, analysis) = setup_root().await;
-    let (e1, e2) = episode_ids(tmp.path());
-    mount_viewer_ok(
-        &server1,
-        "黄金观众甲",
-        viewer_submission("g1", &e1, G1_MENTION, "异环"),
-    )
-    .await;
-    mount_viewer_ok(
-        &server1,
-        "黄金观众乙",
-        viewer_submission("g2", &e2, G2_MENTION, "明日方舟"),
-    )
-    .await;
-    mount_audience_ok(&server1, &["g1", "g2"]).await;
+    mount_green_run(&server1, tmp.path()).await;
     let store = open_store(tmp.path());
     seed_entity(&store);
+    seed_collision_pair(&store);
     drop(store);
-    let (m1, m2) = mention_ids();
-    let ent_g1 = fragment_entity_id("g1", "游戏", &m1);
-    let ent_g2 = fragment_entity_id("g2", "游戏", &m2);
-    mount_reconcile_ok(
-        &server1,
-        "call-r1",
-        json!({
-            "merges": [{
-                "target_entity_id": ent_g1,
-                "source_entity_ids": [ent_g2],
-                "rationale": "同一演示作品的证据碎片，reader 合并。",
-            }],
-            "drops": []
-        }),
-    )
-    .await;
     let mut knobs = PipelineKnobs::default();
     run_pipeline(
         test_config(tmp.path(), &server1.uri(), true),
@@ -531,10 +525,14 @@ async fn pipeline_resume_refires_reconcile_once() {
     )
     .await
     .expect("run1");
+    let runs_after_r1 = {
+        let store = open_store(tmp.path());
+        let n = maintenance_run_count(&store);
+        drop(store);
+        n
+    };
 
-    // run2：独立 server、只挂 reconcile；viewers/audience 走缓存零请求。
     let server2 = MockServer::start().await;
-    mount_reconcile_ok(&server2, "call-r2", json!({"merges": [], "drops": []})).await;
     let mut knobs2 = PipelineKnobs::default();
     let result = run_pipeline(
         test_config(tmp.path(), &server2.uri(), true),
@@ -543,11 +541,106 @@ async fn pipeline_resume_refires_reconcile_once() {
         &mut knobs2,
     )
     .await
-    .expect("run2 fully resumed + reconcile refires");
+    .expect("run2 resumed");
     assert_eq!(result["status"], "complete");
-    let requests2 = server2.received_requests().await.unwrap().len();
     assert_eq!(
-        requests2, 1,
-        "run2 只应发出 reconcile 1 次（merge 产物已在 run1 删掉，run2 重新铸造）"
+        server2.received_requests().await.unwrap().len(),
+        0,
+        "run2 全缓存 → 零 LLM 请求（尾门再开也是自动带主场）"
     );
+    let (m1, m2) = mention_ids();
+    let store = open_store(tmp.path());
+    assert!(!entity_exists(&store, "ent-auto-b"), "自动带结果持久");
+    // 自动带每次 minted>0 即收敛（=幂等于状态而非记账轴）：run1 收敛过的
+    // 碎片在 run2 重铸后再次被自动带吸收，终态收敛一致——钉的是状态幂等，
+    // 而非 maintenance run 轴的免重（重铸后的 merge 是真工作，不是重放）。
+    assert!(maintenance_run_count(&store) >= runs_after_r1);
+    for (viewer, m, name) in [("g1", &m1, "异环"), ("g2", &m2, "明日方舟")] {
+        assert!(!entity_exists(
+            &store,
+            &fragment_entity_id(viewer, "游戏", m)
+        ),);
+        assert_eq!(
+            store
+                .conn
+                .query_row(
+                    "SELECT COUNT(*) FROM entities WHERE canonical_name=? AND source_kind='platform_fact'",
+                    [name],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap(),
+            1,
+            "{name} 正主恒存"
+        );
+    }
+    drop(store);
+}
+
+// ---------------------------------------------------------------------------
+// 3. 裁决带（删码刀12）：相似非同名 → 候选清单 → LLM 判 merge/drop 落账
+// ---------------------------------------------------------------------------
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pipeline_reconcile_judge_band_with_candidates_calls_llm_once() {
+    let server = MockServer::start().await;
+    let (tmp, analysis) = setup_root().await;
+    let (e1, e2) = episode_ids(tmp.path());
+    // 相似非同名（jaccard≈0.73 稳过闸）——不成碰撞、必进候选带。
+    mount_viewer_ok(
+        &server,
+        "黄金观众甲",
+        viewer_submission("g1", &e1, G1_MENTION, "周年装扮主题"),
+    )
+    .await;
+    mount_viewer_ok(
+        &server,
+        "黄金观众乙",
+        viewer_submission("g2", &e2, G2_MENTION, "周年装扮主题活动"),
+    )
+    .await;
+    mount_audience_ok(&server, &["g1", "g2"]).await;
+    let store = open_store(tmp.path());
+    // ent-demo 是 audience 聚合语提交的兴趣图承载位（缺了 audience 校验拒→
+    // 二回合，单侧 mock 燃尽即 404——本钉翻车实录）。
+    seed_entity(&store);
+    seed_noise(&store);
+    drop(store);
+
+    let (m1, m2) = mention_ids();
+    let ent_g1 = fragment_entity_id("g1", "游戏", &m1);
+    let ent_g2 = fragment_entity_id("g2", "游戏", &m2);
+    mount_reconcile_ok(
+        &server,
+        "call-r1",
+        json!({
+            "merges": [{
+                "target_entity_id": ent_g1,
+                "source_entity_ids": [ent_g2],
+                "rationale": "同一周年装扮主题活动的分身两壳，证据链独立可追溯。",
+            }],
+            "drops": [{"entity_id": "ent-noise", "rationale": "无任何事实承载的纯展示噪音。"}]
+        }),
+    )
+    .await;
+
+    let mut knobs = PipelineKnobs::default();
+    run_pipeline(
+        test_config(tmp.path(), &server.uri(), true),
+        &analysis,
+        false,
+        &mut knobs,
+    )
+    .await
+    .expect("green run with judge band");
+    assert_eq!(
+        server.received_requests().await.unwrap().len(),
+        4,
+        "v1/v2/audience/reconcile 各一次（候选非空 → 裁决带恰一发）"
+    );
+    let store = open_store(tmp.path());
+    assert!(entity_exists(&store, &ent_g1));
+    assert!(!entity_exists(&store, &ent_g2), "裁决 merge 已落");
+    assert!(!entity_exists(&store, "ent-noise"), "裁决 drop 已落");
+    assert!(maintenance_run_count(&store) >= 1, "裁决带记账");
+    drop(store);
 }

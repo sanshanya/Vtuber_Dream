@@ -707,6 +707,108 @@ fn entity_merge_replay_is_noop_with_same_terminal_state() {
 }
 
 // ---------------------------------------------------------------------------
+// merge 钉⑤+：2026-08-13 生产 FK 爆雷回归钉——survivor 为 target 侧边时，被合
+// 流的源边若只关区间不改坐标，DELETE nodes 会被 edges 的 FK 当场拒止（修复：
+// 吸收边收尸连带坐标改终值）。布景 = merge_fixture 的时序倒置：源边更晚（必然
+// 落 absorbed 位）。
+// ---------------------------------------------------------------------------
+
+#[test]
+fn entity_merge_absorbed_source_edge_leaves_no_dangling_fk() {
+    let store = mem_store();
+    for run in [RUN_A, RUN_B, RUN_C] {
+        store.begin_run_fixed(run, FIXED_NOW, "m").unwrap();
+    }
+    // e2「环世界」更老（RUN_A，seen 08-01 → survivor 位）；e1「异环」更晚（RUN_B）。
+    let sub_b = one_entity_submission(
+        "v",
+        "环世界",
+        &["异环靶"],
+        &[("m4", "环世界", 11, 14)],
+        None,
+        0.6,
+    );
+    apply_viewer_submission(
+        &store,
+        RUN_A,
+        "观众V",
+        &[episode_for("v", "环宝 异环")],
+        &sub_b,
+    )
+    .unwrap();
+    let sub_a = one_entity_submission(
+        "v",
+        "异环",
+        &["环"],
+        &[("m1", "环宝", 0, 2), ("m2", "异环", 3, 5)],
+        None,
+        0.8,
+    );
+    apply_viewer_submission(
+        &store,
+        RUN_B,
+        "观众V",
+        &[episode_for("v", "环宝 异环")],
+        &sub_a,
+    )
+    .unwrap();
+    let source = entity_id_of(&store, "异环");
+    let target = entity_id_of(&store, "环世界");
+    let props = || json!({"status": "近期上升", "preference": "关注具体内容", "aspects": [], "rationale": "r"});
+    store
+        .upsert_edge(
+            "viewer:v",
+            "INTERESTED_IN",
+            &target,
+            &props(),
+            "ai_state",
+            Some(0.6),
+            &["m4".to_string()],
+            RUN_A,
+            Some("2026-08-01T00:00:00+00:00"),
+        )
+        .unwrap();
+    store
+        .upsert_edge(
+            "viewer:v",
+            "INTERESTED_IN",
+            &source,
+            &props(),
+            "ai_state",
+            Some(0.5),
+            &["m2".to_string()],
+            RUN_B,
+            Some("2026-08-02T00:00:00+00:00"),
+        )
+        .unwrap();
+    // 修复前此处爆「FOREIGN KEY constraint failed」（生产实录）；修复后顺畅合流。
+    let outcome = store
+        .entity_merge(std::slice::from_ref(&source), &target)
+        .unwrap();
+    assert!(outcome.changed);
+    assert_eq!(outcome.folded_edges, 1, "源的复制边必须被合流");
+    // 被合流的源边：闭区间 + 坐标已改终值（不得残留 source 引用 = FK 爆雷位）。
+    assert_eq!(
+        count(
+            &store,
+            &format!(
+                "SELECT COUNT(*) FROM edges WHERE source_id='{source}' OR target_id='{source}'"
+            ),
+        ),
+        0,
+        "任何边不得再引用源节点（FK 爆雷正是在此触发）"
+    );
+    assert_eq!(
+        count(
+            &store,
+            "SELECT COUNT(*) FROM edges WHERE predicate='INTERESTED_IN' AND valid_to IS NULL"
+        ),
+        1,
+        "合流后活跃兴趣边只剩 survivor 一条"
+    );
+}
+
+// ---------------------------------------------------------------------------
 // merge 钉⑥：显式报错面（且零写入）
 // ---------------------------------------------------------------------------
 

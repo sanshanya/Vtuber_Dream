@@ -614,9 +614,21 @@ impl Store {
                     (Some(a), None) => Some(a),
                     (None, b) => b,
                 };
+                // 吸收边收尸必须连带坐标改写为终值——2026-08-13 生产 FK 爆雷实录：
+                // 只关区间不改坐标时，吸收边仍挂源 node_id，随后 DELETE nodes 被
+                // edges.source_id/target_id 的 FK 当场拒止（整组 merge 翻车、全盘
+                // all-or-nothing 陪葬）。坐标改终值后审计语义不变坏：吸收边本就是
+                // survivor 的同义副本，终坐标指向同一条语义边。
                 self.conn.execute(
-                    "UPDATE edges SET valid_to=?,last_seen_at=? WHERE edge_id=?",
-                    params![now, now, member.edge_id],
+                    "UPDATE edges SET valid_to=?,last_seen_at=?,source_id=?,target_id=? \
+                     WHERE edge_id=?",
+                    params![
+                        now,
+                        now,
+                        survivor_final_source,
+                        survivor_final_target,
+                        member.edge_id
+                    ],
                 )?;
                 folded += 1;
             }

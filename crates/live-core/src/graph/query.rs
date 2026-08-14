@@ -103,6 +103,10 @@ pub fn search_entities(
     let rows = select_all(
         store,
         "SELECT e.entity_id,e.canonical_name,e.entity_type,e.description,e.properties_json, \
+                e.source_kind, \
+                (SELECT COUNT(*) FROM edges ed \
+                  WHERE (ed.source_id=e.entity_id OR ed.target_id=e.entity_id) \
+                    AND ed.valid_to IS NULL) AS degree, \
                 GROUP_CONCAT(a.alias, ' | ') AS aliases \
          FROM entities e \
          LEFT JOIN entity_aliases a ON a.entity_id=e.entity_id \
@@ -140,6 +144,11 @@ pub fn search_entities(
             "canonical_name": row.get("canonical_name").cloned().unwrap_or(Value::Null),
             "entity_type": row.get("entity_type").cloned().unwrap_or(Value::Null),
             "description": row.get("description").cloned().unwrap_or(Value::String(String::new())),
+            // 删码刀12 盲区补齐：reconcile 的 drop/merge 门卫按 source_kind 裁决，
+            // 模型此前从工具面根本看不见它（只能在 422 拒绝里学）——投影直给。
+            "source_kind": row.get("source_kind").cloned().unwrap_or(Value::Null),
+            // 活跃边计数（闭区间不计）——归并目标排序与图页节点度共用同一口径。
+            "degree": row.get("degree").cloned().unwrap_or(Value::from(0)),
             "aliases": aliases,
             "properties": properties,
         }));
@@ -149,8 +158,8 @@ pub fn search_entities(
 
 /// 全量实体列表的分页读数（reconcile 的 list_entities 调查工具背靠这里）：
 /// 分页稳定排序（entity_id 字节序），每页行的列 = entity_id/canonical_name/
-/// entity_type/description/aliases（与 search_entities 的实体面同构，但只含
-/// 列表必需列——reconcile 工具不关心 properties）。
+/// entity_type/description/source_kind/degree/aliases（与 search_entities 实体面
+/// 同构；properties 仍不出列表——列表必需列之外不进货）。
 pub const LIST_ENTITIES_LIMIT: i64 = 100;
 
 pub fn list_entities(store: &Store, offset: i64, limit: i64) -> Result<Value> {
@@ -158,7 +167,10 @@ pub fn list_entities(store: &Store, offset: i64, limit: i64) -> Result<Value> {
     let limit = limit.clamp(1, LIST_ENTITIES_LIMIT);
     let rows = select_all(
         store,
-        "SELECT e.entity_id,e.canonical_name,e.entity_type,e.description, \
+        "SELECT e.entity_id,e.canonical_name,e.entity_type,e.description,e.source_kind, \
+                (SELECT COUNT(*) FROM edges ed \
+                  WHERE (ed.source_id=e.entity_id OR ed.target_id=e.entity_id) \
+                    AND ed.valid_to IS NULL) AS degree, \
                 GROUP_CONCAT(a.alias, ' | ') AS aliases \
          FROM entities e \
          LEFT JOIN entity_aliases a ON a.entity_id=e.entity_id \
@@ -184,6 +196,8 @@ pub fn list_entities(store: &Store, offset: i64, limit: i64) -> Result<Value> {
                 "canonical_name": row.get("canonical_name").cloned().unwrap_or(Value::Null),
                 "entity_type": row.get("entity_type").cloned().unwrap_or(Value::Null),
                 "description": row.get("description").cloned().unwrap_or(Value::String(String::new())),
+                "source_kind": row.get("source_kind").cloned().unwrap_or(Value::Null),
+                "degree": row.get("degree").cloned().unwrap_or(Value::from(0)),
                 "aliases": aliases,
             })
         })

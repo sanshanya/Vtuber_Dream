@@ -929,7 +929,9 @@ async fn reconcile_finale(
             Ok(report) => progress_say(
                 knobs,
                 &format!(
-                    "[RECONCILE] 实体归并完成：merge {} 组 / drop {} 个 / 失败 {} 项",
+                    "[RECONCILE] 实体归并完成：自动并 {} 组（吸收 {} 碎片）/ merge {} 组 / drop {} 个 / 失败 {} 项",
+                    report.auto_merged_groups,
+                    report.auto_absorbed,
                     report.merged_ok,
                     report.dropped_ok,
                     report.failed.len()

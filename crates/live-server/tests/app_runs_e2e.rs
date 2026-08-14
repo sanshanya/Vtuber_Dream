@@ -602,12 +602,15 @@ async fn single_viewer_run_walks_whole_chain_to_done() {
         "events 次序错乱：{events:?}"
     );
 
-    // wiremock 双侧请求证真：viewer + audience + 尾门归并（本轮铸了新实体）。
+    // wiremock 双侧请求证真：viewer + audience。（删码刀12 三层带起义：尾门
+    // 归并 = minted 开门 + 无候选即零 LLM——本面铸的碎片与平台面既无碰撞
+    // 也无 ≥0.45 相似对，裁决带整带跳过；judged-band 活的 e2e 钉在 live-core
+    // pipeline_reconcile 三件套。）
     let llm_requests = llm.received_requests().await.expect("llm requests");
     assert_eq!(
         llm_requests.len(),
-        3,
-        "LLM 面应当恰好三次终局提交：viewer + audience + reconcile"
+        2,
+        "LLM 面恰好两次终局提交：viewer + audience（归并自动带零调用）"
     );
     let bil_requests = bilibili
         .received_requests()
@@ -1353,12 +1356,13 @@ async fn g2_smoke_two_rounds_lead_to_collect_to_recon() {
             .join("\n")
     );
 
-    // LLM 面零新增：全程恰 1 次 viewer + 1 次 audience 终局提交 + 尾门归并 1 次。
-    // （轮二 collect_guards 不涉 AI 层 LLM；reconcile 属 viewer 轮内的尾门行为。）
+    // LLM 面零新增：全程恰 1 次 viewer + 1 次 audience 终局提交。
+    // （轮二 collect_guards 不涉 AI 层 LLM；删码刀12 后尾门归并碎片化归
+    // 自动带，本剧本无模糊候选 → 裁决带零调用——同上的三层带语义。）
     assert_eq!(
         llm.received_requests().await.expect("llm requests").len(),
-        3,
-        "两轮全程 LLM 面应当恰好三次提交：viewer + audience + reconcile（缓存零新增）"
+        2,
+        "两轮全程 LLM 面应当恰好两次提交：viewer + audience（缓存零新增 + 归并自动带零调用）"
     );
 
     // 终账对账：overview 读取侧呈现 consumed=1、pending 清零。

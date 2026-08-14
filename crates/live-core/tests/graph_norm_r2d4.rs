@@ -370,6 +370,7 @@ fn list_entities_paginates_stably_and_clamps_bounds() {
     assert_eq!(page2["items"][0]["entity_id"], items[2]["entity_id"]);
 
     // 越界 offset → 空页；limit 钳制 ≤100；负数 offset 钳 0。
+
     assert_eq!(list_entities(&store, 99, 10).unwrap()["count"], 0);
     assert_eq!(list_entities(&store, -5, 10).unwrap()["offset"], 0);
     assert_eq!(list_entities(&store, 0, 999).unwrap()["limit"], 100);
@@ -460,4 +461,72 @@ fn latest_published_at_picks_max_iso() {
     );
     let none = live_core::graph::query::latest_published_at(&store, "无人").expect("latest");
     assert!(none.is_none());
+}
+
+// 删码刀12 投影钉：source_kind（门卫盲区补齐）+ degree（只数活跃边——
+// 归并 target 排序与图页节点度共用口径）。
+#[test]
+fn list_entities_carries_source_kind_and_open_edge_degree() {
+    let store = mem_store();
+    store.begin_run_fixed(RUN_A, FIXED_NOW, "m").unwrap();
+    let sub = one_entity_submission("v", "异环", &[], &[("m:v", "异环", 0, 2)], Some(0.6), 0.8);
+    apply_viewer_submission(&store, RUN_A, "观众", &[episode_for("v", "异环")], &sub).unwrap();
+    let eid = list_entities(&store, 0, 10).unwrap()["items"][0]["entity_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let props = json!({"status": "近期上升", "preference": "关注具体内容", "aspects": [], "rationale": "r"});
+    store
+        .upsert_edge(
+            "viewer:v",
+            "INTERESTED_IN",
+            &eid,
+            &props,
+            "ai_state",
+            Some(0.5),
+            &[],
+            RUN_A,
+            Some("2026-08-01T00:00:00+00:00"),
+        )
+        .unwrap();
+    store
+        .upsert_edge(
+            "viewer:v",
+            "INTERESTED_IN",
+            &eid,
+            &props,
+            "ai_other",
+            Some(0.6),
+            &[],
+            RUN_A,
+            Some("2026-08-02T00:00:00+00:00"),
+        )
+        .unwrap();
+    // 一条已闭（source_kind 换列开第二条）——degree 不得计入。
+    let closed_eid: String = store
+        .conn
+        .query_row(
+            "SELECT edge_id FROM edges WHERE source_kind='ai_other'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    store
+        .close_edge(&closed_eid, RUN_A, "2026-08-03T00:00:00+00:00")
+        .unwrap();
+    let item = &list_entities(&store, 0, 10).unwrap()["items"][0].clone();
+    assert_eq!(item["source_kind"], "ai", "提交实体身份 = ai");
+    // apply 面产的 REFERS_TO 提到边 + 一条活跃 INTERESTED_IN 开边。
+    let open_expected = count(
+        &store,
+        &format!(
+            "SELECT COUNT(*) FROM edges WHERE (source_id='{eid}' OR target_id='{eid}') AND valid_to IS NULL"
+        ),
+    );
+    assert_eq!(item["degree"], json!(open_expected), "degree = 活跃边计数");
+    assert!(open_expected >= 1);
+    // search_entities 同投影（两面同源口径钉）。
+    let hit = &live_core::graph::query::search_entities(&store, "异环", "", 10).unwrap()[0];
+    assert_eq!(hit["source_kind"], "ai");
+    assert_eq!(hit["degree"], json!(open_expected));
 }
